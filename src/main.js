@@ -2,6 +2,7 @@
  * main.js
  * Modüler Three.js WebGL & Capacitor mimarisini başlatan ana giriş noktası.
  * CollisionManager, MapLoader, Character, Door ve CameraManager bileşenlerini koordine eder.
+ * Mobilya ve duvar çarpışmasını anında test etmek için varsayılan monokrom masa ve sandalye grubu barındırır.
  */
 
 import * as THREE from 'three';
@@ -25,6 +26,7 @@ class App {
     this._initScene();
     this._initLightingAndEnvironment();
     this._initComponents();
+    this._initTestFurniture(); // Varsayılan masa & sandalye engel grubu
     this._initUI();
     this._bindEvents();
 
@@ -109,15 +111,15 @@ class App {
    * @private
    */
   _initComponents() {
-    // 1. Çarpışma Yöneticisi (Hafif Raycast & BoundingBox sistemi)
+    // 1. Çarpışma Yöneticisi (Hafif ve Hacimsel AABB sistemi)
     this.collisionManager = new CollisionManager(this.scene);
 
-    // 2. Menteşeli Kapı & Kesit Mimarisi (Sabit duvarları ve kapalı kapıyı collider olarak kaydeder)
+    // 2. Menteşeli Kapı & Kesit Mimarisi
     this.door = new Door(this.scene, this.collisionManager, (state) => {
       this._updateDoorHUD(state.isOpen);
     });
 
-    // 3. Prosedürel Karakter (CollisionManager ile duvar boyunca kayma yapar)
+    // 3. Prosedürel Karakter (CollisionManager ile mobilya/duvar kayması yapar)
     this.character = new Character(this.scene, this.collisionManager, (state) => {
       this._updateCharacterHUD(state.isMoving);
     });
@@ -131,10 +133,101 @@ class App {
       }
     );
 
-    // 5. Harita / Model Yükleyici (3D ve 2D engelleri CollisionManager'a bağlar)
+    // 5. Harita / Model Yükleyici (Tüm mobilyaları otomatik CollisionManager'a kaydeder)
     this.mapLoader = new MapLoader(this.scene, this.collisionManager, (status) => {
       this._updateMapHUD(status);
     });
+  }
+
+  /**
+   * Test amaçlı varsayılan monokrom masa ve sandalye grubu ekler.
+   * Kullanıcı dosya yüklemeden de mobilyaya çarpıp kayma fiziğini anında test edebilir.
+   * @private
+   */
+  _initTestFurniture() {
+    this.testFurniture = new THREE.Group();
+    this.testFurniture.name = 'Test_Masa_Grubu';
+
+    const tableMat = new THREE.MeshStandardMaterial({
+      color: 0x222222,
+      roughness: 0.35,
+      metalness: 0.1,
+    });
+    const legMat = new THREE.MeshStandardMaterial({
+      color: 0x0a0a0a,
+      roughness: 0.2,
+      metalness: 0.8,
+    });
+
+    // 1. Masa Üst Tablası (2.4m genişlik, 1.3m derinlik, 0.1m kalınlık)
+    const tableTopGeo = new THREE.BoxGeometry(2.4, 0.1, 1.3);
+    const tableTop = new THREE.Mesh(tableTopGeo, tableMat);
+    tableTop.position.set(0, 0.8, 0);
+    tableTop.castShadow = true;
+    tableTop.receiveShadow = true;
+    this.testFurniture.add(tableTop);
+
+    // 2. Masa Bacakları (4 Adet silindir ayak)
+    const legGeo = new THREE.CylinderGeometry(0.045, 0.045, 0.75, 16);
+    const legOffsets = [
+      [-1.05, -0.5],
+      [1.05, -0.5],
+      [-1.05, 0.5],
+      [1.05, 0.5],
+    ];
+
+    legOffsets.forEach(([lx, lz]) => {
+      const leg = new THREE.Mesh(legGeo, legMat);
+      leg.position.set(lx, 0.375, lz);
+      leg.castShadow = true;
+      leg.receiveShadow = true;
+      this.testFurniture.add(leg);
+    });
+
+    // 3. Sandalyeler (Masanın her iki yanına 2 minimalist sandalye)
+    const chairMat = new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.4 });
+    const chairOffsets = [-0.95, 0.95];
+
+    chairOffsets.forEach((cz) => {
+      const chairGroup = new THREE.Group();
+      chairGroup.position.set(0, 0, cz);
+
+      // Sandalye Oturak
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.05, 0.45), chairMat);
+      seat.position.set(0, 0.45, 0);
+      seat.castShadow = true;
+      chairGroup.add(seat);
+
+      // Sandalye Sırtlık
+      const backrest = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.38, 0.05), chairMat);
+      const backZ = cz > 0 ? 0.2 : -0.2;
+      backrest.position.set(0, 0.66, backZ);
+      backrest.castShadow = true;
+      chairGroup.add(backrest);
+
+      // Sandalye Bacakları
+      const chairLegGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.45, 12);
+      [
+        [-0.2, -0.18],
+        [0.2, -0.18],
+        [-0.2, 0.18],
+        [0.2, 0.18],
+      ].forEach(([cx, czPos]) => {
+        const cLeg = new THREE.Mesh(chairLegGeo, legMat);
+        cLeg.position.set(cx, 0.225, czPos);
+        cLeg.castShadow = true;
+        chairGroup.add(cLeg);
+      });
+
+      this.testFurniture.add(chairGroup);
+    });
+
+    // Masa grubunu sahnenin açık ön alanına konumlandır
+    this.testFurniture.position.set(3.0, 0, 3.5);
+    this.scene.add(this.testFurniture);
+
+    // Tüm masa grubunu (bacaklar ve tabla dahil tek kütle olarak) CollisionManager'a hacimsel AABB olarak kaydet
+    this.collisionManager.registerObstacle(this.testFurniture);
   }
 
   /**
@@ -349,10 +442,9 @@ class App {
 
     // 13. Engel Kutusu Ekle & Temizle (2D Harita Çarpışma Editörü)
     document.getElementById('btn-add-wall-box').addEventListener('click', () => {
-      // Karakterin önünde veya merkezde yeni bir tel kafes engel kutusu oluştur
       const charPos = this.character.getPosition();
-      const newBox = this.mapLoader.createWallBox(charPos.x + 1.2, charPos.z + 1.2, 2.0, 0.6);
-      this.showToast('Tel kafes engel kutusu eklendi.');
+      this.mapLoader.createWallBox(charPos.x + 1.2, charPos.z + 1.2, 2.0, 0.8, 1.2);
+      this.showToast('Tel kafes mobilya/duvar engel kutusu eklendi.');
     });
 
     document.getElementById('btn-clear-wall-boxes').addEventListener('click', () => {
@@ -364,12 +456,12 @@ class App {
     document.getElementById('btn-load-floorplan').addEventListener('click', () => {
       this.mapLoader.loadDemoFloorPlan();
       document.getElementById('panel-image-options').style.display = 'flex';
-      this.showToast('2D Kat Planı ve sınır duvarları yüklendi.');
+      this.showToast('2D Kat Planı ve oda/mobilya sınırları yüklendi.');
     });
     document.getElementById('btn-load-gallery').addEventListener('click', () => {
       this.mapLoader.loadDemo3DGallery();
       document.getElementById('panel-image-options').style.display = 'none';
-      this.showToast('3D Galeri ve duvar engelleri yüklendi.');
+      this.showToast('3D Galeri ve duvar/heykel engelleri yüklendi.');
     });
 
     // 15. Kesit Zorlama Modu Butonu
@@ -502,7 +594,7 @@ class App {
 
   _updateMapHUD(status) {
     if (status.type === 'loaded') {
-      this.showToast(`Yüklendi: ${status.name}`);
+      this.showToast(`Yüklendi: ${status.name} (${status.obstacleCount || 0} engel devrede)`);
       if (status.category === '2d') {
         document.getElementById('panel-image-options').style.display = 'flex';
       }
@@ -530,7 +622,7 @@ class App {
 
     const delta = Math.min(0.1, this.clock.getDelta());
 
-    // 1. Karakteri Güncelle (Çarpışma & Duvar Boyunca Kayma hesaplamaları dahil)
+    // 1. Karakteri Güncelle (Hacimsel AABB Mobilya ve Duvar Çarpışması)
     this.character.update(delta);
 
     // 2. Kapı Menteşesini ve Kesit Duvarlarını Güncelle

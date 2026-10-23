@@ -1,7 +1,8 @@
 /**
  * Character.js
  * Rig ve kemik içermeyen, tamamen matematiksel prosedürel animasyonlu monokrom karakter sınıfı.
- * CollisionManager ile duvar çarpışma kontrolü ve duvar boyunca kayma (Wall Sliding) desteği içerir.
+ * Masa, sehpa, koltuk gibi mobilyaların içine girmeyi önleyen hacimsel AABB çarpışma
+ * ve hedef düzeltme (Target Clamping) sistemi içerir.
  */
 
 import * as THREE from 'three';
@@ -17,8 +18,9 @@ export class Character {
     this.collisionManager = collisionManager;
     this.onStateChange = onStateChange;
 
-    // Çarpışma yarıçapı (Modelin duvara gömülmesini engelleyen tampon mesafe)
-    this.collisionRadius = 0.34;
+    // Karakter silindir boyutları (Tampon çarpışma hacmi)
+    this.collisionRadius = 0.35; // Metre
+    this.characterHeight = 1.6;  // Metre
 
     // Ana pozisyon grubu (Dünya koordinatları ve Y-ekseni yönü)
     this.rootGroup = new THREE.Group();
@@ -42,10 +44,6 @@ export class Character {
     this.scene.add(this.rootGroup);
   }
 
-  /**
-   * Çarpışma yöneticisi referansını ayarlar
-   * @param {CollisionManager} collisionManager
-   */
   setCollisionManager(collisionManager) {
     this.collisionManager = collisionManager;
   }
@@ -131,19 +129,33 @@ export class Character {
   }
 
   /**
-   * Karakteri tıklanan veya dokunulan hedef koordinatına yönlendirir
+   * Karakteri tıklanan veya dokunulan hedef koordinatına yönlendirir.
+   * Eğer hedef masanın üstüne veya bir engelin içine denk gelmişse, hedefi
+   * masanın dışındaki en yakın serbest noktaya öteler.
+   *
    * @param {THREE.Vector3} point - Hedef zemin koordinatı
    */
   moveTo(point) {
-    this.targetPosition.set(point.x, 0, point.z);
+    let safeTarget = point.clone();
+    safeTarget.y = 0;
+
+    // Eğer bir engelin (masanın/duvarın) içine tıklandıysa engelin dışına kenetle
+    if (this.collisionManager) {
+      safeTarget = this.collisionManager.clampTargetOutsideObstacles(
+        safeTarget,
+        this.collisionRadius
+      );
+    }
+
+    this.targetPosition.copy(safeTarget);
 
     const dist = this.rootGroup.position.distanceTo(this.targetPosition);
     if (dist > 0.15) {
       this.isMoving = true;
       this.onStateChange({ isMoving: true });
 
-      // Hedef halkasını tetikle
-      this.targetMarker.position.set(point.x, point.y + 0.02, point.z);
+      // Hedef halkasını güvenli hedef noktasında tetikle
+      this.targetMarker.position.set(safeTarget.x, safeTarget.y + 0.02, safeTarget.z);
       this.targetMarker.scale.set(0.5, 0.5, 0.5);
       this.targetMarker.material.opacity = 0.95;
       this.targetMarker.visible = true;
@@ -180,25 +192,26 @@ export class Character {
       const stepDist = Math.min(distance, this.walkSpeed * delta);
       const rawStep = toTarget.clone().normalize().multiplyScalar(stepDist);
 
-      // 2. Çarpışma Denetimi ve Duvar Boyunca Kayma (Wall Sliding)
+      // 2. Hacimsel AABB Çarpışma Denetimi ve Duvar/Masa Boyunca Kayma (Sliding)
       let resolvedStep = rawStep;
       if (this.collisionManager) {
         const collisionResult = this.collisionManager.resolveMovement(
           currentPos,
           rawStep,
-          this.collisionRadius
+          this.collisionRadius,
+          this.characterHeight
         );
         resolvedStep = collisionResult.resolvedStep;
 
-        // Eğer karakter duvara tamamen çarptıysa ve kayma adım boyu çok küçükse durdur
-        if (collisionResult.isColliding && resolvedStep.lengthSq() < 0.00002) {
+        // Eğer adım boyutu sıfıra indiyse (hareket tamamen engellendiyse) durdur
+        if (collisionResult.isColliding && resolvedStep.lengthSq() < 0.000005) {
           this.isMoving = false;
           this.onStateChange({ isMoving: false });
         }
       }
 
       // Adım atılabiliyorsa konumu güncelle
-      if (resolvedStep.lengthSq() > 0.00001) {
+      if (resolvedStep.lengthSq() > 0.000005) {
         // Y-Ekseninde Hedefe / Kayma Yönüne Yumuşak Dönüş
         const moveDir = resolvedStep.clone().normalize();
         const targetAngle = Math.atan2(moveDir.x, moveDir.z);

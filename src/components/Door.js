@@ -69,6 +69,9 @@ export class Door {
     if (this.frontLeftWall) this.collisionManager.addCollider(this.frontLeftWall);
     if (this.frontRightWall) this.collisionManager.addCollider(this.frontRightWall);
 
+    // İç mekan çalışma masasını da engel olarak kaydet
+    if (this.desk) this.collisionManager.registerObstacle(this.desk);
+
     // Kapı kapalıysa kapı kanadını engel olarak ekle
     if (!this.isOpen && this.doorMesh) {
       this.collisionManager.addCollider(this.doorMesh);
@@ -148,11 +151,11 @@ export class Door {
     // 4. İç Mekan Donatısı (Kesit modunda içeride görünen çalışma masası ve aydınlatma)
     const deskGeo = new THREE.BoxGeometry(2.4, 0.12, 1.2);
     const deskMat = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.2 });
-    const desk = new THREE.Mesh(deskGeo, deskMat);
-    desk.position.set(0, 0.85, -8.5);
-    desk.castShadow = true;
-    desk.receiveShadow = true;
-    this.roomGroup.add(desk);
+    this.desk = new THREE.Mesh(deskGeo, deskMat);
+    this.desk.position.set(0, 0.85, -8.5);
+    this.desk.castShadow = true;
+    this.desk.receiveShadow = true;
+    this.roomGroup.add(this.desk);
 
     // Masa Ayakları
     const legMat = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.8 });
