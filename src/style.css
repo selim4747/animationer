@@ -1,0 +1,583 @@
+/* ==========================================================================
+   STRICT MONOCHROME ARCHITECTURE STYLESHEET (Capacitor & WebGL Ready)
+   Rules: Only #000000, #ffffff, #121212, #1a1a1a, #242424, #333333, #888888.
+   Zero colors (no blue, green, red, amber, cyan).
+   ========================================================================== */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+:root {
+  --mono-black: #000000;
+  --mono-bg: #080808;
+  --mono-dark-800: #121212;
+  --mono-dark-700: #181818;
+  --mono-dark-600: #222222;
+  --mono-dark-500: #2a2a2a;
+  --mono-border: #333333;
+  --mono-border-light: #555555;
+  --mono-gray: #888888;
+  --mono-light: #cccccc;
+  --mono-white: #ffffff;
+}
+
+html, body {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background-color: var(--mono-black);
+  color: var(--mono-white);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+/* 3D Canvas Mount */
+#canvas-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1;
+  touch-action: none;
+}
+
+#canvas-container canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+/* Dokunmatik Yönlendirme İpucu */
+.hud-hint-pill {
+  position: absolute;
+  top: 58px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--mono-dark-800);
+  border: 1px solid var(--mono-border);
+  color: var(--mono-light);
+  font-size: 11px;
+  font-family: monospace;
+  padding: 6px 14px;
+  border-radius: 20px;
+  pointer-events: none;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
+}
+
+.hud-hint-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--mono-white);
+}
+
+/* Üst Başlık & Durum Çubuğu */
+.top-hud {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.top-hud > * {
+  pointer-events: auto;
+}
+
+.hud-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--mono-dark-800);
+  border: 1px solid var(--mono-border);
+  padding: 6px 12px;
+  border-radius: 6px;
+}
+
+.brand-square {
+  width: 24px;
+  height: 24px;
+  background: var(--mono-white);
+  color: var(--mono-black);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 12px;
+  font-family: monospace;
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.brand-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--mono-white);
+  letter-spacing: -0.01em;
+}
+
+.brand-desc {
+  font-size: 9px;
+  color: var(--mono-gray);
+  font-family: monospace;
+}
+
+.hud-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* Monokrom Rozetler */
+.hud-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: monospace;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: var(--mono-dark-800);
+  border: 1px solid var(--mono-border);
+  color: var(--mono-white);
+  white-space: nowrap;
+}
+
+.hud-badge.outline .badge-indicator {
+  background-color: transparent;
+  border: 1px solid var(--mono-white);
+}
+
+.badge-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--mono-white);
+}
+
+/* Monokrom Düğmeler */
+.hud-btn {
+  background: var(--mono-dark-800);
+  border: 1px solid var(--mono-border);
+  color: var(--mono-white);
+  font-size: 11px;
+  font-family: monospace;
+  font-weight: 600;
+  padding: 7px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  min-height: 36px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.hud-btn:hover {
+  background: var(--mono-dark-600);
+  border-color: var(--mono-light);
+}
+
+.hud-btn:active {
+  background: var(--mono-dark-500);
+}
+
+.hud-btn.primary {
+  background: var(--mono-white);
+  color: var(--mono-black);
+  border-color: var(--mono-white);
+  font-weight: 700;
+}
+
+.hud-btn.primary:hover {
+  background: var(--mono-light);
+}
+
+.hud-btn.active {
+  background: var(--mono-white);
+  color: var(--mono-black);
+  border-color: var(--mono-white);
+}
+
+/* Alt Katlanabilir Dock */
+.hud-dock {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(860px, calc(100vw - 20px));
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.hud-dock.collapsed {
+  transform: translateX(-50%) translateY(calc(100% - 34px));
+}
+
+.dock-collapse-trigger {
+  background: var(--mono-dark-800);
+  border: 1px solid var(--mono-border);
+  color: var(--mono-light);
+  font-size: 11px;
+  font-family: monospace;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  margin-bottom: 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dock-collapse-trigger:hover {
+  color: var(--mono-white);
+  border-color: var(--mono-white);
+}
+
+.dock-window {
+  width: 100%;
+  background: var(--mono-bg);
+  border: 1px solid var(--mono-border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7);
+}
+
+.dock-nav-tabs {
+  display: flex;
+  align-items: center;
+  background: var(--mono-dark-800);
+  border-bottom: 1px solid var(--mono-border);
+  padding: 3px 6px;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.dock-tab-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--mono-gray);
+  font-size: 11px;
+  font-family: monospace;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  min-height: 34px;
+}
+
+.dock-tab-btn:hover {
+  color: var(--mono-white);
+}
+
+.dock-tab-btn.active {
+  color: var(--mono-white);
+  background: var(--mono-dark-600);
+  border-color: var(--mono-border);
+}
+
+.dock-tab-pane {
+  padding: 12px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.dock-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.dock-info-box {
+  font-size: 11px;
+  color: var(--mono-light);
+  line-height: 1.6;
+  font-family: monospace;
+  background: var(--mono-dark-800);
+  padding: 8px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--mono-border);
+  margin-top: 8px;
+}
+
+/* İstasyon Kartları */
+.station-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.station-item {
+  background: var(--mono-dark-800);
+  border: 1px solid var(--mono-border);
+  border-radius: 5px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.station-item:hover {
+  border-color: var(--mono-white);
+  background: var(--mono-dark-700);
+}
+
+.station-item.active {
+  border-color: var(--mono-white);
+  background: var(--mono-dark-600);
+}
+
+.station-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.station-name {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--mono-white);
+  font-family: monospace;
+}
+
+.station-coords {
+  font-size: 9px;
+  font-family: monospace;
+  color: var(--mono-gray);
+}
+
+.station-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.mini-btn {
+  background: transparent;
+  border: 1px solid var(--mono-border);
+  color: var(--mono-light);
+  font-size: 9px;
+  font-family: monospace;
+  padding: 2px 5px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.mini-btn:hover {
+  border-color: var(--mono-white);
+  color: var(--mono-white);
+}
+
+/* Dosya Yükleme Bölgesi */
+.file-drop-zone {
+  border: 1px dashed var(--mono-border);
+  background: var(--mono-dark-800);
+  border-radius: 6px;
+  padding: 14px;
+  text-align: center;
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+
+.file-drop-zone:hover, .file-drop-zone.dragover {
+  border-color: var(--mono-white);
+}
+
+.file-drop-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--mono-white);
+  margin-bottom: 3px;
+}
+
+.file-drop-sub {
+  font-size: 10px;
+  color: var(--mono-gray);
+  font-family: monospace;
+}
+
+.image-options-panel {
+  background: var(--mono-dark-800);
+  border: 1px solid var(--mono-border);
+  border-radius: 5px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.image-options-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  font-family: monospace;
+  font-weight: 700;
+}
+
+.btn-group-tight {
+  display: flex;
+  gap: 4px;
+}
+
+.slider-control-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 45px;
+  align-items: center;
+  gap: 10px;
+  font-size: 10px;
+  font-family: monospace;
+  color: var(--mono-light);
+}
+
+input[type="range"] {
+  accent-color: var(--mono-white);
+  background: var(--mono-dark-600);
+  height: 4px;
+  cursor: pointer;
+}
+
+/* Sürükle-Bırak Tam Ekran Katmanı */
+.drag-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.94);
+  border: 2px dashed var(--mono-white);
+  z-index: 100;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.drag-overlay.active {
+  display: flex;
+}
+
+.drag-overlay-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.drag-icon {
+  font-size: 32px;
+}
+
+.drag-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--mono-white);
+}
+
+.drag-sub {
+  font-size: 11px;
+  color: var(--mono-gray);
+  font-family: monospace;
+}
+
+/* Modal */
+.modal-layer {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+}
+
+.modal-layer.open {
+  display: flex;
+}
+
+.modal-dialog {
+  background: var(--mono-bg);
+  border: 1px solid var(--mono-border);
+  border-radius: 6px;
+  width: min(460px, 94vw);
+  padding: 18px;
+}
+
+.modal-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.modal-dialog-title {
+  font-size: 13px;
+  font-weight: 700;
+  font-family: monospace;
+}
+
+.modal-dialog-body {
+  font-size: 11px;
+  color: var(--mono-light);
+  line-height: 1.6;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Toast */
+.hud-toast {
+  position: fixed;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--mono-dark-700);
+  border: 1px solid var(--mono-white);
+  color: var(--mono-white);
+  font-size: 11px;
+  font-family: monospace;
+  padding: 6px 14px;
+  border-radius: 4px;
+  z-index: 300;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.hud-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}

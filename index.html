@@ -3,1701 +3,217 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>3D & 2D Sahne, Kamera ve Karakter Stüdyosu</title>
-    <meta name="description" content="Monokrom 3D/2D sahne, prosedürel animasyonlu karakter hareketi ve kamera istasyonları aracı." />
-    <meta property="og:title" content="3D & 2D Sahne, Kamera ve Karakter Stüdyosu" />
-    <meta property="og:description" content="Monokrom 3D/2D sahne, prosedürel animasyonlu karakter hareketi ve kamera istasyonları aracı." />
-
-    <!-- Three.js Importmap (CDN - Modern ES Module) -->
-    <script type="importmap">
-    {
-      "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-      }
-    }
-    </script>
-
-    <style>
-      *, *::before, *::after {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-        -webkit-tap-highlight-color: transparent;
-      }
-
-      /* KATI MONOKROM RENK PALETİ */
-      :root {
-        --c-black: #000000;
-        --c-dark-900: #080808;
-        --c-dark-800: #121212;
-        --c-dark-700: #181818;
-        --c-dark-600: #222222;
-        --c-dark-500: #2c2c2c;
-        --c-gray-border: #333333;
-        --c-gray-muted: #555555;
-        --c-gray-text: #888888;
-        --c-gray-light: #cccccc;
-        --c-white: #ffffff;
-      }
-
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        background-color: var(--c-black);
-        color: var(--c-white);
-        overflow: hidden;
-        width: 100vw;
-        height: 100vh;
-        user-select: none;
-        -webkit-user-select: none;
-        touch-action: none;
-      }
-
-      #canvas-container {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        z-index: 1;
-        touch-action: none;
-      }
-
-      #canvas-container canvas {
-        display: block;
-        width: 100%;
-        height: 100%;
-      }
-
-      /* Üst Başlık & Durum Çubuğu */
-      .top-nav {
-        position: absolute;
-        top: 12px;
-        left: 12px;
-        right: 12px;
-        z-index: 10;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-        pointer-events: none;
-      }
-
-      .top-nav > * {
-        pointer-events: auto;
-      }
-
-      .brand-box {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        background: var(--c-dark-800);
-        border: 1px solid var(--c-gray-border);
-        padding: 8px 14px;
-        border-radius: 8px;
-      }
-
-      .brand-icon {
-        width: 26px;
-        height: 26px;
-        background: var(--c-white);
-        color: var(--c-black);
-        border-radius: 4px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 900;
-        font-size: 13px;
-        font-family: monospace;
-      }
-
-      .brand-title {
-        font-size: 13px;
-        font-weight: 700;
-        letter-spacing: -0.01em;
-        color: var(--c-white);
-        line-height: 1.2;
-      }
-
-      .brand-sub {
-        font-size: 10px;
-        color: var(--c-gray-text);
-        font-family: monospace;
-      }
-
-      .top-actions {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        flex-wrap: wrap;
-        justify-content: flex-end;
-      }
-
-      .mono-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 11px;
-        font-weight: 600;
-        font-family: monospace;
-        padding: 7px 12px;
-        border-radius: 6px;
-        background: var(--c-dark-800);
-        border: 1px solid var(--c-gray-border);
-        color: var(--c-white);
-        white-space: nowrap;
-      }
-
-      .mono-badge .dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background-color: var(--c-white);
-      }
-
-      .mono-badge.hollow .dot {
-        background-color: transparent;
-        border: 1px solid var(--c-white);
-      }
-
-      /* Monokrom Düğmeler */
-      .mono-btn {
-        background: var(--c-dark-800);
-        border: 1px solid var(--c-gray-border);
-        color: var(--c-white);
-        font-size: 12px;
-        font-weight: 600;
-        padding: 8px 14px;
-        border-radius: 6px;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 6px;
-        white-space: nowrap;
-        transition: background 0.15s, border-color 0.15s, color 0.15s;
-        min-height: 38px;
-      }
-
-      .mono-btn:hover {
-        background: var(--c-dark-600);
-        border-color: var(--c-gray-light);
-      }
-
-      .mono-btn:active {
-        background: var(--c-dark-500);
-      }
-
-      .mono-btn.primary {
-        background: var(--c-white);
-        color: var(--c-black);
-        border-color: var(--c-white);
-      }
-
-      .mono-btn.primary:hover {
-        background: var(--c-gray-light);
-      }
-
-      .mono-btn.active-toggle {
-        background: var(--c-white);
-        color: var(--c-black);
-        border-color: var(--c-white);
-      }
-
-      /* Alt Kontrol Paneli (Monokrom Dock) */
-      .dock-container {
-        position: absolute;
-        bottom: 12px;
-        left: 50%;
-        transform: translateX(-50%);
-        width: min(880px, calc(100vw - 24px));
-        z-index: 20;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-      }
-
-      .dock-container.collapsed {
-        transform: translateX(-50%) translateY(calc(100% - 36px));
-      }
-
-      .dock-toggle-btn {
-        background: var(--c-dark-800);
-        border: 1px solid var(--c-gray-border);
-        color: var(--c-gray-light);
-        font-size: 11px;
-        font-family: monospace;
-        font-weight: 600;
-        padding: 4px 14px;
-        border-radius: 14px;
-        cursor: pointer;
-        margin-bottom: 6px;
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-      }
-
-      .dock-toggle-btn:hover {
-        color: var(--c-white);
-        border-color: var(--c-gray-light);
-      }
-
-      .dock-panel {
-        width: 100%;
-        background: var(--c-dark-900);
-        border: 1px solid var(--c-gray-border);
-        border-radius: 10px;
-        overflow: hidden;
-      }
-
-      .dock-tabs {
-        display: flex;
-        align-items: center;
-        background: var(--c-dark-800);
-        border-bottom: 1px solid var(--c-gray-border);
-        padding: 3px 6px;
-        gap: 4px;
-        overflow-x: auto;
-      }
-
-      .dock-tab {
-        background: transparent;
-        border: 1px solid transparent;
-        color: var(--c-gray-text);
-        font-size: 12px;
-        font-weight: 600;
-        padding: 7px 12px;
-        border-radius: 6px;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        white-space: nowrap;
-        min-height: 36px;
-      }
-
-      .dock-tab:hover {
-        color: var(--c-white);
-      }
-
-      .dock-tab.active {
-        color: var(--c-white);
-        background: var(--c-dark-600);
-        border-color: var(--c-gray-border);
-      }
-
-      .dock-content {
-        padding: 14px;
-        max-height: 250px;
-        overflow-y: auto;
-      }
-
-      /* Scrollbar */
-      .dock-content::-webkit-scrollbar {
-        width: 4px;
-      }
-      .dock-content::-webkit-scrollbar-thumb {
-        background: var(--c-gray-border);
-        border-radius: 2px;
-      }
-
-      /* Grid & İstasyon Kartları */
-      .station-bar {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-        margin-bottom: 12px;
-        padding-bottom: 10px;
-        border-bottom: 1px solid var(--c-gray-border);
-      }
-
-      .camera-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-        gap: 8px;
-      }
-
-      .camera-card {
-        background: var(--c-dark-800);
-        border: 1px solid var(--c-gray-border);
-        border-radius: 6px;
-        padding: 8px 10px;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        cursor: pointer;
-        transition: border-color 0.15s, background 0.15s;
-      }
-
-      .camera-card:hover {
-        border-color: var(--c-gray-light);
-        background: var(--c-dark-700);
-      }
-
-      .camera-card.active {
-        border-color: var(--c-white);
-        background: var(--c-dark-600);
-      }
-
-      .camera-card-top {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-      }
-
-      .camera-card-title {
-        font-size: 12px;
-        font-weight: 700;
-        color: var(--c-white);
-      }
-
-      .camera-card-meta {
-        font-size: 10px;
-        font-family: monospace;
-        color: var(--c-gray-text);
-      }
-
-      .camera-card-actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 4px;
-      }
-
-      .mini-mono-btn {
-        background: transparent;
-        border: 1px solid var(--c-gray-border);
-        color: var(--c-gray-light);
-        font-size: 10px;
-        padding: 3px 6px;
-        border-radius: 4px;
-        cursor: pointer;
-      }
-
-      .mini-mono-btn:hover {
-        border-color: var(--c-white);
-        color: var(--c-white);
-      }
-
-      /* Dosya Yükleme Kutusu */
-      .drop-zone {
-        border: 1px dashed var(--c-gray-border);
-        background: var(--c-dark-800);
-        border-radius: 8px;
-        padding: 16px;
-        text-align: center;
-        cursor: pointer;
-        margin-bottom: 12px;
-        transition: border-color 0.15s;
-      }
-
-      .drop-zone:hover, .drop-zone.dragover {
-        border-color: var(--c-white);
-      }
-
-      .drop-title {
-        font-size: 12px;
-        font-weight: 700;
-        color: var(--c-white);
-        margin-bottom: 4px;
-      }
-
-      .drop-sub {
-        font-size: 11px;
-        color: var(--c-gray-text);
-        font-family: monospace;
-      }
-
-      /* 2D ve Ayar Satırları */
-      .slider-row {
-        display: grid;
-        grid-template-columns: 140px 1fr 45px;
-        align-items: center;
-        gap: 10px;
-        font-size: 11px;
-        font-family: monospace;
-        color: var(--c-gray-light);
-        margin-bottom: 8px;
-      }
-
-      input[type="range"] {
-        accent-color: var(--c-white);
-        background: var(--c-dark-600);
-        height: 4px;
-        cursor: pointer;
-      }
-
-      /* Karakter Bilgi Rozeti */
-      .char-hint-badge {
-        position: absolute;
-        top: 60px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: var(--c-dark-800);
-        border: 1px solid var(--c-gray-border);
-        color: var(--c-gray-light);
-        font-size: 11px;
-        font-family: monospace;
-        padding: 6px 14px;
-        border-radius: 20px;
-        pointer-events: none;
-        z-index: 10;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        opacity: 0.9;
-      }
-
-      /* Sürükle Bırak Tam Ekran Katmanı */
-      #drag-overlay {
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.92);
-        border: 2px dashed var(--c-white);
-        z-index: 100;
-        display: none;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 12px;
-        pointer-events: none;
-      }
-
-      #drag-overlay.active {
-        display: flex;
-      }
-
-      /* Toast */
-      #toast {
-        position: fixed;
-        bottom: 70px;
-        left: 50%;
-        transform: translateX(-50%) translateY(10px);
-        background: var(--c-dark-700);
-        border: 1px solid var(--c-white);
-        color: var(--c-white);
-        font-size: 11px;
-        font-family: monospace;
-        padding: 7px 16px;
-        border-radius: 4px;
-        z-index: 300;
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity 0.2s, transform 0.2s;
-      }
-
-      #toast.show {
-        opacity: 1;
-        transform: translateX(-50%) translateY(0);
-      }
-
-      /* Modal */
-      .modal-backdrop {
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.85);
-        z-index: 200;
-        display: none;
-        align-items: center;
-        justify-content: center;
-        padding: 14px;
-      }
-
-      .modal-backdrop.open {
-        display: flex;
-      }
-
-      .modal-card {
-        background: var(--c-dark-900);
-        border: 1px solid var(--c-gray-border);
-        border-radius: 8px;
-        width: min(480px, 94vw);
-        padding: 20px;
-      }
-
-      .modal-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 14px;
-      }
-
-      .modal-title {
-        font-size: 14px;
-        font-weight: 700;
-      }
-
-      .modal-body {
-        font-size: 12px;
-        color: var(--c-gray-light);
-        line-height: 1.6;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-    </style>
+    <title>Three.js Monokrom Sahne, Karakter & Kamera Mimarisi</title>
+    <meta name="description" content="Vite ve Capacitor uyumlu monokrom Three.js sahnesi, prosedürel animasyonlu karakter ve menteşeli kapı mekaniği." />
+    <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <!-- 3D Canvas Mount -->
+    <!-- 3D WebGL Canvas Container -->
     <div id="canvas-container"></div>
 
-    <!-- Karakter Kontrol İpucu -->
-    <div class="char-hint-badge">
-      <span>🎯 Ekranda zemine tıklayın / dokunun → Karakter o noktaya yürür</span>
+    <!-- Dokunmatik / Tıklama Yönlendirme İpucu -->
+    <div class="hud-hint-pill">
+      <span class="hud-hint-dot"></span>
+      <span>Zemine dokun: Karakter yürür | Kapıya dokun: Açılır | Sürükle: Kamerayı çevir</span>
     </div>
 
-    <!-- Sürükle-Bırak Katmanı -->
-    <div id="drag-overlay">
-      <div style="font-size: 24px;">📁</div>
-      <div style="font-size: 14px; font-weight: 700;">Dosyayı Buraya Bırakın</div>
-      <div style="font-size: 11px; color: #888888; font-family: monospace;">.glb, .gltf, .png, .jpg, .webp</div>
+    <!-- Sürükle-Bırak Katmanı (Drag & Drop) -->
+    <div id="drag-overlay" class="drag-overlay">
+      <div class="drag-overlay-box">
+        <div class="drag-icon">📁</div>
+        <div class="drag-title">Dosyayı Buraya Bırakın</div>
+        <div class="drag-sub">.glb, .gltf, .png, .jpg, .webp</div>
+      </div>
     </div>
 
-    <!-- Üst Başlık & Durum Çubuğu -->
-    <header class="top-nav">
-      <div class="brand-box">
-        <div class="brand-icon">3D</div>
-        <div>
-          <div class="brand-title">STÜDYO // PROSEDÜREL</div>
-          <div class="brand-sub">Karakter & Kamera İstasyonları</div>
+    <!-- Üst Monokrom Başlık & Durum Çubuğu -->
+    <header class="top-hud">
+      <div class="hud-brand">
+        <span class="brand-square">3D</span>
+        <div class="brand-text">
+          <div class="brand-name">STUDIO // MONOCHROME</div>
+          <div class="brand-desc">Capacitor & WebGL Engine</div>
         </div>
       </div>
 
-      <div class="top-actions">
-        <!-- Kamera Modu Rozeti -->
-        <div id="camera-status-badge" class="mono-badge">
-          <span class="dot"></span>
-          <span id="camera-status-text">Serbest Orbit</span>
+      <div class="hud-actions">
+        <!-- Kamera Durum Rozeti -->
+        <div id="badge-camera-mode" class="hud-badge">
+          <span class="badge-indicator"></span>
+          <span id="label-camera-mode">Serbest Orbit</span>
         </div>
 
-        <!-- Karakter Durumu Rozeti -->
-        <div id="char-status-badge" class="mono-badge hollow">
-          <span class="dot"></span>
-          <span id="char-status-text">Karakter: Boşta (Idle)</span>
+        <!-- Karakter Durum Rozeti -->
+        <div id="badge-char-mode" class="hud-badge outline">
+          <span class="badge-indicator"></span>
+          <span id="label-char-mode">Karakter: Boşta</span>
         </div>
+
+        <!-- Kapı Durum Rozeti -->
+        <div id="badge-door-mode" class="hud-badge outline">
+          <span class="badge-indicator"></span>
+          <span id="label-door-mode">Kapı: Kapalı</span>
+        </div>
+
+        <!-- Kapıyı Manuel Tetikleme Butonu -->
+        <button id="btn-toggle-door" class="hud-btn" title="Menteşeli kapıyı aç veya kapat">
+          Kapıyı Aç
+        </button>
 
         <!-- Hızlı Demo Butonları -->
-        <button id="btn-demo-2d" class="mono-btn" title="2D Kat Planı Zeminini Yükle">2D Kat Planı</button>
-        <button id="btn-demo-3d" class="mono-btn" title="3D Monokrom Galeri Yükle">3D Galeri</button>
+        <button id="btn-load-floorplan" class="hud-btn" title="2D Kat Planı Zeminini Yükle">
+          2D Plan
+        </button>
+        <button id="btn-load-gallery" class="hud-btn" title="3D Monokrom Galeriyi Yükle">
+          3D Galeri
+        </button>
 
-        <!-- HTML İndir -->
-        <button id="btn-download-html" class="mono-btn" title="Tek parça index.html olarak kaydet">İndir (HTML)</button>
-
-        <!-- Bilgi / Rehber -->
-        <button id="btn-help" class="mono-btn" style="padding: 8px 10px;" title="Yardım">?</button>
+        <!-- Yardım Modalı Butonu -->
+        <button id="btn-open-help" class="hud-btn" style="padding: 7px 11px;" title="Yardım">
+          ?
+        </button>
       </div>
     </header>
 
-    <!-- Alt Kontrol Paneli (Monokrom Dock) -->
-    <div id="dock-container" class="dock-container">
-      <button id="dock-toggle-btn" class="dock-toggle-btn">
-        <span id="dock-toggle-arrow">▾</span>
-        <span id="dock-toggle-label">Panel [Gizle]</span>
+    <!-- Alt Katlanabilir Kontrol Paneli (Monokrom Minimalist HUD) -->
+    <div id="hud-dock" class="hud-dock">
+      <button id="btn-toggle-dock" class="dock-collapse-trigger">
+        <span id="dock-collapse-arrow">▾</span>
+        <span id="dock-collapse-label">Panel [Gizle]</span>
       </button>
 
-      <div class="dock-panel">
-        <div class="dock-tabs">
-          <button class="dock-tab active" data-tab="tab-character">🏃 Karakter & Takip</button>
-          <button class="dock-tab" data-tab="tab-cameras">🎥 Kamera İstasyonları</button>
-          <button class="dock-tab" data-tab="tab-files">📦 Hibrit Dosya (2D & 3D)</button>
-          <button class="dock-tab" data-tab="tab-scene">⚙️ Sahne & Izgara</button>
+      <div class="dock-window">
+        <!-- Sekme Başlıkları -->
+        <div class="dock-nav-tabs">
+          <button class="dock-tab-btn active" data-tab="tab-character">🏃 Karakter & Hareket</button>
+          <button class="dock-tab-btn" data-tab="tab-camera">🎥 Kameralar & CCTV</button>
+          <button class="dock-tab-btn" data-tab="tab-files">📦 Dosya Yükle (2D/3D)</button>
+          <button class="dock-tab-btn" data-tab="tab-door">🚪 Kapı & Kesit Modu</button>
         </div>
 
-        <!-- Tab 1: Karakter & Takip Sistemi -->
-        <div id="tab-character" class="dock-content">
-          <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center;">
-            <!-- Karakteri Takip Et Toggle -->
-            <button id="btn-toggle-follow" class="mono-btn primary" title="Kamera karakteri otomatik merkezde tutsun">
-              <span>◉ Karakteri Takip Et: [AÇIK]</span>
+        <!-- Sekme 1: Karakter & Takip -->
+        <div id="tab-character" class="dock-tab-pane">
+          <div class="dock-button-row">
+            <button id="btn-toggle-follow" class="hud-btn primary">
+              ◉ Karakteri Takip Et: [AÇIK]
             </button>
-
-            <!-- Karakteri Merkeze Al -->
-            <button id="btn-center-character" class="mono-btn" title="Karakteri sahnenin merkezine (0, 0, 0) ışınlar">
-              Merkeze Sıfırla
+            <button id="btn-reset-character" class="hud-btn">
+              Merkeze Sıfırla (0,0,0)
             </button>
-
-            <!-- Karakter Hızı -->
-            <button id="btn-toggle-speed" class="mono-btn" title="Yürüme Hızı">
-              Hız: <span id="label-char-speed">Normal</span>
+            <button id="btn-cycle-speed" class="hud-btn">
+              Hız: <span id="label-speed-val">Normal (4.2m/s)</span>
             </button>
           </div>
 
-          <div style="font-size: 11px; color: var(--c-gray-light); line-height: 1.6; font-family: monospace; background: var(--c-dark-800); padding: 10px; border-radius: 6px; border: 1px solid var(--c-gray-border);">
-            <div>• <strong>Dokun / Tıkla (Tap-to-Move):</strong> Zemin üzerinde herhangi bir noktaya dokunduğunuzda minimalist beyaz hedef halkası belirir.</div>
-            <div>• <strong>Prosedürel Animasyon:</strong> Karakter kemiksiz matematiksel bobbing (|sin(t)|), beşik sallantısı (roll), hız eğimi (pitch) ve squash & stretch ile yürür.</div>
-            <div>• <strong>Sabit Kamera + Takip:</strong> Sabit bir istasyondayken "Karakteri Takip Et" açıksa kamera yerinden oynamadan karakteri izler (Güvenlik / Stüdyo kamerası).</div>
+          <div class="dock-info-box">
+            <div>• <strong>Tap-to-Move (Dokun-Git):</strong> Zemine dokunulduğunda beyaz hedef halkası belirir ve karakter oraya yönelir.</div>
+            <div>• <strong>Prosedürel Yürüme:</strong> Kemiksiz dikey zıplama (|sin(t)|), beşik sallantısı (roll), hız eğimi ve squash & stretch.</div>
           </div>
         </div>
 
-        <!-- Tab 2: Kamera İstasyonları -->
-        <div id="tab-cameras" class="dock-content" style="display: none;">
-          <div class="station-bar">
-            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-              <button id="btn-add-camera" class="mono-btn primary" title="Mevcut açıyı istasyon olarak kaydet">
-                + Açıyı Sabitle (Kamera Ekle)
-              </button>
-              <button id="btn-free-camera" class="mono-btn" title="Serbest kamera moduna dön">
-                Serbest Kamera
-              </button>
-            </div>
-
-            <div style="display: flex; gap: 6px;">
-              <button id="btn-toggle-tour" class="mono-btn" title="İstasyonlar arası otomatik geçiş turu">
-                <span id="tour-btn-text">Kamera Turu</span>
-              </button>
-              <button id="btn-clear-cameras" class="mono-btn" style="color: var(--c-gray-text);">
-                Temizle
-              </button>
-            </div>
+        <!-- Sekme 2: Kameralar & CCTV İstasyonları -->
+        <div id="tab-camera" class="dock-tab-pane" style="display: none;">
+          <div class="dock-button-row">
+            <button id="btn-add-camera" class="hud-btn primary">
+              + Açıyı Sabitle (Kamera Ekle)
+            </button>
+            <button id="btn-free-orbit" class="hud-btn">
+              Serbest Orbit
+            </button>
+            <button id="btn-toggle-tour" class="hud-btn">
+              <span id="label-tour-btn">Kamera Turu</span>
+            </button>
+            <button id="btn-clear-stations" class="hud-btn" style="color: #888888;">
+              Tümünü Sil
+            </button>
           </div>
 
-          <div id="camera-list" class="camera-grid">
-            <!-- Dinamik doldurulur -->
+          <div id="station-cards-grid" class="station-grid">
+            <!-- Kaydedilen kameralar JavaScript ile dinamik eklenir -->
+          </div>
+
+          <div class="dock-info-box" style="margin-top: 8px;">
+            <div>• <strong>Otomatik Oda Tetikleyicisi:</strong> Karakter kapıdan geçip odaya girdiğinde kamera otomatik olarak iç mekan CCTV açısına geçer!</div>
           </div>
         </div>
 
-        <!-- Tab 3: Hibrit Dosya Yükleme (2D & 3D) -->
-        <div id="tab-files" class="dock-content" style="display: none;">
-          <input type="file" id="file-input" accept=".glb,.gltf,.png,.jpg,.jpeg,.webp" style="display: none;" />
+        <!-- Sekme 3: Hibrit Dosya Yükleme (2D / 3D) -->
+        <div id="tab-files" class="dock-tab-pane" style="display: none;">
+          <input type="file" id="file-picker" accept=".glb,.gltf,.png,.jpg,.jpeg,.webp" style="display: none;" />
 
-          <div id="drop-zone-trigger" class="drop-zone">
-            <div class="drop-title">Dosya Seçin veya Sürükleyin</div>
-            <div class="drop-sub">3D Modeller (.glb, .gltf) | 2D Görseller (.png, .jpg, .webp)</div>
+          <div id="drop-zone" class="file-drop-zone">
+            <div class="file-drop-title">Cihazdan Harita / Zemin / Model Yükleyin</div>
+            <div class="file-drop-sub">.glb, .gltf (3D Model) | .png, .jpg, .webp (2D Harita/Zemin)</div>
           </div>
 
-          <!-- 2D Görsel Yönelim Paneli -->
-          <div id="image-2d-controls" style="display: none; flex-direction: column; gap: 8px; margin-bottom: 12px; background: var(--c-dark-800); padding: 10px; border-radius: 6px; border: 1px solid var(--c-gray-border);">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <span style="font-size: 11px; font-weight: 700;">2D GÖRSEL YÖNELİMİ:</span>
-              <div style="display: flex; gap: 4px;">
-                <button id="btn-orient-ground" class="mono-btn active-toggle" style="padding: 4px 10px; font-size: 11px;">Zemin (Yatay XZ)</button>
-                <button id="btn-orient-wall" class="mono-btn" style="padding: 4px 10px; font-size: 11px;">Arka Plan (Dikey XY)</button>
+          <!-- 2D Görsel Ayar Paneli -->
+          <div id="panel-image-options" class="image-options-panel" style="display: none;">
+            <div class="image-options-header">
+              <span>2D YÖNELİM KONTROLÜ:</span>
+              <div class="btn-group-tight">
+                <button id="btn-orient-horizontal" class="hud-btn active">Zemin (Yatay - XZ)</button>
+                <button id="btn-orient-vertical" class="hud-btn">Duvar (Dikey - XY)</button>
               </div>
             </div>
 
-            <div class="slider-row">
-              <span>Görsel Boyutu:</span>
-              <input type="range" id="slider-image-scale" min="4" max="40" step="0.5" value="16" />
-              <span id="val-image-scale">16m</span>
+            <div class="slider-control-row">
+              <label>Ölçek / Genişlik:</label>
+              <input type="range" id="slider-image-size" min="4" max="40" step="0.5" value="16" />
+              <span id="label-image-size">16m</span>
             </div>
 
-            <div class="slider-row">
-              <span>Opaklık:</span>
-              <input type="range" id="slider-image-opacity" min="0.1" max="1.0" step="0.05" value="1.0" />
-              <span id="val-image-opacity">100%</span>
+            <div class="slider-control-row">
+              <label>Opaklık:</label>
+              <input type="range" id="slider-image-alpha" min="0.1" max="1.0" step="0.05" value="1.0" />
+              <span id="label-image-alpha">100%</span>
             </div>
           </div>
 
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <button id="btn-focus-object" class="mono-btn">İçeriğe Odaklan</button>
-            <button id="btn-reset-scene" class="mono-btn" style="color: var(--c-gray-text);">Sahneyi Temizle</button>
+          <div class="dock-button-row" style="margin-top: 10px;">
+            <button id="btn-focus-map" class="hud-btn">Haritaya Odaklan</button>
+            <button id="btn-clear-map" class="hud-btn" style="color: #888888;">Yüklü Dosyayı Kaldır</button>
           </div>
         </div>
 
-        <!-- Tab 4: Sahne & Izgara Ayarları -->
-        <div id="tab-scene" class="dock-content" style="display: none;">
-          <div class="slider-row">
-            <span>Zemin Izgarası:</span>
-            <div style="display: flex; gap: 6px;">
-              <button id="btn-toggle-grid" class="mono-btn" style="padding: 4px 10px; font-size: 11px;">Açık</button>
-            </div>
-            <span></span>
+        <!-- Sekme 4: Kapı ve Kesit (Cutaway) -->
+        <div id="tab-door" class="dock-tab-pane" style="display: none;">
+          <div class="dock-button-row">
+            <button id="btn-toggle-door-panel" class="hud-btn primary">
+              Kapıyı Aç / Kapat
+            </button>
+            <button id="btn-force-cutaway" class="hud-btn">
+              Kesit Modu: <span id="label-cutaway-mode">Otomatik (Yakınlıkta)</span>
+            </button>
           </div>
 
-          <div class="slider-row">
-            <span>Yön Işığı Şiddeti:</span>
-            <input type="range" id="slider-light-dir" min="0" max="4" step="0.1" value="2.0" />
-            <span id="val-light-dir">2.0</span>
-          </div>
-
-          <div class="slider-row">
-            <span>Ortam Işığı:</span>
-            <input type="range" id="slider-light-amb" min="0" max="3" step="0.1" value="1.0" />
-            <span id="val-light-amb">1.0</span>
-          </div>
-
-          <div class="slider-row">
-            <span>Arka Plan Tonu:</span>
-            <div style="display: flex; gap: 6px;">
-              <button class="bg-preset-btn" data-color="#000000" style="width: 22px; height: 22px; border-radius: 4px; background: #000000; border: 1px solid #444; cursor: pointer;"></button>
-              <button class="bg-preset-btn" data-color="#0e0e0e" style="width: 22px; height: 22px; border-radius: 4px; background: #0e0e0e; border: 1px solid #444; cursor: pointer;"></button>
-              <button class="bg-preset-btn" data-color="#181818" style="width: 22px; height: 22px; border-radius: 4px; background: #181818; border: 1px solid #444; cursor: pointer;"></button>
-            </div>
-            <span></span>
+          <div class="dock-info-box">
+            <div>• <strong>Menteşe Mekaniği:</strong> Kapı sol menteşe pivot noktası etrafında tam 90 derece açılır.</div>
+            <div>• <strong>Şeffaf Kesit (Cutaway):</strong> Kapı açıldığında veya karakter kapıya yaklaştığında ön duvarlar şeffaflaşarak iç mekan görünür hale gelir.</div>
           </div>
         </div>
       </div>
     </div>
 
     <!-- Bilgi Modalı -->
-    <div id="modal-help" class="modal-backdrop">
-      <div class="modal-card">
-        <div class="modal-header">
-          <div class="modal-title">KULLANIM REHBERİ</div>
-          <button id="modal-close-btn" class="mono-btn" style="padding: 2px 8px;">✕</button>
+    <div id="modal-help" class="modal-layer">
+      <div class="modal-dialog">
+        <div class="modal-dialog-header">
+          <div class="modal-dialog-title">PROJE MİMARİSİ & KULLANIM</div>
+          <button id="btn-close-help" class="hud-btn" style="padding: 2px 8px;">✕</button>
         </div>
-        <div class="modal-body">
-          <p><strong>1. Dokunmatik & Fare ile Hareket (Tap-to-Move):</strong> Sahne üzerinde zemine dokunarak karakteri yönlendirebilirsiniz. Karakter prosedürel adımlama ile hedefe yürür.</p>
-          <p><strong>2. Katı Monokrom Tasarım:</strong> Bu sürüm Capacitor (Android APK) ve Tauri/Electron masaüstü uygulamaları için optimize edilmiş yüksek kontrastlı monokrom stile sahiptir.</p>
-          <p><strong>3. Kamera Takibi:</strong> "Karakteri Takip Et" açıkken kamera karakteri merkezde tutar. Sabit kamera istasyonunda ise sabit tripod üzerinden karakteri kafasıyla izler.</p>
-          <p><strong>4. Tek Dosya:</strong> Harici bağımlılık veya npm sunucusu gerektirmez, doğrudan çift tıklamayla çalışır.</p>
+        <div class="modal-dialog-body">
+          <p><strong>1. Dokunmatik & Mobil Uyum:</strong> Capacitor ile derlenmek üzere optimize edilmiştir. `touch-action: none` ile ekran kayması önlenir, tek parmak tıklaması ile hedefe yürünür.</p>
+          <p><strong>2. Menteşeli Kapı & Kesit Modu:</strong> Kapıya dokunduğunuzda veya karakter 2.5 metre yakınına geldiğinde menteşesi etrafında 90° açılır ve oda duvarları şeffaf kesit moduna geçer.</p>
+          <p><strong>3. Otomatik Kamera Tetikleyicisi:</strong> Karakter kapıdan içeri girdiğinde kamera otomatik olarak iç tavan CCTV açısına yumuşakça (lerp) geçiş yapar.</p>
+          <p><strong>4. Katı Monokrom:</strong> Yalnızca saf siyah, beyaz ve gri tonları kullanılmıştır.</p>
         </div>
       </div>
     </div>
 
-    <!-- Bildirim Toast -->
-    <div id="toast">Bildirim</div>
-
-    <!-- Ana Uygulama Mantığı (ES Module) -->
-    <script type="module">
-      import * as THREE from 'three';
-      import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-      import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-
-      // --- Sahne Değişkenleri ---
-      let scene, camera, renderer, controls;
-      let gridHelper, dirLight, hemiLight, shadowPlane;
-      let currentLoadedObject = null;
-      let currentObjectType = 'none';
-      let currentImageTexture = null;
-      let currentImagePlane = null;
-      let imageAspectRatio = 1.0;
-      let imageIsGround = true;
-      let baseImageWidth = 16.0;
-
-      // Kamera İstasyonları
-      let cameraStations = [];
-      let activeStationId = null;
-      let isTransitioning = false;
-      let transitionStartTime = 0;
-      const transitionDuration = 1000;
-      const startCamPos = new THREE.Vector3();
-      const startCamTarget = new THREE.Vector3();
-      const endCamPos = new THREE.Vector3();
-      const endCamTarget = new THREE.Vector3();
-
-      // Kamera Turu
-      let isTourActive = false;
-      let tourIndex = 0;
-      let tourTimer = null;
-
-      // --- Prosedürel Karakter ve Hareket Durumu ---
-      let characterGroup, visualGroup;
-      let characterShadow;
-      const characterPosition = new THREE.Vector3(0, 0, 0);
-      const characterTarget = new THREE.Vector3(0, 0, 0);
-      let isCharacterMoving = false;
-      let walkAnimTime = 0;
-      let idleAnimTime = 0;
-      let characterSpeed = 4.2; // m/s
-      let followCharacter = true; // Karakteri takip et aktif mi?
-
-      // Minimalist Hedef Halkası
-      let targetMarkerMesh;
-      let targetMarkerActive = false;
-      let targetMarkerStartTime = 0;
-
-      // Dokunmatik / Tıklama Ayrımı (Tap vs Orbit Drag)
-      let pointerDownPos = { x: 0, y: 0 };
-      let pointerDownTime = 0;
-      const raycaster = new THREE.Raycaster();
-      const mouse = new THREE.Vector2();
-
-      // UI Öğeleri
-      const container = document.getElementById('canvas-container');
-      const cameraStatusBadge = document.getElementById('camera-status-badge');
-      const cameraStatusText = document.getElementById('camera-status-text');
-      const charStatusBadge = document.getElementById('char-status-badge');
-      const charStatusText = document.getElementById('char-status-text');
-      const cameraListEl = document.getElementById('camera-list');
-      const dragOverlay = document.getElementById('drag-overlay');
-      const fileInput = document.getElementById('file-input');
-      const imageControlsEl = document.getElementById('image-2d-controls');
-      const toastEl = document.getElementById('toast');
-      const btnToggleFollow = document.getElementById('btn-toggle-follow');
-
-      function showToast(msg) {
-        toastEl.textContent = msg;
-        toastEl.classList.add('show');
-        clearTimeout(toastEl._timer);
-        toastEl._timer = setTimeout(() => toastEl.classList.remove('show'), 2000);
-      }
-
-      // --- Prosedürel Karakter Oluşturma (Rig'siz & Kemiksiz) ---
-      function createProceduralCharacter() {
-        characterGroup = new THREE.Group();
-        characterGroup.position.set(0, 0, 0);
-
-        // Hareket dönüşümlerini (bobbing, roll, pitch, squash) uygulayacağımız görsel alt grup
-        visualGroup = new THREE.Group();
-        characterGroup.add(visualGroup);
-
-        // 1. Ana Gövde (Minimalist Beyaz Kapsül)
-        const bodyGeo = new THREE.CapsuleGeometry(0.38, 0.85, 16, 24);
-        const bodyMat = new THREE.MeshStandardMaterial({
-          color: 0xf5f5f5,
-          roughness: 0.25,
-          metalness: 0.1
-        });
-        const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-        bodyMesh.position.y = 0.8;
-        bodyMesh.castShadow = true;
-        bodyMesh.receiveShadow = true;
-        visualGroup.add(bodyMesh);
-
-        // 2. Minimalist Siyah Vizör / Göz Çizgisi
-        const visorGeo = new THREE.BoxGeometry(0.44, 0.14, 0.22);
-        const visorMat = new THREE.MeshStandardMaterial({
-          color: 0x0a0a0a,
-          roughness: 0.1,
-          metalness: 0.95
-        });
-        const visorMesh = new THREE.Mesh(visorGeo, visorMat);
-        visorMesh.position.set(0, 1.05, 0.24);
-        visorMesh.castShadow = true;
-        visualGroup.add(visorMesh);
-
-        // 3. Sırt Minimalist Modül / Çanta
-        const packGeo = new THREE.BoxGeometry(0.32, 0.42, 0.14);
-        const packMat = new THREE.MeshStandardMaterial({
-          color: 0x222222,
-          roughness: 0.5
-        });
-        const packMesh = new THREE.Mesh(packGeo, packMat);
-        packMesh.position.set(0, 0.78, -0.28);
-        packMesh.castShadow = true;
-        visualGroup.add(packMesh);
-
-        // 4. Zemin Yumuşak Temas Gölgesi
-        const shadowGeo = new THREE.RingGeometry(0, 0.46, 32);
-        const shadowMat = new THREE.MeshBasicMaterial({
-          color: 0x000000,
-          transparent: true,
-          opacity: 0.45,
-          depthWrite: false,
-          side: THREE.DoubleSide
-        });
-        characterShadow = new THREE.Mesh(shadowGeo, shadowMat);
-        characterShadow.rotation.x = -Math.PI / 2;
-        characterShadow.position.y = 0.015;
-        characterGroup.add(characterShadow);
-
-        scene.add(characterGroup);
-
-        // 5. Minimalist Beyaz Hedef Halkası
-        const ringGeo = new THREE.RingGeometry(0.25, 0.35, 32);
-        const ringMat = new THREE.MeshBasicMaterial({
-          color: 0xffffff,
-          transparent: true,
-          opacity: 0.9,
-          depthWrite: false,
-          side: THREE.DoubleSide
-        });
-        targetMarkerMesh = new THREE.Mesh(ringGeo, ringMat);
-        targetMarkerMesh.rotation.x = -Math.PI / 2;
-        targetMarkerMesh.position.set(0, 0.02, 0);
-        targetMarkerMesh.visible = false;
-        scene.add(targetMarkerMesh);
-      }
-
-      // --- Hedef Noktası Belirleme ve Halka Animasyonu ---
-      function setTargetPoint(point) {
-        characterTarget.copy(point);
-        characterTarget.y = 0; // Zemin düzlemi
-
-        const dist = characterGroup.position.distanceTo(characterTarget);
-        if (dist > 0.15) {
-          isCharacterMoving = true;
-          charStatusBadge.className = 'mono-badge';
-          charStatusText.textContent = 'Karakter: Yürüyor';
-
-          // Hedef halkasını göster
-          targetMarkerMesh.position.set(point.x, point.y + 0.02, point.z);
-          targetMarkerMesh.scale.set(0.6, 0.6, 0.6);
-          targetMarkerMesh.material.opacity = 0.95;
-          targetMarkerMesh.visible = true;
-          targetMarkerActive = true;
-          targetMarkerStartTime = performance.now();
-        }
-      }
-
-      // --- Prosedürel Karakter Güncellemesi (Her Kare) ---
-      function updateCharacter(delta) {
-        if (!characterGroup || !visualGroup) return;
-
-        // Hedef Halkası Animasyonu (Büyüme & Sönümlenme)
-        if (targetMarkerActive) {
-          const elapsed = (performance.now() - targetMarkerStartTime) / 1000;
-          if (elapsed < 0.6) {
-            const scale = 0.6 + elapsed * 1.2;
-            targetMarkerMesh.scale.set(scale, scale, scale);
-            targetMarkerMesh.material.opacity = Math.max(0, 1.0 - elapsed / 0.6);
-          } else {
-            targetMarkerMesh.visible = false;
-            targetMarkerActive = false;
-          }
-        }
-
-        const currentPos = characterGroup.position;
-        const toTarget = new THREE.Vector3().subVectors(characterTarget, currentPos);
-        toTarget.y = 0;
-        const distance = toTarget.length();
-
-        if (isCharacterMoving && distance > 0.12) {
-          // 1. Hedefe Doğru Yumuşak Dönüş (Rotation / Slerp around Y)
-          const targetAngle = Math.atan2(toTarget.x, toTarget.z);
-          let angleDiff = targetAngle - characterGroup.rotation.y;
-          while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-          while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-          characterGroup.rotation.y += angleDiff * Math.min(1.0, delta * 12.0);
-
-          // 2. İleri Doğru Hareket
-          const stepDistance = Math.min(distance, characterSpeed * delta);
-          toTarget.normalize();
-          currentPos.addScaledVector(toTarget, stepDistance);
-
-          // 3. Prosedürel Yürüme Matematiği
-          walkAnimTime += delta * (characterSpeed * 2.8);
-
-          // a) Dikey Zıplama (Bobbing): |sin(t)| ile adımlama
-          const bob = Math.abs(Math.sin(walkAnimTime)) * 0.12;
-          visualGroup.position.y = bob;
-
-          // b) Beşik Sallantısı (Roll): Sağa-sola hafif yatış
-          const roll = Math.sin(walkAnimTime) * 0.07;
-          visualGroup.rotation.z = roll;
-
-          // c) Hız Eğimi (Pitch/Lean): Gövdenin öne eğilmesi (5-7 derece)
-          const targetPitch = 0.11;
-          visualGroup.rotation.x = THREE.MathUtils.lerp(visualGroup.rotation.x, targetPitch, delta * 10.0);
-
-          // d) Squash & Stretch: Yere çarptığı noktalarda Y basılması
-          const squash = Math.cos(walkAnimTime * 2.0) * 0.05;
-          visualGroup.scale.set(1.0 + squash * 0.5, 1.0 - squash, 1.0 + squash * 0.5);
-
-          // Zemin temas gölgesi boyutu senkronize
-          characterShadow.scale.set(1.0 - bob * 1.5, 1.0 - bob * 1.5, 1.0 - bob * 1.5);
-        } else {
-          // Karakter Durdu / Boşta (Idle)
-          if (isCharacterMoving) {
-            isCharacterMoving = false;
-            charStatusBadge.className = 'mono-badge hollow';
-            charStatusText.textContent = 'Karakter: Boşta (Idle)';
-          }
-
-          idleAnimTime += delta * 2.4;
-
-          // Sallantıların sönümlenmesi ve hafif nefes alma (breathing) hareketi
-          const breathe = Math.sin(idleAnimTime) * 0.015;
-          visualGroup.position.y = THREE.MathUtils.lerp(visualGroup.position.y, breathe, delta * 8.0);
-          visualGroup.rotation.z = THREE.MathUtils.lerp(visualGroup.rotation.z, 0, delta * 8.0);
-          visualGroup.rotation.x = THREE.MathUtils.lerp(visualGroup.rotation.x, 0, delta * 8.0);
-          visualGroup.scale.set(
-            THREE.MathUtils.lerp(visualGroup.scale.x, 1.0 - breathe * 0.5, delta * 8.0),
-            THREE.MathUtils.lerp(visualGroup.scale.y, 1.0 + breathe, delta * 8.0),
-            THREE.MathUtils.lerp(visualGroup.scale.z, 1.0 - breathe * 0.5, delta * 8.0)
-          );
-          characterShadow.scale.set(1.0, 1.0, 1.0);
-        }
-
-        // --- Kamera Takip Entegrasyonu ---
-        if (followCharacter && !isTransitioning) {
-          const charTargetHead = new THREE.Vector3(currentPos.x, currentPos.y + 1.0, currentPos.z);
-
-          if (activeStationId !== null) {
-            // Sabit Kamera İstasyonu: Tripod pozisyonu sabit kalır, kamera karakteri izler (PTZ/Surveillance)
-            controls.target.lerp(charTargetHead, delta * 6.0);
-            camera.lookAt(controls.target);
-          } else if (controls.enabled) {
-            // Serbest Kamera: Controls hedefi karakteri takip eder
-            controls.target.lerp(charTargetHead, delta * 6.0);
-          }
-        }
-      }
-
-      // --- Sahne Başlatma (Init Three.js) ---
-      function initScene() {
-        scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x0a0a0a);
-
-        camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.set(12, 10, 16);
-
-        renderer = new THREE.WebGLRenderer({
-          antialias: true,
-          powerPreference: 'high-performance',
-          alpha: false
-        });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.outputColorSpace = THREE.SRGBColorSpace;
-        renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.1;
-        renderer.shadowMap.enabled = true;
-        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-        container.appendChild(renderer.domElement);
-
-        controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true;
-        controls.dampingFactor = 0.05;
-        controls.target.set(0, 1.0, 0);
-        controls.maxDistance = 180;
-        controls.minDistance = 0.5;
-
-        // Işıklandırma (Monokrom Nötr Beyaz / Gri)
-        hemiLight = new THREE.HemisphereLight(0xffffff, 0x111111, 1.0);
-        scene.add(hemiLight);
-
-        dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
-        dirLight.position.set(16, 26, 14);
-        dirLight.castShadow = true;
-        dirLight.shadow.mapSize.width = 2048;
-        dirLight.shadow.mapSize.height = 2048;
-        dirLight.shadow.bias = -0.0004;
-        const d = 25;
-        dirLight.shadow.camera.left = -d;
-        dirLight.shadow.camera.right = d;
-        dirLight.shadow.camera.top = d;
-        dirLight.shadow.camera.bottom = -d;
-        scene.add(dirLight);
-
-        // Monokrom Zemin Izgarası
-        gridHelper = new THREE.GridHelper(36, 36, 0x444444, 0x1f1f1f);
-        gridHelper.position.y = -0.002;
-        scene.add(gridHelper);
-
-        // Monokrom Zemin Gölge Düzlemi
-        const planeGeo = new THREE.PlaneGeometry(100, 100);
-        const shadowMat = new THREE.ShadowMaterial({ opacity: 0.35 });
-        shadowPlane = new THREE.Mesh(planeGeo, shadowMat);
-        shadowPlane.rotation.x = -Math.PI / 2;
-        shadowPlane.position.y = -0.003;
-        shadowPlane.receiveShadow = true;
-        scene.add(shadowPlane);
-
-        // Karakteri Oluştur
-        createProceduralCharacter();
-
-        // Dokunmatik / Fare Olayları (Tap vs Drag Ayrımı)
-        renderer.domElement.addEventListener('pointerdown', onPointerDown);
-        renderer.domElement.addEventListener('pointerup', onPointerUp);
-
-        // Pencere Boyutlandırma
-        window.addEventListener('resize', onWindowResize);
-
-        // Başlangıç İstasyonu
-        cameraStations.push({
-          id: 'cam-1',
-          name: 'İstasyon 1',
-          position: camera.position.clone(),
-          target: controls.target.clone()
-        });
-        renderCameraStationList();
-
-        // Döngüyü Başlat
-        let lastTime = performance.now();
-        function loop(now) {
-          requestAnimationFrame(loop);
-          const delta = Math.min(0.1, (now - lastTime) / 1000);
-          lastTime = now;
-
-          // Karakter Hareketi
-          updateCharacter(delta);
-
-          // Kamera Yumuşak Geçişi (Lerp)
-          if (isTransitioning) {
-            const elapsed = now - transitionStartTime;
-            const progress = Math.min(1.0, elapsed / transitionDuration);
-            const ease = progress < 0.5 ? 4 * progress * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2;
-
-            camera.position.lerpVectors(startCamPos, endCamPos, ease);
-            controls.target.lerpVectors(startCamTarget, endCamTarget, ease);
-            camera.lookAt(controls.target);
-
-            if (progress >= 1.0) {
-              camera.position.copy(endCamPos);
-              controls.target.copy(endCamTarget);
-              isTransitioning = false;
-              controls.enabled = false;
-            }
-          } else if (controls.enabled) {
-            controls.update();
-          }
-
-          renderer.render(scene, camera);
-        }
-        requestAnimationFrame(loop);
-      }
-
-      function onWindowResize() {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-      }
-
-      // --- Point-and-Click / Tap-to-Move Algılayıcı ---
-      function onPointerDown(e) {
-        pointerDownPos.x = e.clientX;
-        pointerDownPos.y = e.clientY;
-        pointerDownTime = performance.now();
-      }
-
-      function onPointerUp(e) {
-        const dx = e.clientX - pointerDownPos.x;
-        const dy = e.clientY - pointerDownPos.y;
-        const dist = Math.hypot(dx, dy);
-        const elapsed = performance.now() - pointerDownTime;
-
-        // Kullanıcı kamerayı döndürmek yerine kısa bir tıklama/dokunma yaptıysa (Tap)
-        if (dist < 8 && elapsed < 450) {
-          const rect = renderer.domElement.getBoundingClientRect();
-          mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-          mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-
-          raycaster.setFromCamera(mouse, camera);
-
-          // Tıklanabilir yüzeyler: 2D zemin görseli, 3D model veya zemin gölge düzlemi
-          const targets = [];
-          if (currentImagePlane && imageIsGround) targets.push(currentImagePlane);
-          if (currentLoadedObject && currentObjectType === '3d') {
-            currentLoadedObject.traverse(child => {
-              if (child.isMesh) targets.push(child);
-            });
-          }
-          targets.push(shadowPlane);
-
-          const intersects = raycaster.intersectObjects(targets, false);
-          if (intersects.length > 0) {
-            const hitPoint = intersects[0].point;
-            setTargetPoint(hitPoint);
-          }
-        }
-      }
-
-      // --- Kamera Modları & İstasyonlar ---
-      function setCameraModeFree() {
-        isTransitioning = false;
-        controls.enabled = true;
-        activeStationId = null;
-
-        if (isTourActive) stopTour();
-
-        cameraStatusBadge.className = 'mono-badge';
-        cameraStatusText.textContent = 'Serbest Orbit';
-        document.querySelectorAll('.camera-card').forEach(el => el.classList.remove('active'));
-      }
-
-      function transitionToStation(station) {
-        activeStationId = station.id;
-        cameraStatusBadge.className = 'mono-badge hollow';
-        cameraStatusText.textContent = `[Kilitli] ${station.name}`;
-
-        document.querySelectorAll('.camera-card').forEach(el => {
-          el.classList.toggle('active', el.dataset.id === station.id);
-        });
-
-        startCamPos.copy(camera.position);
-        startCamTarget.copy(controls.target);
-        endCamPos.copy(station.position);
-        endCamTarget.copy(station.target);
-
-        transitionStartTime = performance.now();
-        isTransitioning = true;
-        controls.enabled = false;
-
-        showToast(`${station.name} açısına geçildi.`);
-      }
-
-      function addCurrentCameraAsStation() {
-        const nextNum = cameraStations.length + 1;
-        const newStation = {
-          id: 'cam-' + Date.now(),
-          name: `İstasyon ${nextNum}`,
-          position: camera.position.clone(),
-          target: controls.target.clone()
-        };
-        cameraStations.push(newStation);
-        renderCameraStationList();
-        showToast(`${newStation.name} eklendi.`);
-      }
-
-      function renderCameraStationList() {
-        cameraListEl.innerHTML = '';
-        if (cameraStations.length === 0) {
-          cameraListEl.innerHTML = `<div style="grid-column: 1 / -1; font-size: 11px; color: #888; text-align: center; padding: 12px; font-family: monospace;">Henüz sabit kamera eklenmedi.</div>`;
-          return;
-        }
-
-        cameraStations.forEach(station => {
-          const card = document.createElement('div');
-          card.className = `camera-card ${station.id === activeStationId ? 'active' : ''}`;
-          card.dataset.id = station.id;
-
-          card.innerHTML = `
-            <div class="camera-card-top">
-              <span class="camera-card-title">${station.name}</span>
-              <span class="camera-card-meta">${station.id === activeStationId ? '[AKTİF]' : ''}</span>
-            </div>
-            <div class="camera-card-meta">
-              X:${station.position.x.toFixed(1)} Y:${station.position.y.toFixed(1)} Z:${station.position.z.toFixed(1)}
-            </div>
-            <div class="camera-card-actions">
-              <button class="mini-mono-btn btn-upd" title="Mevcut açıyı bu istasyona kaydet">Yenile</button>
-              <button class="mini-mono-btn btn-del" title="Sil">Sil</button>
-            </div>
-          `;
-
-          card.addEventListener('click', (e) => {
-            if (e.target.closest('button')) return;
-            transitionToStation(station);
-          });
-
-          card.querySelector('.btn-upd').addEventListener('click', (e) => {
-            e.stopPropagation();
-            station.position = camera.position.clone();
-            station.target = controls.target.clone();
-            renderCameraStationList();
-            showToast(`${station.name} güncellendi.`);
-          });
-
-          card.querySelector('.btn-del').addEventListener('click', (e) => {
-            e.stopPropagation();
-            cameraStations = cameraStations.filter(s => s.id !== station.id);
-            if (activeStationId === station.id) setCameraModeFree();
-            renderCameraStationList();
-            showToast('İstasyon silindi.');
-          });
-
-          cameraListEl.appendChild(card);
-        });
-      }
-
-      // Kamera Turu
-      function startTour() {
-        if (cameraStations.length < 2) {
-          showToast('Tur için en az 2 istasyon gerekir!');
-          return;
-        }
-        isTourActive = true;
-        document.getElementById('tour-btn-text').textContent = 'Turu Durdur';
-        showToast('Kamera turu başladı.');
-        tourIndex = 0;
-        playTourStep();
-      }
-
-      function stopTour() {
-        isTourActive = false;
-        document.getElementById('tour-btn-text').textContent = 'Kamera Turu';
-        clearTimeout(tourTimer);
-      }
-
-      function playTourStep() {
-        if (!isTourActive) return;
-        const station = cameraStations[tourIndex];
-        transitionToStation(station);
-        tourIndex = (tourIndex + 1) % cameraStations.length;
-        tourTimer = setTimeout(() => {
-          if (isTourActive) playTourStep();
-        }, 3400);
-      }
-
-      // --- Hibrit Dosya Yükleme (2D & 3D) ---
-      function clearCurrentObject() {
-        if (currentLoadedObject) {
-          scene.remove(currentLoadedObject);
-          currentLoadedObject.traverse(child => {
-            if (child.isMesh) {
-              child.geometry?.dispose();
-              if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
-              else child.material?.dispose();
-            }
-          });
-          currentLoadedObject = null;
-        }
-        if (currentImageTexture) {
-          currentImageTexture.dispose();
-          currentImageTexture = null;
-        }
-        currentImagePlane = null;
-        currentObjectType = 'none';
-        imageControlsEl.style.display = 'none';
-      }
-
-      function loadGLTFFile(url, fileName) {
-        clearCurrentObject();
-        showToast('3D model yükleniyor...');
-
-        new GLTFLoader().load(url, gltf => {
-          const model = gltf.scene;
-          currentLoadedObject = model;
-          currentObjectType = '3d';
-
-          model.traverse(node => {
-            if (node.isMesh) {
-              node.castShadow = true;
-              node.receiveShadow = true;
-            }
-          });
-
-          const box = new THREE.Box3().setFromObject(model);
-          const center = box.getCenter(new THREE.Vector3());
-          model.position.x -= center.x;
-          model.position.z -= center.z;
-          model.position.y -= box.min.y;
-
-          scene.add(model);
-          showToast(`3D Model yüklendi: ${fileName || 'Model'}`);
-        }, undefined, () => showToast('Model yükleme hatası!'));
-      }
-
-      function loadImageFile(url, fileName) {
-        clearCurrentObject();
-        showToast('Görsel yükleniyor...');
-
-        new THREE.TextureLoader().load(url, texture => {
-          texture.colorSpace = THREE.SRGBColorSpace;
-          currentImageTexture = texture;
-          currentObjectType = '2d';
-
-          const w = texture.image.width || 1200;
-          const h = texture.image.height || 800;
-          imageAspectRatio = w / h;
-
-          const planeW = baseImageWidth;
-          const planeH = baseImageWidth / imageAspectRatio;
-
-          const geo = new THREE.PlaneGeometry(planeW, planeH);
-          const mat = new THREE.MeshStandardMaterial({
-            map: texture,
-            transparent: true,
-            alphaTest: 0.1,
-            depthWrite: true,
-            side: THREE.DoubleSide,
-            roughness: 0.5
-          });
-
-          currentImagePlane = new THREE.Mesh(geo, mat);
-          currentImagePlane.receiveShadow = true;
-          currentLoadedObject = currentImagePlane;
-          scene.add(currentImagePlane);
-
-          applyImageOrientation(true);
-          imageControlsEl.style.display = 'flex';
-          showToast(`2D Görsel yüklendi: ${fileName || 'Görsel'}`);
-        }, undefined, () => showToast('Görsel yükleme hatası!'));
-      }
-
-      function applyImageOrientation(isGround) {
-        if (!currentImagePlane) return;
-        imageIsGround = isGround;
-
-        const scale = parseFloat(document.getElementById('slider-image-scale').value) || baseImageWidth;
-        const width = scale;
-        const height = scale / imageAspectRatio;
-
-        currentImagePlane.geometry.dispose();
-        currentImagePlane.geometry = new THREE.PlaneGeometry(width, height);
-
-        if (isGround) {
-          currentImagePlane.rotation.x = -Math.PI / 2;
-          currentImagePlane.rotation.y = 0;
-          currentImagePlane.position.set(0, 0.015, 0);
-          document.getElementById('btn-orient-ground').classList.add('active-toggle');
-          document.getElementById('btn-orient-wall').classList.remove('active-toggle');
-        } else {
-          currentImagePlane.rotation.x = 0;
-          currentImagePlane.rotation.y = 0;
-          currentImagePlane.position.set(0, height / 2, 0);
-          document.getElementById('btn-orient-wall').classList.add('active-toggle');
-          document.getElementById('btn-orient-ground').classList.remove('active-toggle');
-        }
-      }
-
-      function handleFile(file) {
-        if (!file) return;
-        const name = file.name.toLowerCase();
-        const url = URL.createObjectURL(file);
-        if (name.endsWith('.glb') || name.endsWith('.gltf')) {
-          loadGLTFFile(url, file.name);
-        } else if (name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.webp')) {
-          loadImageFile(url, file.name);
-        } else {
-          showToast('Desteklenmeyen dosya türü!');
-        }
-      }
-
-      // --- Prosedürel Monokrom Demolar ---
-      function loadDemoFloorPlan() {
-        const cvs = document.createElement('canvas');
-        cvs.width = 1600;
-        cvs.height = 1000;
-        const ctx = cvs.getContext('2d');
-
-        // Monokrom Koyu Plan Zemini
-        ctx.fillStyle = '#111111';
-        ctx.fillRect(0, 0, cvs.width, cvs.height);
-
-        // İnce Izgara Çizgileri
-        ctx.strokeStyle = '#222222';
-        ctx.lineWidth = 1;
-        for (let x = 0; x < cvs.width; x += 40) {
-          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, cvs.height); ctx.stroke();
-        }
-        for (let y = 0; y < cvs.height; y += 40) {
-          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cvs.width, y); ctx.stroke();
-        }
-
-        // Odalar (Monokrom Tonlar)
-        const rooms = [
-          { name: 'SALON', x: 80, y: 80, w: 740, h: 480 },
-          { name: 'MUTFAK', x: 840, y: 80, w: 680, h: 480 },
-          { name: 'YATAK ODASI', x: 80, y: 580, w: 580, h: 340 },
-          { name: 'ÇALIŞMA', x: 680, y: 580, w: 460, h: 340 },
-          { name: 'BANYO', x: 1160, y: 580, w: 360, h: 340 }
-        ];
-
-        rooms.forEach(r => {
-          ctx.fillStyle = '#181818';
-          ctx.fillRect(r.x, r.y, r.w, r.h);
-
-          ctx.strokeStyle = '#444444';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(r.x, r.y, r.w, r.h);
-
-          ctx.fillStyle = '#ffffff';
-          ctx.font = 'bold 20px monospace';
-          ctx.fillText(r.name, r.x + 20, r.y + 40);
-
-          ctx.fillStyle = '#888888';
-          ctx.font = '14px monospace';
-          ctx.fillText(`${(r.w / 100).toFixed(1)}m × ${(r.h / 100).toFixed(1)}m`, r.x + 20, r.y + 68);
-        });
-
-        // Dış Duvarlar
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 10;
-        ctx.strokeRect(80, 80, 1440, 840);
-
-        cvs.toBlob(blob => {
-          const url = URL.createObjectURL(blob);
-          loadImageFile(url, 'Monokrom_Kat_Plani.png');
-        });
-      }
-
-      function loadDemo3DScene() {
-        clearCurrentObject();
-        showToast('3D Monokrom Galeri yükleniyor...');
-
-        const grp = new THREE.Group();
-
-        // Zemin Platformu
-        const flGeo = new THREE.BoxGeometry(20, 0.4, 16);
-        const flMat = new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.4 });
-        const fl = new THREE.Mesh(flGeo, flMat);
-        fl.position.y = 0.2;
-        fl.receiveShadow = true;
-        grp.add(fl);
-
-        // Arka Duvar
-        const wGeo = new THREE.BoxGeometry(20, 8, 0.5);
-        const wMat = new THREE.MeshStandardMaterial({ color: 0x121212, roughness: 0.8 });
-        const w = new THREE.Mesh(wGeo, wMat);
-        w.position.set(0, 4.2, -7.8);
-        w.receiveShadow = true;
-        grp.add(w);
-
-        // Monokrom Heykel / Sütun
-        const pGeo = new THREE.CylinderGeometry(2.0, 2.4, 1.2, 32);
-        const pMat = new THREE.MeshStandardMaterial({ color: 0x242424, roughness: 0.2, metalness: 0.5 });
-        const pedestal = new THREE.Mesh(pGeo, pMat);
-        pedestal.position.set(0, 1.0, 0);
-        pedestal.castShadow = true;
-        pedestal.receiveShadow = true;
-        grp.add(pedestal);
-
-        const sculptureGeo = new THREE.TorusKnotGeometry(1.0, 0.32, 128, 32);
-        const sculptureMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.2, metalness: 0.9 });
-        const sculpture = new THREE.Mesh(sculptureGeo, sculptureMat);
-        sculpture.position.set(0, 2.9, 0);
-        sculpture.castShadow = true;
-        grp.add(sculpture);
-
-        currentLoadedObject = grp;
-        currentObjectType = '3d';
-        scene.add(grp);
-        showToast('3D Galeri yüklendi.');
-      }
-
-      // --- UI Etkinlikleri ve Bağlantılar ---
-      function setupUI() {
-        // Tab Değiştirme
-        document.querySelectorAll('.dock-tab').forEach(tab => {
-          tab.addEventListener('click', () => {
-            document.querySelectorAll('.dock-tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.dock-content').forEach(c => c.style.display = 'none');
-            tab.classList.add('active');
-            document.getElementById(tab.dataset.tab).style.display = 'block';
-          });
-        });
-
-        // Panel Gizle / Göster
-        const dockContainer = document.getElementById('dock-container');
-        const dockToggleBtn = document.getElementById('dock-toggle-btn');
-        const dockArrow = document.getElementById('dock-toggle-arrow');
-        const dockLabel = document.getElementById('dock-toggle-label');
-        dockToggleBtn.addEventListener('click', () => {
-          const col = dockContainer.classList.toggle('collapsed');
-          dockArrow.textContent = col ? '▴' : '▾';
-          dockLabel.textContent = col ? 'Panel [Aç]' : 'Panel [Gizle]';
-        });
-
-        // Karakteri Takip Et Butonu
-        btnToggleFollow.addEventListener('click', () => {
-          followCharacter = !followCharacter;
-          btnToggleFollow.classList.toggle('primary', followCharacter);
-          btnToggleFollow.querySelector('span').textContent = `◉ Karakteri Takip Et: [${followCharacter ? 'AÇIK' : 'KAPALI'}]`;
-          showToast(`Kamera takibi: ${followCharacter ? 'Açık' : 'Kapalı'}`);
-        });
-
-        // Karakteri Merkeze Sıfırla
-        document.getElementById('btn-center-character').addEventListener('click', () => {
-          characterGroup.position.set(0, 0, 0);
-          characterTarget.set(0, 0, 0);
-          isCharacterMoving = false;
-          showToast('Karakter başlangıç noktasına alındı.');
-        });
-
-        // Karakter Hız Değiştirme
-        const btnSpeed = document.getElementById('btn-toggle-speed');
-        const labelSpeed = document.getElementById('label-char-speed');
-        btnSpeed.addEventListener('click', () => {
-          if (characterSpeed === 4.2) {
-            characterSpeed = 7.0;
-            labelSpeed.textContent = 'Hızlı (Koşu)';
-          } else if (characterSpeed === 7.0) {
-            characterSpeed = 2.4;
-            labelSpeed.textContent = 'Yavaş (Adım)';
-          } else {
-            characterSpeed = 4.2;
-            labelSpeed.textContent = 'Normal';
-          }
-          showToast(`Hız: ${labelSpeed.textContent}`);
-        });
-
-        // Kamera Butonları
-        document.getElementById('btn-add-camera').addEventListener('click', addCurrentCameraAsStation);
-        document.getElementById('btn-free-camera').addEventListener('click', setCameraModeFree);
-        document.getElementById('btn-toggle-tour').addEventListener('click', () => {
-          if (isTourActive) stopTour();
-          else startTour();
-        });
-        document.getElementById('btn-clear-cameras').addEventListener('click', () => {
-          if (confirm('Tüm istasyonlar silinsin mi?')) {
-            cameraStations = [];
-            setCameraModeFree();
-            renderCameraStationList();
-          }
-        });
-
-        // Dosya Seçici & Sürükle Bırak
-        const dropZone = document.getElementById('drop-zone-trigger');
-        dropZone.addEventListener('click', () => fileInput.click());
-        fileInput.addEventListener('change', e => {
-          if (e.target.files && e.target.files[0]) handleFile(e.target.files[0]);
-        });
-
-        window.addEventListener('dragover', e => {
-          e.preventDefault();
-          dragOverlay.classList.add('active');
-        });
-        window.addEventListener('dragleave', e => {
-          if (!e.relatedTarget) dragOverlay.classList.remove('active');
-        });
-        window.addEventListener('drop', e => {
-          e.preventDefault();
-          dragOverlay.classList.remove('active');
-          if (e.dataTransfer && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
-        });
-
-        // 2D Yönelim Butonları
-        document.getElementById('btn-orient-ground').addEventListener('click', () => applyImageOrientation(true));
-        document.getElementById('btn-orient-wall').addEventListener('click', () => applyImageOrientation(false));
-
-        // 2D Kaydırıcılar
-        document.getElementById('slider-image-scale').addEventListener('input', e => {
-          document.getElementById('val-image-scale').textContent = e.target.value + 'm';
-          applyImageOrientation(imageIsGround);
-        });
-        document.getElementById('slider-image-opacity').addEventListener('input', e => {
-          const val = parseFloat(e.target.value);
-          document.getElementById('val-image-opacity').textContent = Math.round(val * 100) + '%';
-          if (currentImagePlane) currentImagePlane.material.opacity = val;
-        });
-
-        // Odaklan & Temizle
-        document.getElementById('btn-focus-object').addEventListener('click', () => {
-          if (currentLoadedObject) {
-            controls.target.set(0, 1.0, 0);
-            camera.position.set(12, 10, 16);
-          }
-        });
-        document.getElementById('btn-reset-scene').addEventListener('click', clearCurrentObject);
-
-        // Demolar
-        document.getElementById('btn-demo-2d').addEventListener('click', loadDemoFloorPlan);
-        document.getElementById('btn-demo-3d').addEventListener('click', loadDemo3DScene);
-
-        // Sahne Ayarları
-        const btnToggleGrid = document.getElementById('btn-toggle-grid');
-        btnToggleGrid.addEventListener('click', () => {
-          gridHelper.visible = !gridHelper.visible;
-          btnToggleGrid.textContent = gridHelper.visible ? 'Açık' : 'Kapalı';
-        });
-
-        document.getElementById('slider-light-dir').addEventListener('input', e => {
-          dirLight.intensity = parseFloat(e.target.value);
-          document.getElementById('val-light-dir').textContent = parseFloat(e.target.value).toFixed(1);
-        });
-        document.getElementById('slider-light-amb').addEventListener('input', e => {
-          hemiLight.intensity = parseFloat(e.target.value);
-          document.getElementById('val-light-amb').textContent = parseFloat(e.target.value).toFixed(1);
-        });
-
-        document.querySelectorAll('.bg-preset-btn').forEach(btn => {
-          btn.addEventListener('click', () => {
-            scene.background.set(btn.dataset.color);
-          });
-        });
-
-        // HTML Olarak İndir (Tek Parça Standalone İndirme)
-        document.getElementById('btn-download-html').addEventListener('click', () => {
-          const content = '<!doctype html>\n' + document.documentElement.outerHTML;
-          const blob = new Blob([content], { type: 'text/html;charset=utf-8' });
-          const a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = 'index.html';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(a.href);
-          showToast('index.html başarıyla indirildi!');
-        });
-
-        // Bilgi Modalı
-        const modal = document.getElementById('modal-help');
-        document.getElementById('btn-help').addEventListener('click', () => modal.classList.add('open'));
-        document.getElementById('modal-close-btn').addEventListener('click', () => modal.classList.remove('open'));
-        modal.addEventListener('click', e => {
-          if (e.target === modal) modal.classList.remove('open');
-        });
-      }
-
-      window.addEventListener('DOMContentLoaded', () => {
-        initScene();
-        setupUI();
-      });
-    </script>
+    <!-- Bildirim Bildirisi (Toast) -->
+    <div id="toast" class="hud-toast">Bildirim</div>
+
+    <!-- Vite ES Module Girişi -->
+    <script type="module" src="/src/main.js"></script>
   </body>
 </html>
