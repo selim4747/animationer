@@ -1,8 +1,8 @@
 /**
  * Character.js
- * Rig ve kemik içermeyen, tamamen matematiksel prosedürel animasyonlu monokrom karakter sınıfı.
- * Masa, sehpa, koltuk gibi mobilyaların içine girmeyi önleyen hacimsel AABB çarpışma
- * ve hedef düzeltme (Target Clamping) sistemi içerir.
+ * Çok katlı binalar ve merdivenler için 3 Boyutlu Navigasyon ve Prosedürel Animasyon Karakteri.
+ * Merdiven tırmanırken dikey zemin yüksekliğini (Floor Snapping) algılar,
+ * prosedürel bobbing ve wobble sallantısını merdiven yüksekliği üzerine bindirir.
  */
 
 import * as THREE from 'three';
@@ -18,11 +18,11 @@ export class Character {
     this.collisionManager = collisionManager;
     this.onStateChange = onStateChange;
 
-    // Karakter silindir boyutları (Tampon çarpışma hacmi)
+    // Karakter silindir boyutları
     this.collisionRadius = 0.35; // Metre
     this.characterHeight = 1.6;  // Metre
 
-    // Ana pozisyon grubu (Dünya koordinatları ve Y-ekseni yönü)
+    // Ana pozisyon grubu (Dünya koordinatları X, Y, Z ve Y-ekseni yönü)
     this.rootGroup = new THREE.Group();
     this.rootGroup.position.set(0, 0, 0);
 
@@ -30,8 +30,9 @@ export class Character {
     this.visualGroup = new THREE.Group();
     this.rootGroup.add(this.visualGroup);
 
-    // Hareket Durumu
+    // 3 Boyutlu Hareket Durumu
     this.targetPosition = new THREE.Vector3(0, 0, 0);
+    this.currentFloorY = 0; // Karakterin bastığı dikey zemin kotu
     this.isMoving = false;
     this.walkSpeed = 4.2; // m/s
     this.walkTime = 0;
@@ -106,7 +107,7 @@ export class Character {
   }
 
   /**
-   * Tıklama anında zemin üzerinde beliren minimalist beyaz hedef halkası
+   * Tıklanan noktada beliren 3D hedef halkası
    * @private
    */
   _buildTargetMarker() {
@@ -129,17 +130,15 @@ export class Character {
   }
 
   /**
-   * Karakteri tıklanan veya dokunulan hedef koordinatına yönlendirir.
-   * Eğer hedef masanın üstüne veya bir engelin içine denk gelmişse, hedefi
-   * masanın dışındaki en yakın serbest noktaya öteler.
+   * Karakteri 3D uzaydaki (X, Y, Z) hedef noktasına yönlendirir.
+   * 2. kata veya merdiven başına tıklandığında hedef Y seviyesini tam algılar.
    *
-   * @param {THREE.Vector3} point - Hedef zemin koordinatı
+   * @param {THREE.Vector3} point - 3D zemin/basamak/kat koordinatı
    */
   moveTo(point) {
     let safeTarget = point.clone();
-    safeTarget.y = 0;
 
-    // Eğer bir engelin (masanın/duvarın) içine tıklandıysa engelin dışına kenetle
+    // Eğer tıklanan nokta bir engelin içindeyse dış kenara ötele
     if (this.collisionManager) {
       safeTarget = this.collisionManager.clampTargetOutsideObstacles(
         safeTarget,
@@ -149,12 +148,18 @@ export class Character {
 
     this.targetPosition.copy(safeTarget);
 
-    const dist = this.rootGroup.position.distanceTo(this.targetPosition);
-    if (dist > 0.15) {
+    // Yatay mesafe kontrolü (X ve Z)
+    const currentPos = this.rootGroup.position;
+    const horizontalDist = Math.hypot(
+      safeTarget.x - currentPos.x,
+      safeTarget.z - currentPos.z
+    );
+
+    if (horizontalDist > 0.15 || Math.abs(safeTarget.y - currentPos.y) > 0.2) {
       this.isMoving = true;
       this.onStateChange({ isMoving: true });
 
-      // Hedef halkasını güvenli hedef noktasında tetikle
+      // Hedef halkasını tam hedef yüksekliğinde (Y) göster
       this.targetMarker.position.set(safeTarget.x, safeTarget.y + 0.02, safeTarget.z);
       this.targetMarker.scale.set(0.5, 0.5, 0.5);
       this.targetMarker.material.opacity = 0.95;
@@ -165,7 +170,7 @@ export class Character {
   }
 
   /**
-   * Her render karesinde karakterin hareketini, çarpışmasını ve prosedürel animasyonunu günceller
+   * Her render karesinde 3D hareketi, merdiven tırmanışını ve prosedürel animasyonu günceller
    * @param {number} delta - Geçen kare süresi (saniye)
    */
   update(delta) {
@@ -183,16 +188,22 @@ export class Character {
     }
 
     const currentPos = this.rootGroup.position;
-    const toTarget = new THREE.Vector3().subVectors(this.targetPosition, currentPos);
-    toTarget.y = 0;
-    const distance = toTarget.length();
 
-    if (this.isMoving && distance > 0.12) {
-      // İstenen hareket adımı vektörü
-      const stepDist = Math.min(distance, this.walkSpeed * delta);
-      const rawStep = toTarget.clone().normalize().multiplyScalar(stepDist);
+    // Yatay yön ve mesafe (X ve Z)
+    const toTargetX = this.targetPosition.x - currentPos.x;
+    const toTargetZ = this.targetPosition.z - currentPos.z;
+    const horizontalDist = Math.hypot(toTargetX, toTargetZ);
 
-      // 2. Hacimsel AABB Çarpışma Denetimi ve Duvar/Masa Boyunca Kayma (Sliding)
+    if (this.isMoving && horizontalDist > 0.12) {
+      // İstenen yatay hareket adımı
+      const stepDist = Math.min(horizontalDist, this.walkSpeed * delta);
+      const rawStep = new THREE.Vector3(
+        (toTargetX / horizontalDist) * stepDist,
+        0,
+        (toTargetZ / horizontalDist) * stepDist
+      );
+
+      // 2. Çarpışma Denetimi ve Duvar/Mobilya Boyunca Kayma (Sliding)
       let resolvedStep = rawStep;
       if (this.collisionManager) {
         const collisionResult = this.collisionManager.resolveMovement(
@@ -203,16 +214,14 @@ export class Character {
         );
         resolvedStep = collisionResult.resolvedStep;
 
-        // Eğer adım boyutu sıfıra indiyse (hareket tamamen engellendiyse) durdur
         if (collisionResult.isColliding && resolvedStep.lengthSq() < 0.000005) {
           this.isMoving = false;
           this.onStateChange({ isMoving: false });
         }
       }
 
-      // Adım atılabiliyorsa konumu güncelle
+      // Yatay pozisyonu güncelle
       if (resolvedStep.lengthSq() > 0.000005) {
-        // Y-Ekseninde Hedefe / Kayma Yönüne Yumuşak Dönüş
         const moveDir = resolvedStep.clone().normalize();
         const targetAngle = Math.atan2(moveDir.x, moveDir.z);
         let angleDiff = targetAngle - this.rootGroup.rotation.y;
@@ -220,32 +229,32 @@ export class Character {
         while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
         this.rootGroup.rotation.y += angleDiff * Math.min(1.0, delta * 12.0);
 
-        currentPos.add(resolvedStep);
+        currentPos.x += resolvedStep.x;
+        currentPos.z += resolvedStep.z;
 
         // 3. Prosedürel Yürüme Matematiği
         this.walkTime += delta * (this.walkSpeed * 2.8);
 
         // a) Dikey Zıplama (Bobbing): |sin(t)| ile adımlama sıçraması
-        const bob = Math.abs(Math.sin(this.walkTime)) * 0.13;
+        const bob = Math.abs(Math.sin(this.walkTime)) * 0.12;
         this.visualGroup.position.y = bob;
 
-        // b) Beşik Sallantısı (Roll/Wobble): sin(t) ile sağa-sola adımlama yatışı
-        const roll = Math.sin(this.walkTime) * 0.08;
+        // b) Beşik Sallantısı (Roll): sin(t) ile sağa-sola adımlama yatışı
+        const roll = Math.sin(this.walkTime) * 0.07;
         this.visualGroup.rotation.z = roll;
 
         // c) Hız Eğimi (Pitch/Lean): Gövdenin hareket yönüne 6-7 derece öne yatması
-        const targetPitch = 0.12;
+        const targetPitch = 0.11;
         this.visualGroup.rotation.x = THREE.MathUtils.lerp(
           this.visualGroup.rotation.x,
           targetPitch,
           delta * 10.0
         );
 
-        // d) Squash & Stretch: Yere çarpış anında Y basılması ve X/Z genişlemesi
-        const squash = Math.cos(this.walkTime * 2.0) * 0.055;
+        // d) Squash & Stretch: Yere basma anında Y basılması ve X/Z genişlemesi
+        const squash = Math.cos(this.walkTime * 2.0) * 0.05;
         this.visualGroup.scale.set(1.0 + squash * 0.5, 1.0 - squash, 1.0 + squash * 0.5);
 
-        // Gölge boyutu senkronizasyonu
         this.contactShadow.scale.set(1.0 - bob * 1.5, 1.0 - bob * 1.5, 1.0 - bob * 1.5);
       }
     } else {
@@ -269,10 +278,29 @@ export class Character {
       );
       this.contactShadow.scale.set(1.0, 1.0, 1.0);
     }
+
+    // 4. ÇOK KATLI DİKEY ZEMİN KOTU YAKALAMA (Vertical Floor Snapping):
+    // Karakter ister yürüsün ister dursun, altındaki basamak, rampa veya 2. kat zeminini
+    // CollisionManager üzerinden tespit edip Y pozisyonunu yumuşakça (lerp) eşitler.
+    if (this.collisionManager) {
+      const targetFloorY = this.collisionManager.getFloorHeight(
+        currentPos,
+        this.currentFloorY
+      );
+
+      // Merdiven basamakları arasında yumuşak dikey geçiş
+      this.currentFloorY = THREE.MathUtils.lerp(
+        this.currentFloorY,
+        targetFloorY,
+        Math.min(1.0, delta * 14.0)
+      );
+
+      this.rootGroup.position.y = this.currentFloorY;
+    }
   }
 
   /**
-   * Karakterin dünya koordinatını döndürür
+   * Karakterin 3D dünya koordinatını döndürür
    * @returns {THREE.Vector3}
    */
   getPosition() {
@@ -285,6 +313,7 @@ export class Character {
   resetPosition(x = 0, y = 0, z = 0) {
     this.rootGroup.position.set(x, y, z);
     this.targetPosition.set(x, y, z);
+    this.currentFloorY = y;
     this.isMoving = false;
     this.onStateChange({ isMoving: false });
   }

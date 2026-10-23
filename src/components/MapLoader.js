@@ -1,8 +1,9 @@
 /**
  * MapLoader.js
  * 3D (.glb, .gltf) ve 2D (.png, .jpg, .webp) harita/zemin yükleyici sınıfı.
- * Yüklenen 3D modeldeki zemin haricindeki TÜM mobilyaları (masa, sehpa, koltuk, sandalye, duvar vb.)
- * otomatik olarak CollisionManager'a hacimsel engel (AABB) olarak kaydeder.
+ * Çok katlı binalarda zemin, basamak, rampa ve 2. kat döşemelerini otomatik olarak
+ * Walkable Surfaces (Yürünebilir Zeminler) havuzuna ekler.
+ * Devasa haritalarda mobil 60 FPS için Three.js frustumCulled ve boundingSphere optimizasyonunu sağlar.
  */
 
 import * as THREE from 'three';
@@ -23,7 +24,10 @@ export class MapLoader {
     this.currentObjectType = 'none'; // '3d' | '2d' | 'none'
     this.currentTexture = null;
     this.currentPlane = null;
+
+    // Bu modelle yüklenen nesnelerin takibi
     this.registeredObstacles = [];
+    this.registeredWalkableSurfaces = [];
 
     this.imageAspectRatio = 1.0;
     this.isGroundOrientation = true;
@@ -40,12 +44,18 @@ export class MapLoader {
   }
 
   /**
-   * Sahnede var olan haritayı/modeli ve ilgili tüm mobilya/duvar engellerini temizler
+   * Sahnede var olan haritayı/modeli, mobilya engellerini ve yürünebilir yüzeyleri temizler
    */
   clear() {
-    if (this.collisionManager && this.registeredObstacles.length > 0) {
-      this.registeredObstacles.forEach((obj) => this.collisionManager.unregisterObstacle(obj));
-      this.registeredObstacles = [];
+    if (this.collisionManager) {
+      if (this.registeredObstacles.length > 0) {
+        this.registeredObstacles.forEach((obj) => this.collisionManager.unregisterObstacle(obj));
+        this.registeredObstacles = [];
+      }
+      if (this.registeredWalkableSurfaces.length > 0) {
+        this.registeredWalkableSurfaces.forEach((surf) => this.collisionManager.unregisterWalkableSurface(surf));
+        this.registeredWalkableSurfaces = [];
+      }
     }
 
     if (this.currentLoadedObject) {
@@ -75,7 +85,10 @@ export class MapLoader {
 
   /**
    * 3D GLB veya GLTF dosyasını yükler.
-   * Zemin haricindeki her şeyi (Masa, sandalye, duvar vb.) otomatik engel yapar.
+   * Merdiven, rampa ve kat döşemelerini Yürünebilir Zemin (Walkable),
+   * geri kalan her şeyi (duvar, masa, korkuluk vb.) Engel olarak kaydeder.
+   * Devasa sahneler için Frustum Culling optimizasyonunu zorunlu kılar.
+   *
    * @param {string} url - Dosya ObjectURL veya bağlantısı
    * @param {string} fileName - Dosya adı
    */
@@ -97,30 +110,44 @@ export class MapLoader {
         model.position.z -= center.z;
         model.position.y -= modelBox.min.y;
 
-        // Dünya matrislerini güncelle
         model.updateMatrixWorld(true);
 
-        const groundNameRegex = /floor|ground|zemin|walkable|terrain|base|grass|yol/i;
+        // Yürünebilir zemin & merdiven regex tanımı
+        const walkableRegex = /stairs|merdiven|step|basamak|floor|zemin|ground|walkable|ramp|rampa|platform|kat|deck/i;
 
-        // Sahnedeki tüm mesh'leri tara:
-        // YALNIZCA adı açıkça zemin olan veya taban seviyesinde düz yatan nesneleri "Zemin" yap,
-        // GERİ KALAN TÜM MESH'LERİ (Masa, sandalye, sehpa, duvar vb.) otomatik olarak
-        // CollisionManager'a hacimsel engel olarak kaydet!
         model.traverse((node) => {
           if (node.isMesh) {
             node.castShadow = true;
             node.receiveShadow = true;
 
+            // BÜYÜK HARİTA PERFORMANS OPTİMİZASYONU:
+            // Kamera görüş alanı dışında kalan parçaların CPU/GPU yükü oluşturmaması için Frustum Culling aktif edilir
+            node.frustumCulled = true;
+            if (node.geometry) {
+              node.geometry.computeBoundingBox();
+              node.geometry.computeBoundingSphere();
+            }
+
             const name = node.name || '';
-            const isExplicitGround = groundNameRegex.test(name);
+            const isExplicitWalkable = walkableRegex.test(name);
 
-            // BoundingBox kontrolü: taban seviyesinde çok ince düz bir yüzey mi?
+            // Geometrik eğim ve yükseklik analizi
             const meshBox = new THREE.Box3().setFromObject(node);
+            const sizeX = meshBox.max.x - meshBox.min.x;
+            const sizeZ = meshBox.max.z - meshBox.min.z;
             const sizeY = meshBox.max.y - meshBox.min.y;
-            const isFlatGround = isExplicitGround || (meshBox.min.y <= 0.2 && sizeY < 0.25 && meshBox.max.x - meshBox.min.x > 3.0);
 
-            if (!isFlatGround) {
-              // Mobilya / Engel olarak kaydet
+            // Geniş ve yatay yüzeyler (katlar/döşemeler) veya adı merdiven/zemin olanlar
+            const isHorizontalSurface = sizeY < 0.35 && (sizeX > 0.8 || sizeZ > 0.8);
+
+            if (isExplicitWalkable || isHorizontalSurface) {
+              // Yürünebilir Zemin veya Merdiven Basamağı olarak kaydet
+              if (this.collisionManager) {
+                this.collisionManager.registerWalkableSurface(node);
+                this.registeredWalkableSurfaces.push(node);
+              }
+            } else {
+              // Mobilya, korkuluk veya duvar engeli olarak kaydet
               if (this.collisionManager) {
                 this.collisionManager.registerObstacle(node);
                 this.registeredObstacles.push(node);
@@ -136,6 +163,7 @@ export class MapLoader {
           name: fileName,
           object: model,
           box: new THREE.Box3().setFromObject(model),
+          walkableCount: this.registeredWalkableSurfaces.length,
           obstacleCount: this.registeredObstacles.length,
         });
       },
@@ -187,9 +215,16 @@ export class MapLoader {
         this.currentPlane.receiveShadow = true;
         this.currentPlane.castShadow = false;
         this.currentPlane.name = 'floor_plane_2d';
+        this.currentPlane.frustumCulled = true;
 
         this.currentLoadedObject = this.currentPlane;
         this.scene.add(this.currentPlane);
+
+        // CollisionManager'a yürünebilir zemin olarak ekle
+        if (this.collisionManager) {
+          this.collisionManager.registerWalkableSurface(this.currentPlane);
+          this.registeredWalkableSurfaces.push(this.currentPlane);
+        }
 
         this.setOrientation(this.isGroundOrientation);
 
@@ -349,39 +384,33 @@ export class MapLoader {
       const url = URL.createObjectURL(blob);
       this.loadImage(url, 'Demo_Kat_Plani.png');
 
-      // 2D Harita sınırlarına ve odadaki masa alanlarına otomatik engel kutuları yerleştir
       if (this.collisionManager) {
         this.clearAllWallBoxes();
-        // Dış Duvar Sınırları
         this.createWallBox(0, 4.8, 16.0, 0.4, 2.5);
         this.createWallBox(0, -4.8, 16.0, 0.4, 2.5);
         this.createWallBox(-7.8, 0, 0.4, 10.0, 2.5);
         this.createWallBox(7.8, 0, 0.4, 10.0, 2.5);
-
-        // İç Oda Bölmeleri
         this.createWallBox(-2.5, 0.5, 0.4, 4.5, 2.5);
         this.createWallBox(2.5, 0.5, 0.4, 4.5, 2.5);
-
-        // Salon Ortasındaki Masa / Sehpa Engeli (h: 1.0m)
         this.createWallBox(2.0, -2.0, 2.6, 1.4, 1.0);
       }
     });
   }
 
   /**
-   * Monokrom 3D Galeri sergisini oluşturur ve duvarlar ile heykeli engel olarak kaydeder
+   * Monokrom 3D Galeri sergisini oluşturur ve yürünebilir zeminler ile engelleri bağlar
    */
   loadDemo3DGallery() {
     this.clear();
     const group = new THREE.Group();
 
-    // Zemin
+    // Zemin Kat
     const floorGeo = new THREE.BoxGeometry(22, 0.4, 18);
     const floorMat = new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.4 });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.position.y = 0.2;
     floor.receiveShadow = true;
-    floor.name = 'floor';
+    floor.name = 'floor_walkable_main';
     group.add(floor);
 
     // Arka Duvar (Engel)
@@ -422,8 +451,11 @@ export class MapLoader {
     knot.castShadow = true;
     group.add(knot);
 
-    // Tüm engelleri CollisionManager'a hacimsel AABB olarak kaydet
+    // CollisionManager'a zemin ve engelleri kaydet
     if (this.collisionManager) {
+      this.collisionManager.registerWalkableSurface(floor);
+      this.registeredWalkableSurfaces.push(floor);
+
       this.collisionManager.registerObstacle(wall);
       this.collisionManager.registerObstacle(sideWall);
       this.collisionManager.registerObstacle(pedestal);
@@ -440,22 +472,12 @@ export class MapLoader {
       name: '3D Galeri (Örnek)',
       object: group,
       box: new THREE.Box3().setFromObject(group),
+      walkableCount: 1,
       obstacleCount: this.registeredObstacles.length,
     });
   }
 
   getWalkableObjects() {
-    const list = [];
-    if (this.currentPlane && this.isGroundOrientation) {
-      list.push(this.currentPlane);
-    }
-    if (this.currentLoadedObject && this.currentObjectType === '3d') {
-      this.currentLoadedObject.traverse((node) => {
-        if (node.isMesh && /floor|ground|zemin|plane/i.test(node.name)) {
-          list.push(node);
-        }
-      });
-    }
-    return list;
+    return [...this.registeredWalkableSurfaces];
   }
 }
