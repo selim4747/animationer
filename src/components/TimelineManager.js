@@ -265,6 +265,7 @@ export class TimelineManager {
 
     this._notify();
 
+    let playbackFailed = false;
     try {
       while (this.currentStepIndex < this.steps.length) {
         if (this._abortPlayback) break;
@@ -286,6 +287,7 @@ export class TimelineManager {
         this.currentStepIndex++;
       }
     } catch (err) {
+      playbackFailed = true;
       console.error('Timeline oynatma hatası:', err);
     } finally {
       this.isPlaying = false;
@@ -295,6 +297,7 @@ export class TimelineManager {
       }
       this._notify();
     }
+    return !playbackFailed && !this._abortPlayback;
   }
 
   /**
@@ -439,18 +442,82 @@ export class TimelineManager {
   importSequence(jsonInput) {
     try {
       const data = typeof jsonInput === 'string' ? JSON.parse(jsonInput) : jsonInput;
-      if (Array.isArray(data.steps)) {
-        this.stop();
-        this.steps = data.steps;
-        this._notify();
-        return true;
-      } else if (Array.isArray(data)) {
-        this.stop();
-        this.steps = data;
-        this._notify();
-        return true;
+      const rawSteps = Array.isArray(data) ? data : data?.steps;
+      if (!Array.isArray(rawSteps)) {
+        throw new Error('Geçersiz sequence JSON yapısı: "steps" dizisi bulunamadı.');
       }
-      throw new Error('Geçersiz sequence JSON yapısı: "steps" dizisi bulunamadı.');
+      if (rawSteps.length > 5000) {
+        throw new Error('Zaman çizelgesi en fazla 5000 adım içerebilir.');
+      }
+
+      const allowedTypes = new Set(Object.values(ACTION_TYPES));
+      const allowedEmotes = new Set(['jump', 'wave', 'spin']);
+      const validatedSteps = rawSteps.map((step, index) => {
+        if (!step || typeof step !== 'object' || Array.isArray(step) || !allowedTypes.has(step.type)) {
+          throw new Error(`${index + 1}. adımın türü geçersiz.`);
+        }
+        const data = step.data && typeof step.data === 'object' && !Array.isArray(step.data)
+          ? step.data
+          : {};
+        let cleanData;
+        switch (step.type) {
+          case ACTION_TYPES.MOVE_TO: {
+            const coords = ['x', 'y', 'z'].map((key) => Number(data[key]));
+            if (coords.some((value) => !Number.isFinite(value) || Math.abs(value) > 10000)) {
+              throw new Error(`${index + 1}. adımın koordinatları geçersiz.`);
+            }
+            cleanData = { x: coords[0], y: coords[1], z: coords[2] };
+            break;
+          }
+          case ACTION_TYPES.WAIT: {
+            const duration = Number(data.duration ?? 1);
+            if (!Number.isFinite(duration) || duration < 0 || duration > 3600) {
+              throw new Error(`${index + 1}. adımın bekleme süresi 0–3600 saniye arasında olmalı.`);
+            }
+            cleanData = { duration };
+            break;
+          }
+          case ACTION_TYPES.TRIGGER_DOOR: {
+            const action = data.action ?? 'toggle';
+            if (!['open', 'close', 'toggle'].includes(action)) {
+              throw new Error(`${index + 1}. adımın kapı eylemi geçersiz.`);
+            }
+            cleanData = { action };
+            break;
+          }
+          case ACTION_TYPES.SWITCH_CAMERA: {
+            const stationId = typeof data.stationId === 'string' && data.stationId.length <= 128
+              ? data.stationId
+              : undefined;
+            const stationIndex = Number(data.stationIndex);
+            if (!stationId && (!Number.isInteger(stationIndex) || stationIndex < 0 || stationIndex > 10000)) {
+              throw new Error(`${index + 1}. adımın kamera hedefi geçersiz.`);
+            }
+            cleanData = stationId ? { stationId } : { stationIndex };
+            break;
+          }
+          case ACTION_TYPES.PLAY_EMOTE: {
+            const emote = data.emote ?? 'jump';
+            if (!allowedEmotes.has(emote)) {
+              throw new Error(`${index + 1}. adımın emote değeri geçersiz.`);
+            }
+            cleanData = { emote };
+            break;
+          }
+        }
+        const title = typeof step.title === 'string' ? step.title.slice(0, 160) : '';
+        return {
+          id: `step-import-${index + 1}`,
+          type: step.type,
+          title: title || this._getDefaultTitleForType(step.type, cleanData),
+          data: cleanData,
+        };
+      });
+
+      this.stop();
+      this.steps = validatedSteps;
+      this._notify();
+      return true;
     } catch (err) {
       console.error('Sequence içe aktarma hatası:', err);
       throw err;

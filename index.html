@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>3D & 2D Sahne, Karakter, Reji ve Render Stüdyosu</title>
-    <meta name="description" content="Vite ve Capacitor uyumlu monokrom Three.js sahnesi, zaman çizelgesi eylem kuyruğu (timeline), 60 FPS video/ekran görüntüsü dışa aktarma (render) motoru." />
+    <meta name="description" content="Vite ve Capacitor uyumlu monokrom Three.js sahnesi, zaman çizelgesi eylem kuyruğu ve video/ekran görüntüsü dışa aktarma araçları." />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
@@ -360,23 +360,23 @@
           <!-- Ekran Görüntüsü -->
           <div class="studio-sub-header">FOTOĞRAF / EKRAN GÖRÜNTÜSÜ:</div>
           <div class="studio-ctrl-row">
-            <button id="btn-take-screenshot" class="hud-btn primary flex-grow" title="O anki 3D sahneyi temiz ve yüksek çözünürlüklü PNG olarak indir">
+            <button id="btn-take-screenshot" class="hud-btn primary flex-grow" title="O anki 3D sahneyi mevcut canvas çözünürlüğünde PNG olarak indir">
               📸 Anlık Ekran Görüntüsü Al (PNG)
             </button>
           </div>
 
           <!-- Video Kayıt Kontrolleri -->
-          <div class="studio-sub-header" style="margin-top: 14px;">VİDEO KAYDI (60 FPS WEBGL RENDER):</div>
+          <div class="studio-sub-header" style="margin-top: 14px;">VİDEO KAYDI (HEDEF: 60 FPS):</div>
 
-          <!-- Çözünürlük ve Kalite -->
+          <!-- Bitrate profili; çözünürlük canvas boyutuna bağlıdır -->
           <div class="studio-slider-group" style="margin-bottom: 8px;">
             <div class="slider-row-label">
-              <span>Render Kalitesi:</span>
-              <span id="label-render-res">1080p HD (8.5 Mbps)</span>
+              <span>Bitrate Profili:</span>
+              <span id="label-render-res">Yüksek (8.5 Mbps)</span>
             </div>
             <div class="studio-ctrl-row">
-              <button id="btn-quality-720p" class="hud-btn flex-grow">720p Standart</button>
-              <button id="btn-quality-1080p" class="hud-btn flex-grow active">1080p HD (60 FPS)</button>
+              <button id="btn-quality-720p" class="hud-btn flex-grow" title="4 Mbps hedef bitrate; çıktı çözünürlüğü sahne canvas ölçüsüne bağlıdır">Standart (4 Mbps)</button>
+              <button id="btn-quality-1080p" class="hud-btn flex-grow active" title="8.5 Mbps hedef bitrate; çıktı çözünürlüğü sahne canvas ölçüsüne bağlıdır">Yüksek (8.5 Mbps)</button>
             </div>
           </div>
 
@@ -401,7 +401,7 @@
           </div>
 
           <div class="studio-info-text" style="margin-top: 12px;">
-            * <strong>Rejiyi Oynat ve Kaydet:</strong> Panel otomatik gizlenir, sahne 0. adımdan itibaren 60 FPS WebM/MP4 olarak kaydedilir ve akış bitince video doğrudan cihazınıza indirilir.
+            * <strong>Rejiyi Oynat ve Kaydet:</strong> Panel otomatik gizlenir ve sahne oynatımı WebM/MP4 olarak kaydedilir. 60 FPS hedefi ve bitrate cihazın kayıt desteğine bağlıdır; video çözünürlüğü mevcut sahne canvas ölçüsünü kullanır.
           </div>
         </div>
       </div>
@@ -416,7 +416,7 @@
         </div>
         <div class="modal-dialog-body">
           <p><strong>1. Reji / Zaman Çizelgesi (Timeline):</strong> Sahnedeki hareketleri sırayla yürüten yönetmen modudur. 'Adım Kayıt Modu'nu açarak zemine tıkladığınızda adım kuyruğa otomatik eklenir.</p>
-          <p><strong>2. Video & Render Motoru:</strong> 'RENDER' sekmesinden 60 FPS video veya anlık yüksek çözünürlüklü PNG alabilirsiniz. 'Rejiyi Oynat ve Kaydet' butonu tüm sahneyi sinematik modda videoya çeker.</p>
+          <p><strong>2. Video & Render Motoru:</strong> 'RENDER' sekmesinden cihaz desteğinin elverdiği kare hızında video veya mevcut canvas ölçüsünde PNG alabilirsiniz. Bitrate profili video çözünürlüğünü değiştirmez. 'Rejiyi Oynat ve Kaydet' butonu sahne akışını videoya çeker.</p>
           <p><strong>3. Kısayol Tuşları:</strong></p>
           <p>• <strong>'H' Tuşu:</strong> Tüm panelleri gizler, sinematik tam ekran görünümüne geçer.</p>
           <p>• <strong>'Space' (Boşluk):</strong> Reji akışını başlatır veya duraklatır.</p>
