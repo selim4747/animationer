@@ -1,0 +1,6 @@
+{
+  "name": "3D & 2D Sahne ve Kamera İstasyonları Stüdyosu",
+  "description": "3D model (.glb/.gltf) ve 2D (.png/.jpg) harita/zemin yükleme, serbest gezinti ve yumuşak geçişli sabit kamera açıları istasyon aracı.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
