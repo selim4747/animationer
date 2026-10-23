@@ -95,3 +95,36 @@ test('portable project export embeds original sprite image and timeline timing r
   assert.equal(saved.steps[0].duration, 4);
   assert.equal(saved.steps[0].data.loop, false);
 });
+
+test('project sprite manifest rejects duplicate or missing IDs before touching the scene', () => {
+  const asset = { id: 'sprite-1', data: 'AQID' };
+  assert.deepEqual(
+    [...SpriteAnimationManager.validateProjectAssets([asset])],
+    ['sprite-1'],
+  );
+  assert.throws(
+    () => SpriteAnimationManager.validateProjectAssets([asset, { ...asset }]),
+    /yinelenen spritesheet kimliği/i,
+  );
+  assert.throws(
+    () => SpriteAnimationManager.validateProjectAssets([{ data: 'AQID' }]),
+    /kimliği geçersiz/i,
+  );
+});
+
+test('sprite positions remain visible after a viewport shrinks or changes orientation', () => {
+  const manager = new SpriteAnimationManager(new THREE.Scene(), { width: 400, height: 300 });
+  const actor = makeActor();
+  actor.frameWidth = 32;
+  actor.frameHeight = 32;
+  actor.x = 380;
+  actor.y = 270;
+  manager.actors.push(actor);
+
+  manager.resize(120, 80);
+
+  assert.equal(actor.x, 88);
+  assert.equal(actor.y, 48);
+  assert.ok(actor.x - actor.displayHeight / 2 >= 0);
+  assert.ok(actor.y - actor.displayHeight / 2 >= 0);
+});
