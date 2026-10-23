@@ -285,6 +285,14 @@ export class Door {
     }
   }
 
+  cancelTransition() {
+    if (!this.doorTransitionResolve) return false;
+    const resolve = this.doorTransitionResolve;
+    this.doorTransitionResolve = null;
+    resolve();
+    return true;
+  }
+
   /**
    * Her karede kapının menteşe animasyonunu ve duvarların kesit şeffaflığını günceller
    * @param {number} delta - Geçen süre

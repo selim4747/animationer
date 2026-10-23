@@ -77,7 +77,7 @@ test('sprite hit testing and pointer-driven transforms use stage coordinates', (
   assert.equal(manager.hitTest(20, 30), actor);
   assert.equal(manager.hitTest(100, 100), null);
   manager.setTransform(actor.id, { x: 380, y: -5, height: 80 });
-  assert.deepEqual([actor.x, actor.y, actor.displayHeight], [380, 0, 80]);
+  assert.deepEqual([actor.x, actor.y, actor.displayHeight], [360, 40, 80]);
 });
 
 test('portable project export embeds original sprite image and timeline timing remains serializable', async () => {
@@ -122,9 +122,35 @@ test('sprite positions remain visible after a viewport shrinks or changes orient
   manager.actors.push(actor);
 
   manager.resize(120, 80);
-
-  assert.equal(actor.x, 88);
-  assert.equal(actor.y, 48);
   assert.ok(actor.x - actor.displayHeight / 2 >= 0);
+  assert.ok(actor.x + actor.displayHeight / 2 <= 120);
   assert.ok(actor.y - actor.displayHeight / 2 >= 0);
+  assert.ok(actor.y + actor.displayHeight / 2 <= 80);
+  manager.setTransform(actor.id, { x: 8, y: 8 });
+  assert.ok(actor.x - actor.displayHeight / 2 >= 0, 'sprite can be dragged back from a resized edge');
+  assert.ok(actor.y - actor.displayHeight / 2 >= 0);
+});
+
+test('sprites remain fully visible and proportionally scaled on target phone viewports', () => {
+  const manager = new SpriteAnimationManager(new THREE.Scene(), { width: 800, height: 600 });
+  const actor = makeActor();
+  actor.frameWidth = 64;
+  actor.frameHeight = 32;
+  actor.x = 790;
+  actor.y = 590;
+  actor.displayHeight = 120;
+  manager.actors.push(actor);
+  for (const [width, height] of [[320, 568], [360, 640], [844, 390]]) {
+    manager.resize(width, height);
+    const spriteWidth = actor.displayHeight * 2;
+    assert.ok(actor.x - spriteWidth / 2 >= -1e-6, `${width}x${height}: left edge`);
+    assert.ok(actor.x + spriteWidth / 2 <= width + 1e-6, `${width}x${height}: right edge`);
+    assert.ok(actor.y - actor.displayHeight / 2 >= -1e-6, `${width}x${height}: top edge`);
+    assert.ok(actor.y + actor.displayHeight / 2 <= height + 1e-6, `${width}x${height}: bottom edge`);
+    manager.setTransform(actor.id, { x: width / 2, y: height / 2 });
+    assert.equal(actor.x, width / 2);
+    assert.equal(actor.y, height / 2);
+    assert.ok(actor.x - actor.displayHeight >= -1e-6);
+    assert.ok(actor.x + actor.displayHeight <= width + 1e-6);
+  }
 });

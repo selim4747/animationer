@@ -150,6 +150,28 @@ test('stop aborts an active scheduled wait before immediate restart', async () =
   assert.equal(runs, 1);
 });
 
+test('stop resolves an active door action and prevents its old post-action delay', async () => {
+  let started;
+  const actionStarted = new Promise((resolve) => { started = resolve; });
+  let finishDoor;
+  let cancellations = 0;
+  const door = {
+    openDoorPromise: () => new Promise((resolve) => { finishDoor = resolve; started(); }),
+    cancelTransition: () => { cancellations += 1; finishDoor?.(); },
+  };
+  const timeline = new TimelineManager({ door });
+  timeline.setPlayMode('scheduled');
+  timeline.steps = [{ type: ACTION_TYPES.TRIGGER_DOOR, data: { action: 'open' }, startAt: 0 }];
+  const previousPlayback = timeline.play();
+  await actionStarted;
+  timeline.stop();
+  timeline.steps = [{ type: ACTION_TYPES.WAIT, data: { duration: 0.01 }, startAt: 0 }];
+  assert.equal(await timeline.play(), true);
+  assert.equal(await previousPlayback, false);
+  assert.equal(cancellations, 1);
+  assert.equal(timeline.isPlaying, false);
+});
+
 test('character accepts an imported model and plays a matching locomotion clip', () => {
   const character = new Character(new THREE.Scene());
   const model = new THREE.Group();

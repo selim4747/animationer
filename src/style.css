@@ -591,6 +591,15 @@ html, body {
   border-radius: 2px;
 }
 .step-run-button .step-meta { max-width: 100%; }
+.autosave-status {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--mono-border);
+  border-radius: 3px;
+  color: var(--mono-light);
+  font: 10px/1.4 monospace;
+  overflow-wrap: anywhere;
+}
 
 .step-badge {
   font-size: 8.5px;
@@ -1005,6 +1014,7 @@ input[type="range"]::-moz-range-thumb {
     width: 330px;
     max-width: 46vw;
     max-height: calc(100vh - 56px);
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 56px);
     border-radius: 6px;
     border: 1px solid var(--mono-border);
   }
@@ -1013,6 +1023,7 @@ input[type="range"]::-moz-range-thumb {
   }
   .studio-panel-body {
     max-height: calc(100vh - 100px);
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 100px);
   }
 }
 
