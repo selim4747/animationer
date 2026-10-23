@@ -6,6 +6,8 @@
  * video/ekran görüntüsü dışa aktarma (RecorderManager) kontrollerini yönetir.
  */
 
+import { createAutosaveRecord } from './ProjectStore.js';
+
 export class UIManager {
   /**
    * @param {Object} context
@@ -17,11 +19,14 @@ export class UIManager {
    * @param {import('./RecorderManager.js').RecorderManager} [context.recorderManager]
    * @param {Object} context.sceneHelpers - gridHelper, dirLight, hemiLight referansları
    */
-  constructor({ timelineManager, character, characterManager, spriteAnimationManager, onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, sceneHelpers }) {
+  constructor({ timelineManager, character, characterManager, spriteAnimationManager, projectStore = null, onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, sceneHelpers }) {
     this.timeline = timelineManager;
     this.character = character;
     this.characters = characterManager || character;
     this.sprites = spriteAnimationManager;
+    this.projectStore = projectStore;
+    this._restoringProject = false;
+    this._autosaveTimer = null;
     this.onControlModeChange = onControlModeChange;
     this.door = door;
     this.cameraManager = cameraManager;
@@ -36,16 +41,81 @@ export class UIManager {
     this._cacheDOM();
     this._bindEvents();
     this._initShortcuts();
+    this._connectAutosave();
 
     // İlk durum senkronizasyonu
     this.updateTimelineUI();
     this.updateCameraList(this.cameraManager.stations, this.cameraManager.activeStationId);
     this.updateCharacterList(this.characters?.list?.() || []);
     this.updateSpriteList(this.sprites?.list?.() || [], this.sprites?.selectedId);
+    void this.restoreAutosave();
   }
 
   setRecorder(recorderManager) {
     this.recorder = recorderManager;
+  }
+
+  _connectAutosave() {
+    if (!this.projectStore) {
+      if (this.dom.autosaveStatus) this.dom.autosaveStatus.textContent = 'Otomatik kayıt desteklenmiyor.';
+      return;
+    }
+    const timelineNotify = this.timeline.onStateChange;
+    this.timeline.onStateChange = (state) => {
+      timelineNotify?.(state);
+      this._scheduleAutosave();
+    };
+    const spriteNotify = this.sprites.onStateChange;
+    this.sprites.onStateChange = (state) => {
+      spriteNotify?.(state);
+      this._scheduleAutosave();
+    };
+  }
+
+  _scheduleAutosave() {
+    if (!this.projectStore || this._restoringProject) return;
+    if (this.dom.autosaveStatus) this.dom.autosaveStatus.textContent = 'Otomatik kayıt bekliyor…';
+    clearTimeout(this._autosaveTimer);
+    this._autosaveTimer = setTimeout(() => { void this._saveAutosave(); }, 700);
+  }
+
+  async _saveAutosave() {
+    try {
+      const record = createAutosaveRecord({
+        timeline: JSON.parse(this.timeline.exportSequence()),
+        sprites: await this.sprites.exportAssetsForStorage(),
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      });
+      const savedAt = await this.projectStore.save(record);
+      if (this.dom.autosaveStatus) this.dom.autosaveStatus.textContent = `Otomatik kayıtlı · ${new Date(savedAt).toLocaleTimeString()}`;
+    } catch (error) {
+      if (this.dom.autosaveStatus) this.dom.autosaveStatus.textContent = `Otomatik kayıt başarısız: ${error.message}`;
+    }
+  }
+
+  async restoreAutosave() {
+    if (!this.projectStore) return;
+    try {
+      const record = await this.projectStore.load();
+      if (!record) {
+        if (this.dom.autosaveStatus) this.dom.autosaveStatus.textContent = 'Otomatik kayıt yok.';
+        return;
+      }
+      const candidate = new this.timeline.constructor({});
+      candidate.importSequence(record.timeline);
+      const spriteIds = new Set(record.sprites.map((asset) => asset.id));
+      const missingSprite = candidate.steps.find((step) => step.type === 'PLAY_SPRITE_ANIMATION' && !spriteIds.has(step.actorId));
+      if (missingSprite) throw new Error(`'${missingSprite.actorId}' sprite dosyası otomatik kayıtta yok.`);
+      this._restoringProject = true;
+      await this.sprites.importAssets(record.sprites);
+      this.timeline.steps = candidate.steps;
+      this.timeline.playMode = candidate.playMode;
+      this.timeline._notify();
+      if (this.dom.autosaveStatus) this.dom.autosaveStatus.textContent = 'Otomatik kayıt geri yüklendi (timeline + 2D sprite).';
+    } catch (error) {
+      if (this.dom.autosaveStatus) this.dom.autosaveStatus.textContent = `Otomatik kayıt geri yüklenemedi: ${error.message}`;
+      this.showToast(`Otomatik kayıt açılamadı; başlangıç projesi korundu: ${error.message}`);
+    } finally { this._restoringProject = false; }
   }
 
   _cacheDOM() {
@@ -80,6 +150,7 @@ export class UIManager {
 
       // Sekme 1: REJİ / TIMELINE
       timelineListContainer: document.getElementById('timeline-steps-list'),
+      autosaveStatus: document.getElementById('autosave-status'),
       btnTimelinePlay: document.getElementById('btn-timeline-play'),
       btnTimelinePause: document.getElementById('btn-timeline-pause'),
       btnTimelineStop: document.getElementById('btn-timeline-stop'),
@@ -314,7 +385,15 @@ export class UIManager {
     if (d.btnExportJSON) {
       d.btnExportJSON.addEventListener('click', async () => {
         try {
-          const payload = { ...JSON.parse(this.timeline.exportSequence()), format: 'animationer-project', projectVersion: 1, sprites: await this.sprites.exportAssets() };
+          const sprites = await this.sprites.exportAssets();
+          this.sprites.constructor.validateProjectAssets(sprites);
+          const payload = {
+            ...JSON.parse(this.timeline.exportSequence()),
+            format: 'animationer-project', schemaVersion: 2, projectVersion: 2,
+            updatedAt: new Date().toISOString(),
+            scope: { timeline: true, sprites2d: true, characterTransforms: false, mapAssets: false, cameraPreferences: false },
+            sprites,
+          };
           const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
           const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'animationer-project.json'; link.click(); URL.revokeObjectURL(url);
           this.showToast('Proje ve gömülü spritesheet görselleri indirildi');
@@ -327,11 +406,19 @@ export class UIManager {
       d.fileInputJSON.addEventListener('change', (e) => {
         const file = e.target.files && e.target.files[0];
         if (file) {
+          if (file.size > 140 * 1024 * 1024) {
+            this.showToast('Proje JSON’u 140 MB dosya sınırını aşıyor; mevcut proje korunuyor.');
+            d.fileInputJSON.value = '';
+            return;
+          }
           const reader = new FileReader();
           reader.onload = async (evt) => {
             try {
               const payload = JSON.parse(evt.target.result);
               if (payload?.format === 'animationer-project') {
+                if (![1, 2].includes(payload.projectVersion || 1) || (payload.schemaVersion && payload.schemaVersion !== 2)) {
+                  throw new Error('Bu proje sürümü desteklenmiyor.');
+                }
                 const assets = payload.sprites || [];
                 const assetIds = this.sprites.constructor.validateProjectAssets(assets);
                 const candidateTimeline = new this.timeline.constructor({});
@@ -1010,9 +1097,11 @@ export class UIManager {
       item.innerHTML = `
         <div class="step-num">${idx + 1}</div>
         <div class="step-content">
-          <div class="step-badge">${typeBadge}</div>
-          <div class="step-title"></div>
-          <div class="step-meta"></div>
+          <button type="button" class="step-run-button">
+            <span class="step-badge">${typeBadge}</span>
+            <span class="step-title"></span>
+            <span class="step-meta"></span>
+          </button>
         </div>
         <div class="step-actions">
           <button class="step-btn-icon btn-step-up" title="Yukarı Taşı">▲</button>
@@ -1055,7 +1144,9 @@ export class UIManager {
         this.timeline.removeStep(idx);
       });
 
-      item.addEventListener('click', () => {
+      const runButton = item.querySelector('.step-run-button');
+      runButton.setAttribute('aria-label', `Çalıştır: ${idx + 1}. adım, ${step.title || 'Adım'}`);
+      runButton.addEventListener('click', () => {
         this.timeline.currentStepIndex = idx;
         this.timeline._executeStep(step);
         this.showToast(`${idx + 1}. Adım Çalıştırıldı: ${step.title}`);

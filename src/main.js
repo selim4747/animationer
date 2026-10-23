@@ -15,9 +15,10 @@ import { TimelineManager, ACTION_TYPES } from './components/TimelineManager.js';
 import { RecorderManager } from './components/RecorderManager.js';
 import { UIManager } from './components/UIManager.js';
 import { SpriteAnimationManager } from './components/SpriteAnimationManager.js';
-
+import { IndexedProjectStore } from './components/ProjectStore.js';
 class App {
   constructor() {
+    this.projectStore = new IndexedProjectStore();
     this.container = document.getElementById('canvas-container');
     this.clock = new THREE.Clock();
 
@@ -384,6 +385,7 @@ class App {
       mapLoader: this.mapLoader,
       recorderManager: this.recorderManager,
       spriteAnimationManager: this.spriteAnimationManager,
+      projectStore: this.projectStore,
       characterManager: this.character,
       onControlModeChange: (mode) => this.setControlMode(mode),
       sceneHelpers: {

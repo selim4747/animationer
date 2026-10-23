@@ -115,18 +115,33 @@ export class SpriteAnimationManager {
       return { id: actor.id, name: actor.name, columns: actor.columns, rows: actor.rows, fps: actor.fps, x: actor.x, y: actor.y, displayHeight: actor.displayHeight, mimeType: actor.sourceFile.type, fileName: actor.sourceFile.name, data: btoa(binary) };
     }));
   }
+  async exportAssetsForStorage() {
+    return this.actors.map((actor) => {
+      if (!actor.sourceFile) throw new Error(`"${actor.name}" spritesheet kaynağı yok; otomatik kayıt tamamlanamadı.`);
+      return {
+        id: actor.id, name: actor.name, columns: actor.columns, rows: actor.rows, fps: actor.fps,
+        x: actor.x, y: actor.y, displayHeight: actor.displayHeight,
+        mimeType: actor.sourceFile.type, fileName: actor.sourceFile.name,
+        blob: actor.sourceFile.slice(0, actor.sourceFile.size, actor.sourceFile.type),
+      };
+    });
+  }
   static validateProjectAssets(assets = []) {
     if (!Array.isArray(assets) || assets.length > 100) throw new Error('Projedeki spritesheet listesi geçersiz veya çok büyük.');
     const ids = new Set();
+    let totalBytes = 0;
     for (const asset of assets) {
       if (!asset || typeof asset !== 'object' || typeof asset.id !== 'string' || !asset.id || asset.id.length > 128) {
         throw new Error('Projedeki spritesheet kimliği geçersiz.');
       }
       if (ids.has(asset.id)) throw new Error(`Projede yinelenen spritesheet kimliği var: ${asset.id}`);
       ids.add(asset.id);
-      if (typeof asset.data !== 'string' || asset.data.length > 70 * 1024 * 1024) {
+      const hasBlob = typeof Blob !== 'undefined' && asset.blob instanceof Blob;
+      if ((!hasBlob && typeof asset.data !== 'string') || (hasBlob && !asset.blob.size) || (typeof asset.data === 'string' && asset.data.length > 70 * 1024 * 1024)) {
         throw new Error('Spritesheet dosyası eksik veya güvenli boyut sınırını aşıyor.');
       }
+      totalBytes += hasBlob ? asset.blob.size : Math.floor(asset.data.length * 3 / 4);
+      if (totalBytes > MAX_FILE_SIZE * 2) throw new Error('Toplam proje boyutu 100 MB sınırını aşıyor.');
     }
     return ids;
   }
@@ -141,8 +156,9 @@ export class SpriteAnimationManager {
     });
     try {
       for (const asset of assets) {
-        const binary = atob(asset.data);
-        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+        const bytes = asset.blob instanceof Blob
+          ? new Uint8Array(await asset.blob.arrayBuffer())
+          : Uint8Array.from(atob(asset.data), (char) => char.charCodeAt(0));
         const file = new File([bytes], asset.fileName || `${asset.name || 'sprite'}.png`, { type: asset.mimeType || 'image/png' });
         const actor = await staging.addSpriteSheet(file, { columns: asset.columns, rows: asset.rows, fps: asset.fps });
         actor.name = String(asset.name || actor.name).slice(0, 48);
@@ -195,11 +211,23 @@ export class SpriteAnimationManager {
   setTransform(id, { x, y, height } = {}) {
     const actor = this.getActor(id);
     if (!actor) return false;
-    if (Number.isFinite(Number(x))) actor.x = Math.max(0, Math.min(this.width, Number(x)));
-    if (Number.isFinite(Number(y))) actor.y = Math.max(0, Math.min(this.height, Number(y)));
-    if (Number.isFinite(Number(height))) actor.displayHeight = Math.max(16, Math.min(this.height * 2, Number(height)));
+    if (Number.isFinite(Number(x))) actor.x = Number(x);
+    if (Number.isFinite(Number(y))) actor.y = Number(y);
+    if (Number.isFinite(Number(height))) actor.displayHeight = Math.max(16, Number(height));
+    this._constrainActor(actor);
     this._setPosition(actor);
+    this._notify('transformed', actor);
     return true;
+  }
+
+  _constrainActor(actor) {
+    const aspect = actor.frameWidth / actor.frameHeight;
+    const maxHeight = Math.max(1, Math.min(this.height, this.width / aspect));
+    actor.displayHeight = Math.max(Math.min(16, maxHeight), Math.min(maxHeight, actor.displayHeight));
+    const halfWidth = (actor.displayHeight * aspect) / 2;
+    const halfHeight = actor.displayHeight / 2;
+    actor.x = Math.max(halfWidth, Math.min(this.width - halfWidth, Number(actor.x) || halfWidth));
+    actor.y = Math.max(halfHeight, Math.min(this.height - halfHeight, Number(actor.y) || halfHeight));
   }
 
   _setPosition(actor) {
@@ -290,14 +318,15 @@ export class SpriteAnimationManager {
   }
 
   resize(width, height) {
+    const previousWidth = this.width;
+    const previousHeight = this.height;
     this.width = Math.max(1, width);
     this.height = Math.max(1, height);
     for (const actor of this.actors) {
-      const spriteWidth = actor.displayHeight * (actor.frameWidth / actor.frameHeight);
-      const halfWidth = Math.min(this.width / 2, spriteWidth / 2);
-      const halfHeight = Math.min(this.height / 2, actor.displayHeight / 2);
-      actor.x = Math.max(halfWidth, Math.min(this.width - halfWidth, actor.x));
-      actor.y = Math.max(halfHeight, Math.min(this.height - halfHeight, actor.y));
+      actor.x = (actor.x / previousWidth) * this.width;
+      actor.y = (actor.y / previousHeight) * this.height;
+      actor.displayHeight = (actor.displayHeight / previousHeight) * this.height;
+      this._constrainActor(actor);
       this._setPosition(actor);
     }
     this._notify('resized');

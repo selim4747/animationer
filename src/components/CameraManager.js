@@ -155,6 +155,18 @@ export class CameraManager {
     });
   }
 
+  cancelTransition() {
+    if (!this.isTransitioning && !this.transitionResolve) return false;
+    this.isTransitioning = false;
+    this.controls.enabled = true;
+    this.activeStationId = null;
+    const resolve = this.transitionResolve;
+    this.transitionResolve = null;
+    resolve?.();
+    this.onStateChange({ mode: 'free', stationName: 'Serbest Orbit', stations: this.stations, activeId: null });
+    return true;
+  }
+
   /**
    * Mevcut kamera açısını yeni bir istasyon olarak kaydeder
    */

@@ -314,10 +314,11 @@ export class TimelineManager {
           if (this._abortPlayback || playbackId !== this._playbackId) break;
         }
 
+        if (!(await this._waitUntilResumed(playbackId))) break;
         const step = this.steps[this.currentStepIndex];
         this._notify();
 
-        await this._executeStep(step);
+        await this._executeStep(step, playbackId);
 
         if (this._abortPlayback || playbackId !== this._playbackId) break;
         this.currentStepIndex++;
@@ -375,10 +376,12 @@ export class TimelineManager {
         if (this._abortPlayback || playbackId !== this._playbackId) break;
         await this._sleepWithAbort(Math.max(0, item.startAt - previousStartAt) * 1000, playbackId);
         if (this._abortPlayback || playbackId !== this._playbackId) break;
+        if (!(await this._waitUntilResumed(playbackId))) break;
+        if (this._abortPlayback || playbackId !== this._playbackId) break;
         previousStartAt = item.startAt;
         this.currentStepIndex = item.index;
         this._notify();
-        runningActions.push(Promise.resolve(this._executeStep(item.step)));
+        runningActions.push(Promise.resolve(this._executeStep(item.step, playbackId)));
       }
       const results = await Promise.allSettled(runningActions);
       failed = results.some((result) => result.status === 'rejected');
@@ -405,7 +408,7 @@ export class TimelineManager {
    * Tek bir adımı çalıştırır
    * @private
    */
-  async _executeStep(step) {
+  async _executeStep(step, playbackId = this._playbackId) {
     if (!step) return;
     const actor = this.character?.getCharacter
       ? (this.character.getCharacter(step.actorId) || this.character.selectedCharacter)
@@ -421,7 +424,7 @@ export class TimelineManager {
 
       case ACTION_TYPES.WAIT: {
         const ms = (step.duration || step.data.duration || 1) * 1000;
-        await this._sleepWithAbort(ms);
+        await this._sleepWithAbort(ms, playbackId);
         break;
       }
 
@@ -435,7 +438,8 @@ export class TimelineManager {
           } else {
             await this.door.toggleDoorPromise();
           }
-          await this._sleepWithAbort(400); // Yumuşak ara
+          if (this._abortPlayback || playbackId !== this._playbackId) break;
+          await this._sleepWithAbort(400, playbackId); // Yumuşak ara
         }
         break;
       }
@@ -444,7 +448,8 @@ export class TimelineManager {
         if (this.cameraManager) {
           const targetStation = step.data.stationId || step.data.stationIndex || 0;
           await this.cameraManager.transitionToStationPromise(targetStation);
-          await this._sleepWithAbort(500);
+          if (this._abortPlayback || playbackId !== this._playbackId) break;
+          await this._sleepWithAbort(500, playbackId);
         }
         break;
       }
@@ -515,6 +520,19 @@ export class TimelineManager {
     });
   }
 
+  _waitUntilResumed(playbackId) {
+    if (this._abortPlayback || playbackId !== this._playbackId) return Promise.resolve(false);
+    if (!this.isPaused) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const check = () => {
+        if (this._abortPlayback || playbackId !== this._playbackId) return resolve(false);
+        if (!this.isPaused) return resolve(true);
+        setTimeout(check, 30);
+      };
+      check();
+    });
+  }
+
   /**
    * Oynatmayı duraklatır
    */
@@ -540,6 +558,8 @@ export class TimelineManager {
     this.character?.stopAllMotions?.();
     this.spriteAnimationManager?.pauseAll?.(false);
     this.spriteAnimationManager?.stopAll?.();
+    this.door?.cancelTransition?.();
+    this.cameraManager?.cancelTransition?.();
 
     if (this._pausePromiseResolver) {
       this._pausePromiseResolver();
