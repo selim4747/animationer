@@ -514,19 +514,19 @@ export class UIManager {
 
     if (d.btnQuality720p && d.btnQuality1080p) {
       d.btnQuality720p.addEventListener('click', () => {
-        if (this.recorder) this.recorder.setQuality('720p');
+        if (this.recorder) this.recorder.setQuality('standard');
         d.btnQuality720p.classList.add('active');
         d.btnQuality1080p.classList.remove('active');
-        if (d.labelRenderRes) d.labelRenderRes.textContent = '720p (4.0 Mbps)';
-        this.showToast('Render Kalitesi: 720p');
+        if (d.labelRenderRes) d.labelRenderRes.textContent = 'Standart (4 Mbps)';
+        this.showToast('Bitrate profili: Standart (4 Mbps)');
       });
 
       d.btnQuality1080p.addEventListener('click', () => {
-        if (this.recorder) this.recorder.setQuality('1080p');
+        if (this.recorder) this.recorder.setQuality('high');
         d.btnQuality1080p.classList.add('active');
         d.btnQuality720p.classList.remove('active');
-        if (d.labelRenderRes) d.labelRenderRes.textContent = '1080p HD (8.5 Mbps)';
-        this.showToast('Render Kalitesi: 1080p HD (60 FPS)');
+        if (d.labelRenderRes) d.labelRenderRes.textContent = 'Yüksek (8.5 Mbps)';
+        this.showToast('Bitrate profili: Yüksek (8.5 Mbps)');
       });
     }
 
@@ -539,7 +539,7 @@ export class UIManager {
         } else {
           const ok = this.recorder.startRecording();
           if (ok) {
-            this.showToast('● 60 FPS Video Kaydı Başlatıldı');
+            this.showToast('Video kaydı başlatıldı (hedef: 60 FPS)');
           } else {
             this.showToast('HATA: Video kaydı başlatılamadı!');
           }
@@ -560,12 +560,12 @@ export class UIManager {
               this.togglePanelVisibility();
             }
           },
-          onAfterFinish: () => {
+          onAfterFinish: ({ success, error } = {}) => {
             // Kayıt bitince paneli geri getir
             if (this.isPanelHidden) {
               this.togglePanelVisibility();
             }
-            this.showToast('🎬 Reji Videosu Başarıyla İndirildi!');
+            this.showToast(success ? 'Reji videosu başarıyla indirildi.' : `Reji videosu kaydedilemedi: ${error || 'Bilinmeyen hata'}`);
           },
         });
       });
@@ -595,7 +595,7 @@ export class UIManager {
   /**
    * RecorderManager durum değişikliklerini arayüze yansıtır
    */
-  updateRecorderUI({ isRecording, duration, formattedDuration, filename }) {
+  updateRecorderUI({ isRecording, duration, formattedDuration, filename, error }) {
     const d = this.dom;
 
     // Üst rozet
@@ -627,6 +627,7 @@ export class UIManager {
     if (filename && !isRecording) {
       this.showToast(`Video Kaydedildi: ${filename}`);
     }
+    if (error) this.showToast(`Kayıt hatası: ${error}`);
   }
 
   /**
@@ -746,7 +747,7 @@ export class UIManager {
         <div class="step-num">${idx + 1}</div>
         <div class="step-content">
           <div class="step-badge">${typeBadge}</div>
-          <div class="step-title">${step.title || 'Adım'}</div>
+          <div class="step-title"></div>
         </div>
         <div class="step-actions">
           <button class="step-btn-icon btn-step-up" title="Yukarı Taşı">▲</button>
@@ -754,6 +755,7 @@ export class UIManager {
           <button class="step-btn-icon btn-step-delete" title="Sil">✕</button>
         </div>
       `;
+      item.querySelector('.step-title').textContent = step.title || 'Adım';
 
       item.querySelector('.btn-step-up').addEventListener('click', (e) => {
         e.stopPropagation();
