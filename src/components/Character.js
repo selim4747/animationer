@@ -38,6 +38,11 @@ export class Character {
     this.wobbleIntensity = 1.0; // Sallantı şiddeti çarpanı (0 - 2x)
     this.walkTime = 0;
     this.idleTime = 0;
+    this.controlVector = new THREE.Vector2();
+    this.activeMoveDuration = null;
+    this.activeMoveElapsed = 0;
+    this.followState = null;
+    this.timelinePaused = false;
 
     // Timeline / Async Promise Takibi
     this.activeMovePromise = null;
@@ -146,6 +151,10 @@ export class Character {
    * @param {THREE.Vector3} point - 3D zemin/basamak/kat koordinatı
    */
   moveTo(point) {
+    this.followState = null;
+    this.activeMoveDuration = null;
+    this.activeMoveElapsed = 0;
+    this.controlVector.set(0, 0);
     let safeTarget = point.clone();
 
     // Eğer tıklanan nokta bir engelin içindeyse dış kenara ötele
@@ -189,7 +198,7 @@ export class Character {
    * @param {THREE.Vector3|Object} point
    * @returns {Promise<boolean>}
    */
-  moveToPromise(point) {
+  moveToPromise(point, { duration = null } = {}) {
     const targetVec = point instanceof THREE.Vector3
       ? point
       : new THREE.Vector3(point.x || 0, point.y || 0, point.z || 0);
@@ -200,6 +209,10 @@ export class Character {
     return new Promise((resolve) => {
       this.moveResolve = resolve;
       this.moveTo(targetVec);
+      if (Number.isFinite(duration) && duration > 0) {
+        this.activeMoveDuration = duration;
+        this.activeMoveElapsed = 0;
+      }
 
       // Hedefe zaten çok yakınsa hemen bitir
       if (!this.isMoving) {
@@ -217,6 +230,66 @@ export class Character {
       this.moveResolve = null;
       res(success);
     }
+  }
+
+  setControlVector(x = 0, z = 0) {
+    const vector = new THREE.Vector2(Number(x) || 0, Number(z) || 0);
+    if (vector.lengthSq() > 1) vector.normalize();
+    const wasControlled = this.controlVector.lengthSq() > 0.0001;
+    this.controlVector.copy(vector);
+    if (vector.lengthSq() > 0.0001) {
+      this.followState = null;
+      this.activeMoveDuration = null;
+      this._resolveMovePromise(false);
+      if (!this.isMoving) this.onStateChange({ isMoving: true });
+      this.isMoving = true;
+    } else if (wasControlled) {
+      this.targetPosition.copy(this.rootGroup.position);
+      this.isMoving = false;
+      this.onStateChange({ isMoving: false });
+    }
+  }
+
+  startFollowing(targetCharacter, { duration = 10, offset = { x: 0, y: 0, z: 1.2 } } = {}) {
+    this._resolveMovePromise(false);
+    this.controlVector.set(0, 0);
+    this.activeMoveDuration = null;
+    this.followState = {
+      targetCharacter,
+      duration: Math.max(0.1, duration),
+      elapsed: 0,
+      offset: new THREE.Vector3(offset.x || 0, offset.y || 0, offset.z || 0),
+    };
+    this.isMoving = true;
+    this.onStateChange({ isMoving: true });
+    return new Promise((resolve) => {
+      this.moveResolve = resolve;
+    });
+  }
+
+  setVisible(visible) {
+    this.rootGroup.visible = Boolean(visible);
+    if (!visible && this.targetMarker) this.targetMarker.visible = false;
+  }
+
+  setTimelinePaused(paused) {
+    this.timelinePaused = Boolean(paused);
+  }
+
+  stopMotion() {
+    this.controlVector.set(0, 0);
+    this.followState = null;
+    this.activeMoveDuration = null;
+    this.isMoving = false;
+    this.isEmoting = false;
+    this.targetPosition.copy(this.rootGroup.position);
+    this._resolveMovePromise(false);
+    if (this.emoteResolve) {
+      const resolve = this.emoteResolve;
+      this.emoteResolve = null;
+      resolve();
+    }
+    this.onStateChange({ isMoving: false });
   }
 
   /**
@@ -245,6 +318,7 @@ export class Character {
    * @param {number} delta - Geçen kare süresi (saniye)
    */
   update(delta) {
+    if (this.timelinePaused) return;
     // 1. Hedef halkası animasyonu (büyüme ve sönümlenme)
     if (this.markerActive) {
       const elapsed = (performance.now() - this.markerStartTime) / 1000;
@@ -259,6 +333,19 @@ export class Character {
     }
 
     const currentPos = this.rootGroup.position;
+    if (this.followState) {
+      this.followState.elapsed += delta;
+      const targetPos = this.followState.targetCharacter.getPosition();
+      this.targetPosition.set(
+        targetPos.x + this.followState.offset.x,
+        targetPos.y + this.followState.offset.y,
+        targetPos.z + this.followState.offset.z
+      );
+      if (this.followState.elapsed >= this.followState.duration) {
+        this.followState = null;
+        this._resolveMovePromise(true);
+      }
+    }
 
     // 2. Emote animasyonu işleme
     if (this.isEmoting) {
@@ -307,13 +394,25 @@ export class Character {
     const toTargetZ = this.targetPosition.z - currentPos.z;
     const horizontalDist = Math.hypot(toTargetX, toTargetZ);
 
-    if (this.isMoving && horizontalDist > 0.12) {
+    const hasDirectControl = this.controlVector.lengthSq() > 0.0001;
+    if (hasDirectControl || (this.isMoving && horizontalDist > 0.12)) {
       // İstenen yatay hareket adımı
-      const stepDist = Math.min(horizontalDist, this.walkSpeed * delta);
+      let directionX = horizontalDist > 0.0001 ? toTargetX / horizontalDist : 0;
+      let directionZ = horizontalDist > 0.0001 ? toTargetZ / horizontalDist : 0;
+      let stepDist = Math.min(horizontalDist, this.walkSpeed * delta);
+      if (hasDirectControl) {
+        directionX = this.controlVector.x;
+        directionZ = this.controlVector.y;
+        stepDist = this.walkSpeed * delta;
+      } else if (this.activeMoveDuration) {
+        const remaining = Math.max(0.001, this.activeMoveDuration - this.activeMoveElapsed);
+        stepDist = Math.min(horizontalDist, (horizontalDist / remaining) * delta);
+        this.activeMoveElapsed += delta;
+      }
       const rawStep = new THREE.Vector3(
-        (toTargetX / horizontalDist) * stepDist,
+        directionX * stepDist,
         0,
-        (toTargetZ / horizontalDist) * stepDist
+        directionZ * stepDist
       );
 
       // Çarpışma Denetimi ve Duvar/Mobilya Boyunca Kayma (Sliding)
@@ -328,14 +427,18 @@ export class Character {
         resolvedStep = collisionResult.resolvedStep;
 
         if (collisionResult.isColliding && resolvedStep.lengthSq() < 0.000005) {
+          if (this.isMoving) this.onStateChange({ isMoving: false });
           this.isMoving = false;
-          this.onStateChange({ isMoving: false });
           this._resolveMovePromise(false);
         }
       }
 
       // Yatay pozisyonu güncelle
       if (resolvedStep.lengthSq() > 0.000005) {
+        if (!this.isMoving) {
+          this.isMoving = true;
+          this.onStateChange({ isMoving: true });
+        }
         const moveDir = resolvedStep.clone().normalize();
         const targetAngle = Math.atan2(moveDir.x, moveDir.z);
         let angleDiff = targetAngle - this.rootGroup.rotation.y;
@@ -373,8 +476,9 @@ export class Character {
       }
     } else {
       // Karakter durdu (Hedefe vardı veya idle)
-      if (this.isMoving) {
+      if (this.isMoving && !hasDirectControl && !this.followState) {
         this.isMoving = false;
+        this.activeMoveDuration = null;
         this.onStateChange({ isMoving: false });
         this._resolveMovePromise(true);
       }
@@ -441,11 +545,11 @@ export class Character {
   }
 
   /**
-   * Yürüme hızını ayarlar (1.0 - 10.0 m/s)
+   * Yürüme hızını ayarlar (0.2 - 12.0 m/s)
    * @param {number} speed
    */
   setSpeed(speed) {
-    this.walkSpeed = Math.max(1.0, Math.min(12.0, speed));
+    this.walkSpeed = Math.max(0.2, Math.min(12.0, speed));
   }
 
   /**

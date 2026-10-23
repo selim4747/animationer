@@ -1,0 +1,99 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import { Character } from '../src/components/Character.js';
+import { CharacterRoster } from '../src/components/CharacterRoster.js';
+import { ACTION_TYPES, TimelineManager } from '../src/components/TimelineManager.js';
+
+const closeTo = (actual, expected, epsilon = 0.05) => assert.ok(Math.abs(actual - expected) <= epsilon, `${actual} is not within ${epsilon} of ${expected}`);
+
+test('roster adds/selects/removes actors and routes controls only to the selected actor', () => {
+  const scene = new THREE.Scene();
+  const roster = new CharacterRoster(scene, null);
+  const first = roster.getCharacter();
+  const second = roster.addCharacter('Karakter 2');
+
+  assert.equal(roster.list().length, 2);
+  assert.equal(roster.select(second.id), true);
+  second.character.setSpeed(2);
+  roster.setControlVector(1, 0);
+  roster.update(0.25);
+  closeTo(second.character.getPosition().x, 1.35 + 0.5);
+  closeTo(first.getPosition().x, 0);
+
+  assert.equal(roster.removeCharacter(second.id), true);
+  assert.equal(roster.list().length, 1);
+  assert.equal(roster.removeCharacter(first.rootGroup.name), false, 'cannot remove the final character');
+});
+
+test('continuous controls stop in place and duration-based moves arrive on the requested duration', async () => {
+  const actor = new Character(new THREE.Scene());
+  actor.setSpeed(2);
+  actor.setControlVector(1, 0);
+  actor.update(0.25);
+  closeTo(actor.getPosition().x, 0.5);
+  actor.setControlVector(0, 0);
+  actor.update(0.2);
+  closeTo(actor.getPosition().x, 0.5);
+
+  const move = actor.moveToPromise(new THREE.Vector3(4.5, 0, 0), { duration: 2 });
+  for (let i = 0; i < 20; i++) actor.update(0.1);
+  actor.update(0.1);
+  assert.equal(await move, true);
+  closeTo(actor.getPosition().x, 4.5);
+});
+
+test('scheduled timeline launches same-time actors concurrently and imports timing metadata safely', async () => {
+  const timeline = new TimelineManager({});
+  timeline.clear();
+  timeline.setPlayMode('scheduled');
+  timeline.steps = [
+    { type: ACTION_TYPES.WAIT, title: 'A', data: { duration: 0.1 }, startAt: 0, duration: 0.1 },
+    { type: ACTION_TYPES.WAIT, title: 'B', data: { duration: 0.1 }, startAt: 0, duration: 0.1 },
+  ];
+  let active = 0;
+  let maxActive = 0;
+  timeline._executeStep = async () => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 90));
+    active -= 1;
+  };
+  assert.equal(await timeline.play(), true);
+  assert.equal(maxActive, 2);
+
+  timeline.importSequence({ playMode: 'scheduled', steps: [
+    { type: ACTION_TYPES.FOLLOW, title: 'Follow', actorId: 'character-2', startAt: 5, duration: 25,
+      data: { targetCharacterId: 'character-1', offset: { x: 0, y: 0, z: 1.2 } } },
+    { type: ACTION_TYPES.SET_VISIBILITY, actorId: 'character-2', startAt: 30,
+      data: { visible: false } },
+  ] });
+  assert.equal(timeline.steps[0].actorId, 'character-2');
+  assert.equal(timeline.steps[0].startAt, 5);
+  assert.equal(timeline.steps[0].duration, 25);
+  assert.equal(timeline.steps[1].data.visible, false);
+  assert.equal(JSON.parse(timeline.exportSequence()).playMode, 'scheduled');
+  assert.throws(() => timeline.importSequence({ steps: [
+    { type: ACTION_TYPES.FOLLOW, data: { targetCharacterId: '', offset: {} } },
+  ] }));
+  assert.throws(() => timeline.importSequence({ steps: [
+    { type: ACTION_TYPES.WAIT, data: { duration: 1 }, startAt: -1 },
+  ] }));
+});
+
+test('stopping and immediately restarting scheduled playback does not revive the old schedule', async () => {
+  const timeline = new TimelineManager({});
+  timeline.setPlayMode('scheduled');
+  timeline.steps = [{ type: ACTION_TYPES.WAIT, data: { duration: 1 }, startAt: 10 }];
+  const oldPlayback = timeline.play();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  timeline.stop();
+
+  let runs = 0;
+  timeline.steps = [{ type: ACTION_TYPES.WAIT, data: { duration: 0.1 }, startAt: 0 }];
+  timeline._executeStep = async () => { runs += 1; };
+  assert.equal(await timeline.play(), true);
+  assert.equal(await oldPlayback, false);
+  assert.equal(runs, 1);
+  assert.equal(timeline.isPlaying, false);
+});

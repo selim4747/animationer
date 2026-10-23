@@ -17,9 +17,11 @@ export class UIManager {
    * @param {import('./RecorderManager.js').RecorderManager} [context.recorderManager]
    * @param {Object} context.sceneHelpers - gridHelper, dirLight, hemiLight referansları
    */
-  constructor({ timelineManager, character, door, cameraManager, mapLoader, recorderManager, sceneHelpers }) {
+  constructor({ timelineManager, character, characterManager, onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, sceneHelpers }) {
     this.timeline = timelineManager;
     this.character = character;
+    this.characters = characterManager || character;
+    this.onControlModeChange = onControlModeChange;
     this.door = door;
     this.cameraManager = cameraManager;
     this.mapLoader = mapLoader;
@@ -37,6 +39,7 @@ export class UIManager {
     // İlk durum senkronizasyonu
     this.updateTimelineUI();
     this.updateCameraList(this.cameraManager.stations, this.cameraManager.activeStationId);
+    this.updateCharacterList(this.characters?.list?.() || []);
   }
 
   setRecorder(recorderManager) {
@@ -87,6 +90,12 @@ export class UIManager {
       btnImportJSON: document.getElementById('btn-import-timeline-json'),
       fileInputJSON: document.getElementById('file-picker-timeline-json'),
       btnClearTimeline: document.getElementById('btn-clear-timeline'),
+      timelinePlayMode: document.getElementById('timeline-play-mode'),
+      timelineStartAt: document.getElementById('timeline-start-at'),
+      timelineDuration: document.getElementById('timeline-duration'),
+      timelineFollowTarget: document.getElementById('timeline-follow-target'),
+      btnAddFollowStep: document.getElementById('btn-add-follow-step'),
+      btnAddHideStep: document.getElementById('btn-add-hide-step'),
 
       // Sekme 2: SAHNE / HARİTA
       filePicker: document.getElementById('file-picker'),
@@ -125,6 +134,11 @@ export class UIManager {
       btnEmoteJump: document.getElementById('btn-emote-jump'),
       btnEmoteWave: document.getElementById('btn-emote-wave'),
       btnEmoteSpin: document.getElementById('btn-emote-spin'),
+      characterSelect: document.getElementById('character-select'),
+      btnAddCharacter: document.getElementById('btn-add-character'),
+      btnRemoveCharacter: document.getElementById('btn-remove-character'),
+      controlModeSelect: document.getElementById('control-mode-select'),
+      btnShowCharacter: document.getElementById('btn-show-character'),
 
       // Sekme 5: DIŞA AKTAR / RENDER
       btnTakeScreenshot: document.getElementById('btn-take-screenshot'),
@@ -224,14 +238,14 @@ export class UIManager {
     // Hızlı Adım Ekleme Butonları
     if (d.btnAddWaitStep) {
       d.btnAddWaitStep.addEventListener('click', () => {
-        this.timeline.addStep('WAIT', { duration: 2 }, '2 Saniye Durakla');
+        this.timeline.addStep('WAIT', { duration: 2 }, '2 Saniye Durakla', this.getTimelineActionOptions());
         this.showToast('Kuyruğa 2s Bekleme Adımı Eklendi');
       });
     }
 
     if (d.btnAddDoorStep) {
       d.btnAddDoorStep.addEventListener('click', () => {
-        this.timeline.addStep('TRIGGER_DOOR', { action: 'toggle' }, 'Kapıyı Tetikle (Aç/Kapat)');
+        this.timeline.addStep('TRIGGER_DOOR', { action: 'toggle' }, 'Kapıyı Tetikle (Aç/Kapat)', this.getTimelineActionOptions());
         this.showToast('Kuyruğa Kapı Adımı Eklendi');
       });
     }
@@ -244,7 +258,8 @@ export class UIManager {
         this.timeline.addStep(
           'SWITCH_CAMERA',
           { stationId },
-          `Kameraya Geç: ${st ? st.name : 'Kamera 1'}`
+          `Kameraya Geç: ${st ? st.name : 'Kamera 1'}`,
+          this.getTimelineActionOptions()
         );
         this.showToast('Kuyruğa Kamera Değişimi Eklendi');
       });
@@ -252,10 +267,28 @@ export class UIManager {
 
     if (d.btnAddEmoteStep) {
       d.btnAddEmoteStep.addEventListener('click', () => {
-        this.timeline.addStep('PLAY_EMOTE', { emote: 'jump' }, 'Karakter Zıplasın (Emote)');
+        this.timeline.addStep('PLAY_EMOTE', { emote: 'jump' }, 'Karakter Zıplasın (Emote)', this.getTimelineActionOptions());
         this.showToast('Kuyruğa Emote Adımı Eklendi');
       });
     }
+
+    d.timelinePlayMode?.addEventListener('change', () => {
+      this.timeline.setPlayMode(d.timelinePlayMode.value);
+      this.showToast(d.timelinePlayMode.value === 'scheduled' ? 'Zamanlı oynatma: başlangıç ve süre alanları kullanılacak' : 'Sıralı oynatma etkin');
+    });
+    d.btnAddFollowStep?.addEventListener('click', () => {
+      const targetCharacterId = d.timelineFollowTarget?.value;
+      if (!targetCharacterId || targetCharacterId === this.characters.selectedId) {
+        this.showToast('Takip için farklı bir hedef karakter seçin.');
+        return;
+      }
+      this.timeline.addStep('FOLLOW', { targetCharacterId, offset: { x: 0, y: 0, z: 1.2 } }, 'Karakteri Takip Et', this.getTimelineActionOptions());
+      this.showToast('Takip aksiyonu zaman çizelgesine eklendi');
+    });
+    d.btnAddHideStep?.addEventListener('click', () => {
+      this.timeline.addStep('SET_VISIBILITY', { visible: false }, 'Karakteri Gizle', this.getTimelineActionOptions());
+      this.showToast('Gizleme aksiyonu zaman çizelgesine eklendi');
+    });
 
     // JSON İçe / Dışa Aktarma
     if (d.btnExportJSON) {
@@ -291,6 +324,37 @@ export class UIManager {
         this.showToast('Kuyruk Temizlendi');
       });
     }
+
+    d.characterSelect?.addEventListener('change', () => {
+      this.characters.select(d.characterSelect.value);
+      const actor = this.characters.selectedCharacter;
+      if (actor && d.sliderSpeed) d.sliderSpeed.value = actor.walkSpeed;
+      if (actor && d.sliderWobble) d.sliderWobble.value = actor.wobbleIntensity;
+      if (d.labelSpeedVal && actor) d.labelSpeedVal.textContent = `${actor.walkSpeed.toFixed(1)} m/s`;
+      if (d.labelWobbleVal && actor) d.labelWobbleVal.textContent = `${actor.wobbleIntensity.toFixed(1)}x`;
+    });
+    d.btnAddCharacter?.addEventListener('click', () => {
+      try {
+        const actor = this.characters.addCharacter();
+        this.characters.select(actor.id);
+        this.showToast(`${actor.name} eklendi ve seçildi`);
+      } catch (error) {
+        this.showToast(error.message);
+      }
+    });
+    d.btnRemoveCharacter?.addEventListener('click', () => {
+      const actor = this.characters.getActor();
+      if (!this.characters.removeCharacter()) this.showToast('Sahnede en az bir karakter kalmalı.');
+      else this.showToast(`${actor?.name || 'Karakter'} silindi`);
+    });
+    d.controlModeSelect?.addEventListener('change', () => {
+      this.onControlModeChange(d.controlModeSelect.value);
+      this.showToast(`Kontrol yöntemi: ${d.controlModeSelect.selectedOptions[0]?.textContent || d.controlModeSelect.value}`);
+    });
+    d.btnShowCharacter?.addEventListener('click', () => {
+      this.characters.setVisible(this.characters.selectedId, true);
+      this.showToast('Seçili karakter yeniden görünür.');
+    });
 
     // --- SEKME 2: SAHNE / HARİTA ---
     if (d.btnTriggerFile && d.filePicker) {
@@ -712,12 +776,49 @@ export class UIManager {
     }
   }
 
+  getTimelineActionOptions() {
+    const options = { actorId: this.characters?.selectedId };
+    const duration = Number(this.dom.timelineDuration?.value);
+    if (Number.isFinite(duration) && duration > 0) options.duration = duration;
+    if (this.timeline.playMode === 'scheduled') {
+      const startAt = Number(this.dom.timelineStartAt?.value);
+      options.startAt = Number.isFinite(startAt) ? Math.max(0, startAt) : 0;
+    }
+    return options;
+  }
+
+  updateCharacterList(actors = this.characters?.list?.() || []) {
+    const currentSelection = this.characters?.selectedId;
+    const currentTarget = this.dom.timelineFollowTarget?.value;
+    const fill = (element, rows, selectedValue) => {
+      if (!element) return;
+      element.replaceChildren();
+      rows.forEach((actor) => {
+        const option = document.createElement('option');
+        option.value = actor.id;
+        option.textContent = actor.name;
+        element.appendChild(option);
+      });
+      if (rows.some((actor) => actor.id === selectedValue)) element.value = selectedValue;
+    };
+    fill(this.dom.characterSelect, actors, currentSelection);
+    fill(this.dom.timelineFollowTarget, actors.filter((actor) => actor.id !== currentSelection), currentTarget);
+    const activeCharacter = this.characters?.selectedCharacter;
+    if (activeCharacter && this.dom.sliderSpeed) this.dom.sliderSpeed.value = activeCharacter.walkSpeed;
+    if (activeCharacter && this.dom.sliderWobble) this.dom.sliderWobble.value = activeCharacter.wobbleIntensity;
+    if (activeCharacter && this.dom.labelSpeedVal) this.dom.labelSpeedVal.textContent = `${activeCharacter.walkSpeed.toFixed(1)} m/s`;
+    if (activeCharacter && this.dom.labelWobbleVal) this.dom.labelWobbleVal.textContent = `${activeCharacter.wobbleIntensity.toFixed(1)}x`;
+    if (this.dom.btnRemoveCharacter) this.dom.btnRemoveCharacter.disabled = actors.length <= 1;
+    if (this.dom.btnAddFollowStep) this.dom.btnAddFollowStep.disabled = actors.length <= 1;
+  }
+
   /**
    * Timeline UI listesini ve butonlarını günceller
    */
   updateTimelineUI() {
     const list = this.dom.timelineListContainer;
     if (!list) return;
+    if (this.dom.timelinePlayMode) this.dom.timelinePlayMode.value = this.timeline.playMode;
 
     list.innerHTML = '';
 
@@ -742,12 +843,15 @@ export class UIManager {
       else if (step.type === 'TRIGGER_DOOR') typeBadge = 'KAPI';
       else if (step.type === 'SWITCH_CAMERA') typeBadge = 'KAMERA';
       else if (step.type === 'PLAY_EMOTE') typeBadge = 'EMOTE';
+      else if (step.type === 'FOLLOW') typeBadge = 'TAKİP';
+      else if (step.type === 'SET_VISIBILITY') typeBadge = step.data.visible ? 'GÖSTER' : 'GİZLE';
 
       item.innerHTML = `
         <div class="step-num">${idx + 1}</div>
         <div class="step-content">
           <div class="step-badge">${typeBadge}</div>
           <div class="step-title"></div>
+          <div class="step-meta"></div>
         </div>
         <div class="step-actions">
           <button class="step-btn-icon btn-step-up" title="Yukarı Taşı">▲</button>
@@ -756,6 +860,11 @@ export class UIManager {
         </div>
       `;
       item.querySelector('.step-title').textContent = step.title || 'Adım';
+      const actorName = this.characters?.getActor?.(step.actorId)?.name || (step.actorId ? 'Karakter' : 'Aktif karakter');
+      const meta = [actorName];
+      if (Number.isFinite(step.startAt)) meta.push(`başlangıç ${step.startAt}s`);
+      if (Number.isFinite(step.duration)) meta.push(`süre ${step.duration}s`);
+      item.querySelector('.step-meta').textContent = meta.join(' · ');
 
       item.querySelector('.btn-step-up').addEventListener('click', (e) => {
         e.stopPropagation();
