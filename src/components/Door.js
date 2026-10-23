@@ -2,7 +2,7 @@
  * Door.js
  * Pivot noktası (menteşe) etrafında açılan kapı mekaniği ve
  * kapı arkasındaki iç mekanın dışarıdan görünmesini sağlayan şeffaf kesit (cutaway) mimarisi.
- * Kapı açıldığında çarpışma engeli kalkar, kapandığında tekrar engel olur.
+ * Timeline/Reji için async Promise (openDoorPromise, closeDoorPromise, toggleDoorPromise) desteği içerir.
  */
 
 import * as THREE from 'three';
@@ -31,6 +31,9 @@ export class Door {
     this.currentCutawayOpacity = 1.0;
     this.targetCutawayOpacity = 1.0;
     this.forceCutaway = false;
+
+    // Promise Takibi
+    this.doorTransitionResolve = null;
 
     // Ana Mimari Grubu
     this.roomGroup = new THREE.Group();
@@ -62,17 +65,14 @@ export class Door {
   _registerColliders() {
     if (!this.collisionManager) return;
 
-    // Sabit oda duvarlarını engel olarak ekle
     if (this.backWall) this.collisionManager.addCollider(this.backWall);
     if (this.leftWall) this.collisionManager.addCollider(this.leftWall);
     if (this.rightWall) this.collisionManager.addCollider(this.rightWall);
     if (this.frontLeftWall) this.collisionManager.addCollider(this.frontLeftWall);
     if (this.frontRightWall) this.collisionManager.addCollider(this.frontRightWall);
 
-    // İç mekan çalışma masasını da engel olarak kaydet
     if (this.desk) this.collisionManager.registerObstacle(this.desk);
 
-    // Kapı kapalıysa kapı kanadını engel olarak ekle
     if (!this.isOpen && this.doorMesh) {
       this.collisionManager.addCollider(this.doorMesh);
     }
@@ -101,19 +101,16 @@ export class Door {
       roughness: 0.7,
     });
 
-    // Arka Duvar
     this.backWall = new THREE.Mesh(new THREE.BoxGeometry(8.2, 3.2, 0.3), solidWallMat);
     this.backWall.position.set(0, 1.7, -11.8);
     this.backWall.receiveShadow = true;
     this.roomGroup.add(this.backWall);
 
-    // Sol Duvar
     this.leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.2, 8.2), solidWallMat);
     this.leftWall.position.set(-4.0, 1.7, -7.8);
     this.leftWall.receiveShadow = true;
     this.roomGroup.add(this.leftWall);
 
-    // Sağ Duvar
     this.rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.2, 8.2), solidWallMat);
     this.rightWall.position.set(4.0, 1.7, -7.8);
     this.rightWall.receiveShadow = true;
@@ -128,27 +125,24 @@ export class Door {
       depthWrite: true,
     });
 
-    // Kapının Solundaki Ön Duvar Parçası
     const frontLeftGeo = new THREE.BoxGeometry(3.3, 3.2, 0.3);
     this.frontLeftWall = new THREE.Mesh(frontLeftGeo, this.cutawayMaterial);
     this.frontLeftWall.position.set(-2.35, 1.7, -3.8);
     this.frontLeftWall.receiveShadow = true;
     this.roomGroup.add(this.frontLeftWall);
 
-    // Kapının Sağındaki Ön Duvar Parçası
     const frontRightGeo = new THREE.BoxGeometry(3.3, 3.2, 0.3);
     this.frontRightWall = new THREE.Mesh(frontRightGeo, this.cutawayMaterial);
     this.frontRightWall.position.set(2.35, 1.7, -3.8);
     this.frontRightWall.receiveShadow = true;
     this.roomGroup.add(this.frontRightWall);
 
-    // Kapı Üstü Kiriş Parçası
     const lintelGeo = new THREE.BoxGeometry(1.6, 0.7, 0.3);
     this.frontLintel = new THREE.Mesh(lintelGeo, this.cutawayMaterial);
     this.frontLintel.position.set(0, 2.85, -3.8);
     this.roomGroup.add(this.frontLintel);
 
-    // 4. İç Mekan Donatısı (Kesit modunda içeride görünen çalışma masası ve aydınlatma)
+    // 4. İç Mekan Donatısı (Masa ve Ayrıntılar)
     const deskGeo = new THREE.BoxGeometry(2.4, 0.12, 1.2);
     const deskMat = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.2 });
     this.desk = new THREE.Mesh(deskGeo, deskMat);
@@ -157,7 +151,6 @@ export class Door {
     this.desk.receiveShadow = true;
     this.roomGroup.add(this.desk);
 
-    // Masa Ayakları
     const legMat = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.8 });
     [-1.0, 1.0].forEach((lx) => {
       [-0.45, 0.45].forEach((lz) => {
@@ -168,7 +161,6 @@ export class Door {
       });
     });
 
-    // İç Mekan Tavan Aydınlatması (Hafif monokrom spot)
     const roomLight = new THREE.PointLight(0xffffff, 1.4, 10);
     roomLight.position.set(0, 2.9, -7.8);
     roomLight.castShadow = true;
@@ -194,7 +186,6 @@ export class Door {
     rightJamb.position.set(this.doorWidth / 2 + 0.04, this.doorHeight / 2, -3.8);
     this.roomGroup.add(rightJamb);
 
-    // Menteşe Pivot Grubu (Sol kenarda x = -doorWidth/2, z = -3.8)
     this.hingePivot = new THREE.Group();
     this.hingePivot.position.set(-this.doorWidth / 2, 0, -3.8);
     this.roomGroup.add(this.hingePivot);
@@ -212,7 +203,6 @@ export class Door {
     this.doorMesh.userData = { isDoorInteractive: true };
     this.hingePivot.add(this.doorMesh);
 
-    // Minimalist Krom Kapı Kolu
     const handleMat = new THREE.MeshStandardMaterial({
       color: 0x111111,
       metalness: 0.9,
@@ -240,7 +230,6 @@ export class Door {
       this.isOpen = true;
       this.targetAngle = -Math.PI / 2;
 
-      // Kapı açıldığında çarpışma engelini kaldır (Karakter kapı boşluğundan geçebilsin)
       if (this.collisionManager && this.doorMesh) {
         this.collisionManager.removeCollider(this.doorMesh);
       }
@@ -254,12 +243,45 @@ export class Door {
       this.isOpen = false;
       this.targetAngle = 0;
 
-      // Kapı kapandığında tekrar çarpışma engeli ekle
       if (this.collisionManager && this.doorMesh) {
         this.collisionManager.addCollider(this.doorMesh);
       }
 
       this.onStateChange({ isOpen: false });
+    }
+  }
+
+  /**
+   * Timeline / Async için Promise döndüren Kapı Açma metodu
+   * @returns {Promise<void>}
+   */
+  openDoorPromise() {
+    this.open();
+    return new Promise((resolve) => {
+      this.doorTransitionResolve = resolve;
+    });
+  }
+
+  /**
+   * Timeline / Async için Promise döndüren Kapı Kapama metodu
+   * @returns {Promise<void>}
+   */
+  closeDoorPromise() {
+    this.close();
+    return new Promise((resolve) => {
+      this.doorTransitionResolve = resolve;
+    });
+  }
+
+  /**
+   * Timeline / Async için Promise döndüren Kapı Değiştirme metodu
+   * @returns {Promise<void>}
+   */
+  toggleDoorPromise() {
+    if (this.isOpen) {
+      return this.closeDoorPromise();
+    } else {
+      return this.openDoorPromise();
     }
   }
 
@@ -281,6 +303,13 @@ export class Door {
     // Menteşe Açısı Yumuşak Geçiş (Lerp)
     this.currentAngle = THREE.MathUtils.lerp(this.currentAngle, this.targetAngle, delta * 6.0);
     this.hingePivot.rotation.y = this.currentAngle;
+
+    // Promise tamamlama denetimi: Hedef açıya yaklaşıldığında resolve et
+    if (this.doorTransitionResolve && Math.abs(this.currentAngle - this.targetAngle) < 0.05) {
+      const res = this.doorTransitionResolve;
+      this.doorTransitionResolve = null;
+      res();
+    }
 
     // Kesit Modu (Cutaway)
     const shouldCutaway = this.isOpen || isCharacterNear || this.forceCutaway;

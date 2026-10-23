@@ -2,6 +2,7 @@
  * CameraManager.js
  * Serbest kamera (OrbitControls) ve Sabit CCTV kamera istasyonlarını yöneten sınıf.
  * Karakter odaya girdiğinde (BoundingBox tetikleyicisi) otomatik iç tavan/oda açısına yumuşak geçiş yapar.
+ * Timeline/Reji sistemi için transitionToStationPromise desteği sunar.
  */
 
 import * as THREE from 'three';
@@ -33,11 +34,12 @@ export class CameraManager {
     // Lerp Yumuşak Geçiş Durumu
     this.isTransitioning = false;
     this.transitionStartTime = 0;
-    this.transitionDuration = 1000; // ms
+    this.transitionDuration = 900; // ms
     this.startPos = new THREE.Vector3();
     this.startTarget = new THREE.Vector3();
     this.endPos = new THREE.Vector3();
     this.endTarget = new THREE.Vector3();
+    this.transitionResolve = null;
 
     // Kamera Turu Durumu
     this.isTourActive = false;
@@ -66,7 +68,6 @@ export class CameraManager {
    * @private
    */
   _initDefaultStations() {
-    // 1. Dış Genel Bakış
     this.stations.push({
       id: 'station-ext',
       name: 'Dış Saha (Kamera 1)',
@@ -75,7 +76,6 @@ export class CameraManager {
       isAutoTrigger: false,
     });
 
-    // 2. İç Mekan Tavan CCTV Açısı (Kapıdan girince tetiklenen açı)
     this.interiorCCTV = {
       id: 'station-interior-cctv',
       name: 'İç Mekan CCTV (Tavan)',
@@ -108,10 +108,18 @@ export class CameraManager {
 
   /**
    * Belirtilen kamera istasyonuna yumuşak geçiş yapar
-   * @param {Object} station
+   * @param {Object|string} stationOrId
    */
-  transitionToStation(station) {
+  transitionToStation(stationOrId) {
+    let station = typeof stationOrId === 'string'
+      ? this.stations.find((s) => s.id === stationOrId)
+      : stationOrId;
+
+    if (!station && typeof stationOrId === 'number') {
+      station = this.stations[stationOrId];
+    }
     if (!station) return;
+
     this.activeStationId = station.id;
 
     this.startPos.copy(this.camera.position);
@@ -128,6 +136,22 @@ export class CameraManager {
       stationName: station.name,
       stations: this.stations,
       activeId: station.id,
+    });
+  }
+
+  /**
+   * Timeline / Async için Promise döndüren kamera geçişi
+   * @param {Object|string|number} stationOrId
+   * @returns {Promise<void>}
+   */
+  transitionToStationPromise(stationOrId) {
+    this.transitionToStation(stationOrId);
+    return new Promise((resolve) => {
+      if (!this.isTransitioning) {
+        resolve();
+      } else {
+        this.transitionResolve = resolve;
+      }
     });
   }
 
@@ -215,7 +239,6 @@ export class CameraManager {
 
   /**
    * Karakterin odaya girip girmediğini BoundingBox ile denetler
-   * Karakter içeri girdiğinde otomatik iç CCTV açısına, çıktığında dış açıya geçer.
    * @private
    */
   _checkRoomBoundsTrigger(characterPos, roomBounds) {
@@ -224,13 +247,11 @@ export class CameraManager {
     const isInsideNow = roomBounds.containsPoint(characterPos);
 
     if (isInsideNow && !this.isCharacterInsideRoom) {
-      // Karakter odaya girdi!
       this.isCharacterInsideRoom = true;
       if (!this.isTourActive) {
         this.transitionToStation(this.interiorCCTV);
       }
     } else if (!isInsideNow && this.isCharacterInsideRoom) {
-      // Karakter odadan dışarı çıktı!
       this.isCharacterInsideRoom = false;
       if (!this.isTourActive) {
         const extStation = this.stations.find((s) => s.id === 'station-ext') || this.stations[0];
@@ -257,7 +278,6 @@ export class CameraManager {
     if (this.isTransitioning) {
       const elapsed = now - this.transitionStartTime;
       const progress = Math.min(1.0, elapsed / this.transitionDuration);
-      // Kübik easing (smooth in-out)
       const ease = progress < 0.5 ? 4 * progress * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2;
 
       this.camera.position.lerpVectors(this.startPos, this.endPos, ease);
@@ -268,7 +288,13 @@ export class CameraManager {
         this.camera.position.copy(this.endPos);
         this.controls.target.copy(this.endTarget);
         this.isTransitioning = false;
-        this.controls.enabled = false; // Kilitli kalması için kapalı tut
+        this.controls.enabled = false;
+
+        if (this.transitionResolve) {
+          const res = this.transitionResolve;
+          this.transitionResolve = null;
+          res();
+        }
       }
     } else {
       // 3. Karakteri Takip Etme Mantığı
@@ -276,11 +302,9 @@ export class CameraManager {
         const charHead = new THREE.Vector3(characterPos.x, characterPos.y + 0.9, characterPos.z);
 
         if (this.activeStationId !== null) {
-          // Sabit İstasyon: Kamera pozisyonu sabit kalır, kamera kafası karakteri izler (PTZ CCTV)
           this.controls.target.lerp(charHead, delta * 6.0);
           this.camera.lookAt(this.controls.target);
         } else if (this.controls.enabled) {
-          // Serbest Kamera: Controls target karakteri takip eder
           this.controls.target.lerp(charHead, delta * 6.0);
         }
       }

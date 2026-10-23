@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>Three.js Monokrom Sahne, Karakter & Kamera Mimarisi</title>
-    <meta name="description" content="Vite ve Capacitor uyumlu monokrom Three.js sahnesi, prosedürel animasyonlu karakter ve menteşeli kapı mekaniği." />
+    <title>3D & 2D Sahne, Karakter ve Reji Stüdyosu</title>
+    <meta name="description" content="Vite ve Capacitor uyumlu monokrom Three.js sahnesi, zaman çizelgesi eylem kuyruğu (timeline), prosedürel animasyonlu karakter ve menteşeli kapı mekaniği." />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
@@ -14,7 +14,7 @@
     <!-- Dokunmatik / Tıklama Yönlendirme İpucu -->
     <div class="hud-hint-pill">
       <span class="hud-hint-dot"></span>
-      <span>Zemine dokun: Karakter yürür | Kapıya dokun: Açılır | Sürükle: Kamerayı çevir</span>
+      <span id="hud-hint-text">Zemine dokun: Karakter yürür | Kapıya dokun: Açılır | Boşluğu sürükle: Kamera döner</span>
     </div>
 
     <!-- Sürükle-Bırak Katmanı (Drag & Drop) -->
@@ -29,24 +29,30 @@
     <!-- Üst Monokrom Başlık & Durum Çubuğu -->
     <header class="top-hud">
       <div class="hud-brand">
-        <span class="brand-square">3D</span>
+        <span class="brand-square">REJİ</span>
         <div class="brand-text">
-          <div class="brand-name">STUDIO // MONOCHROME</div>
+          <div class="brand-name">STUDIO // TIMELINE</div>
           <div class="brand-desc">Capacitor & WebGL Engine</div>
         </div>
       </div>
 
       <div class="hud-actions">
-        <!-- Kamera Durum Rozeti -->
-        <div id="badge-camera-mode" class="hud-badge">
-          <span class="badge-indicator"></span>
-          <span id="label-camera-mode">Serbest Orbit</span>
+        <!-- Adım Kayıt Modu Rozeti (Sadece kayıt açıkken yanıp söner) -->
+        <div id="badge-record-mode" class="hud-badge active-record" style="display: none;">
+          <span class="badge-indicator pulse"></span>
+          <span id="label-record-mode">Kayıt: Tıklananı Ekle</span>
         </div>
 
-        <!-- Karakter Durum Rozeti -->
-        <div id="badge-char-mode" class="hud-badge outline">
+        <!-- Reji Oynatma Durum Rozeti -->
+        <div id="badge-timeline-status" class="hud-badge">
           <span class="badge-indicator"></span>
-          <span id="label-char-mode">Karakter: Boşta</span>
+          <span id="label-timeline-status">Reji: Hazır</span>
+        </div>
+
+        <!-- Kamera Durum Rozeti -->
+        <div id="badge-camera-mode" class="hud-badge outline">
+          <span class="badge-indicator"></span>
+          <span id="label-camera-mode">Serbest Orbit</span>
         </div>
 
         <!-- Kapı Durum Rozeti -->
@@ -55,159 +61,305 @@
           <span id="label-door-mode">Kapı: Kapalı</span>
         </div>
 
-        <!-- Kapıyı Manuel Tetikleme Butonu -->
-        <button id="btn-toggle-door" class="hud-btn" title="Menteşeli kapıyı aç veya kapat">
-          Kapıyı Aç
+        <!-- Hızlı Reji Oynat Butonu -->
+        <button id="btn-quick-play" class="hud-btn primary" title="Reji Kuyruğunu Başlat / Duraklat (Space)">
+          ▶ Oynat
         </button>
 
-        <!-- Hızlı Demo Butonları -->
-        <button id="btn-load-floorplan" class="hud-btn" title="2D Kat Planı Zeminini Yükle">
-          2D Plan
-        </button>
-        <button id="btn-load-gallery" class="hud-btn" title="3D Monokrom Galeriyi Yükle">
-          3D Galeri
+        <!-- Hızlı Kapı Tetikleme Butonu -->
+        <button id="btn-quick-door" class="hud-btn" title="Menteşeli kapıyı aç veya kapat">
+          Kapı Tetikle
         </button>
 
-        <!-- Yardım Modalı Butonu -->
-        <button id="btn-open-help" class="hud-btn" style="padding: 7px 11px;" title="Yardım">
+        <!-- Tam Ekran / Sinematik Mod Butonu -->
+        <button id="btn-cinematic-mode" class="hud-btn" title="Paneli Gizle / Sinematik Görünüm (Kısayol: H)">
+          [H] Sinematik
+        </button>
+
+        <!-- Yardım Butonu -->
+        <button id="btn-open-help" class="hud-btn icon-btn" title="Yardım & Bilgi">
           ?
         </button>
       </div>
     </header>
 
-    <!-- Alt Katlanabilir Kontrol Paneli (Monokrom Minimalist HUD) -->
-    <div id="hud-dock" class="hud-dock">
-      <button id="btn-toggle-dock" class="dock-collapse-trigger">
-        <span id="dock-collapse-arrow">▾</span>
-        <span id="dock-collapse-label">Panel [Gizle]</span>
-      </button>
+    <!-- Yan / Alt Monokrom Stüdyo Paneli (HUD) -->
+    <aside id="studio-panel" class="studio-panel">
+      <!-- Panel Başlığı & Katlama Butonu -->
+      <div class="studio-panel-header">
+        <div class="panel-title-group">
+          <span class="panel-mono-icon">■</span>
+          <span class="panel-title">MONOCHROME STUDIO CONTROLS</span>
+        </div>
+        <div class="panel-header-actions">
+          <button id="btn-toggle-hud-vis" class="panel-header-btn" title="Paneli Tamamen Kapat (H)">
+            Tam Ekran [H]
+          </button>
+          <button id="panel-collapse-trigger" class="panel-header-btn" title="Paneli Daralt">
+            <span id="panel-collapse-arrow">▾</span>
+          </button>
+        </div>
+      </div>
 
-      <div class="dock-window">
-        <!-- Sekme Başlıkları -->
-        <div class="dock-nav-tabs">
-          <button class="dock-tab-btn active" data-tab="tab-character">🏃 Karakter & Hareket</button>
-          <button class="dock-tab-btn" data-tab="tab-camera">🎥 Kameralar & CCTV</button>
-          <button class="dock-tab-btn" data-tab="tab-files">📦 Dosya Yükle (2D/3D)</button>
-          <button class="dock-tab-btn" data-tab="tab-door">🚪 Kapı & Kesit Modu</button>
+      <!-- Panel İçeriği (Katlanabilir Gövde) -->
+      <div id="panel-body-wrapper" class="studio-panel-body">
+        <!-- Sekme Düğmeleri -->
+        <nav class="studio-tabs-nav">
+          <button class="studio-tab-btn active" data-tab="tab-timeline">
+            🎬 REJİ / TIMELINE
+          </button>
+          <button class="studio-tab-btn" data-tab="tab-scene">
+            📁 SAHNE / HARİTA
+          </button>
+          <button class="studio-tab-btn" data-tab="tab-camera">
+            🎥 KAMERALAR
+          </button>
+          <button class="studio-tab-btn" data-tab="tab-character">
+            🚶 KARAKTER & MERDİVEN
+          </button>
+        </nav>
+
+        <!-- ==========================================
+             SEKME 1: REJİ / TIMELINE
+             ========================================== -->
+        <div id="tab-timeline" class="studio-tab-pane" style="display: block;">
+          <!-- Oynatma ve Kayıt Kontrolleri -->
+          <div class="studio-ctrl-row">
+            <button id="btn-timeline-play" class="hud-btn primary flex-grow" title="Kuyruğu Baştan/Kaldığı Yerden Oynat">
+              ▶ Oynat
+            </button>
+            <button id="btn-timeline-pause" class="hud-btn" title="Oynatmayı Duraklat">
+              ⏸ Duraklat
+            </button>
+            <button id="btn-timeline-stop" class="hud-btn" title="Durdur ve Başa Sar">
+              ⏹ Başa Sar
+            </button>
+          </div>
+
+          <!-- Adım Kayıt Modu Toggle -->
+          <div class="studio-ctrl-row" style="margin-top: 8px;">
+            <button id="btn-toggle-record-mode" class="hud-btn flex-grow" title="Açıkken sahneye tıkladığınız noktalar doğrudan kuyruğa eklenir">
+              ○ Adım Kayıt Modu (KAPALI)
+            </button>
+            <button id="btn-clear-timeline" class="hud-btn subtle" title="Tüm adımları sil">
+              Temizle
+            </button>
+          </div>
+
+          <!-- Manuel Adım Ekleme Kısayolları -->
+          <div class="studio-sub-header">HIZLI ADIM EKLE:</div>
+          <div class="studio-button-grid">
+            <button id="btn-add-wait-step" class="hud-btn small-btn" title="2 saniye bekleme adımı ekle">
+              + 2s Bekle
+            </button>
+            <button id="btn-add-door-step" class="hud-btn small-btn" title="Kapı açma/kapama adımı ekle">
+              + Kapı Tetikle
+            </button>
+            <button id="btn-add-cam-step" class="hud-btn small-btn" title="Kamera geçişi adımı ekle">
+              + Kamera Geç
+            </button>
+            <button id="btn-add-emote-step" class="hud-btn small-btn" title="Karakter emote adımı ekle">
+              + Emote (Zıpla)
+            </button>
+          </div>
+
+          <!-- Kuyruk Listesi -->
+          <div class="studio-sub-header">EYLEM SIRASI (ACTION QUEUE):</div>
+          <div id="timeline-steps-list" class="timeline-queue-container">
+            <!-- JavaScript ile dinamik render edilir -->
+          </div>
+
+          <!-- JSON Dışa / İçe Aktarma -->
+          <div class="studio-ctrl-row" style="margin-top: 10px;">
+            <button id="btn-export-timeline-json" class="hud-btn flex-grow" title="Zaman çizelgesini JSON olarak indir">
+              JSON İndir (Dışa Aktar)
+            </button>
+            <button id="btn-import-timeline-json" class="hud-btn flex-grow" title="Kayıtlı JSON dosyasını yükle">
+              JSON Yükle (İçe Aktar)
+            </button>
+            <input type="file" id="file-picker-timeline-json" accept=".json" style="display: none;" />
+          </div>
         </div>
 
-        <!-- Sekme 1: Karakter & Takip -->
-        <div id="tab-character" class="dock-tab-pane">
-          <div class="dock-button-row">
-            <button id="btn-toggle-follow" class="hud-btn primary">
-              ◉ Karakteri Takip Et: [AÇIK]
-            </button>
-            <button id="btn-reset-character" class="hud-btn">
-              Merkeze Sıfırla (0,0,0)
-            </button>
-            <button id="btn-cycle-speed" class="hud-btn">
-              Hız: <span id="label-speed-val">Normal (4.2m/s)</span>
-            </button>
-          </div>
-
-          <div class="dock-info-box">
-            <div>• <strong>Tap-to-Move (Dokun-Git):</strong> Zemine dokunulduğunda beyaz hedef halkası belirir ve karakter oraya yönelir.</div>
-            <div>• <strong>Prosedürel Yürüme:</strong> Kemiksiz dikey zıplama (|sin(t)|), beşik sallantısı (roll), hız eğimi ve squash & stretch.</div>
-          </div>
-        </div>
-
-        <!-- Sekme 2: Kameralar & CCTV İstasyonları -->
-        <div id="tab-camera" class="dock-tab-pane" style="display: none;">
-          <div class="dock-button-row">
-            <button id="btn-add-camera" class="hud-btn primary">
-              + Açıyı Sabitle (Kamera Ekle)
-            </button>
-            <button id="btn-free-orbit" class="hud-btn">
-              Serbest Orbit
-            </button>
-            <button id="btn-toggle-tour" class="hud-btn">
-              <span id="label-tour-btn">Kamera Turu</span>
-            </button>
-            <button id="btn-clear-stations" class="hud-btn" style="color: #888888;">
-              Tümünü Sil
-            </button>
-          </div>
-
-          <div id="station-cards-grid" class="station-grid">
-            <!-- Kaydedilen kameralar JavaScript ile dinamik eklenir -->
-          </div>
-
-          <div class="dock-info-box" style="margin-top: 8px;">
-            <div>• <strong>Otomatik Oda Tetikleyicisi:</strong> Karakter kapıdan geçip odaya girdiğinde kamera otomatik olarak iç mekan CCTV açısına geçer!</div>
-          </div>
-        </div>
-
-        <!-- Sekme 3: Hibrit Dosya Yükleme (2D / 3D) -->
-        <div id="tab-files" class="dock-tab-pane" style="display: none;">
+        <!-- ==========================================
+             SEKME 2: SAHNE / HARİTA
+             ========================================== -->
+        <div id="tab-scene" class="studio-tab-pane" style="display: none;">
           <input type="file" id="file-picker" accept=".glb,.gltf,.png,.jpg,.jpeg,.webp" style="display: none;" />
 
-          <div id="drop-zone" class="file-drop-zone">
-            <div class="file-drop-title">Cihazdan Harita / Zemin / Model Yükleyin</div>
-            <div class="file-drop-sub">.glb, .gltf (3D Model) | .png, .jpg, .webp (2D Harita/Zemin)</div>
+          <div id="studio-drop-zone" class="studio-drop-zone" title="Dosyayı buraya sürükleyin veya tıklayın">
+            <div class="drop-icon">📁</div>
+            <div class="drop-title">Harita / Zemin / Model Yükle</div>
+            <div class="drop-desc">.glb, .gltf (3D) veya .png, .jpg (2D Görsel)</div>
+            <button id="btn-trigger-file-pick" class="hud-btn primary small-btn" style="margin-top: 6px;">
+              Cihazdan Dosya Seç
+            </button>
           </div>
 
-          <!-- 2D Görsel Ayar Paneli -->
-          <div id="panel-image-options" class="image-options-panel" style="display: none;">
-            <div class="image-options-header">
-              <span>2D YÖNELİM KONTROLÜ:</span>
-              <div class="btn-group-tight">
-                <button id="btn-orient-horizontal" class="hud-btn active">Zemin (Yatay - XZ)</button>
-                <button id="btn-orient-vertical" class="hud-btn">Duvar (Dikey - XY)</button>
+          <!-- Hızlı Hazır Demolar -->
+          <div class="studio-ctrl-row" style="margin-top: 10px;">
+            <button id="btn-demo-floorplan" class="hud-btn flex-grow" title="2D Monokrom Kat Planı Zeminini Yükle">
+              2D Kat Planı Demo
+            </button>
+            <button id="btn-demo-gallery" class="hud-btn flex-grow" title="3D Monokrom Galeri Modelini Yükle">
+              3D Galeri Demo
+            </button>
+          </div>
+
+          <!-- 2D Görsel Ayarları (Sadece görsel yüklendiğinde açılır) -->
+          <div id="panel-image-controls" class="studio-image-options" style="display: none;">
+            <div class="studio-sub-header">2D GÖRSEL YÖNELİMİ & BOYUTU:</div>
+            <div class="studio-ctrl-row">
+              <button id="btn-orient-horizontal" class="hud-btn flex-grow active">
+                Zemin (Yatay - XZ)
+              </button>
+              <button id="btn-orient-vertical" class="hud-btn flex-grow">
+                Duvar (Dikey - XY)
+              </button>
+            </div>
+
+            <div class="studio-slider-group">
+              <div class="slider-row-label">
+                <span>Görsel Boyutu:</span>
+                <span id="label-image-size">16m</span>
               </div>
-            </div>
-
-            <div class="slider-control-row">
-              <label>Ölçek / Genişlik:</label>
               <input type="range" id="slider-image-size" min="4" max="40" step="0.5" value="16" />
-              <span id="label-image-size">16m</span>
             </div>
 
-            <div class="slider-control-row">
-              <label>Opaklık:</label>
+            <div class="studio-slider-group">
+              <div class="slider-row-label">
+                <span>Opaklık:</span>
+                <span id="label-image-alpha">100%</span>
+              </div>
               <input type="range" id="slider-image-alpha" min="0.1" max="1.0" step="0.05" value="1.0" />
-              <span id="label-image-alpha">100%</span>
             </div>
           </div>
 
-          <div class="dock-button-row" style="margin-top: 10px;">
-            <button id="btn-focus-map" class="hud-btn">Haritaya Odaklan</button>
-            <button id="btn-clear-map" class="hud-btn" style="color: #888888;">Yüklü Dosyayı Kaldır</button>
-            <button id="btn-add-wall-box" class="hud-btn" title="Karakterin geçemeyeceği monokrom tel kafes engel kutusu ekler">+ Engel Kutusu Ekle</button>
-            <button id="btn-clear-wall-boxes" class="hud-btn" style="color: #888888;">Engelleri Temizle</button>
+          <!-- Zemin Izgarası & Işıklar Aç/Kapa -->
+          <div class="studio-sub-header" style="margin-top: 12px;">REFERANS AYDINLATMA & IZGARA:</div>
+          <div class="studio-ctrl-row">
+            <button id="btn-toggle-grid" class="hud-btn flex-grow active" title="Zemin ızgarasını gizle/göster">
+              Zemin Izgarası (Grid)
+            </button>
+            <button id="btn-toggle-lights" class="hud-btn flex-grow active" title="Işıkları aç/kapa">
+              Işıklar (Gölge & Güneş)
+            </button>
+          </div>
+
+          <!-- Engel Kutuları & Odaklanma -->
+          <div class="studio-ctrl-row" style="margin-top: 8px;">
+            <button id="btn-focus-map" class="hud-btn flex-grow" title="Kamerayı haritaya odakla">
+              Haritaya Odaklan
+            </button>
+            <button id="btn-clear-map" class="hud-btn subtle flex-grow" title="Yüklü haritayı kaldır">
+              Haritayı Kaldır
+            </button>
+          </div>
+
+          <div class="studio-ctrl-row" style="margin-top: 8px;">
+            <button id="btn-add-wall-box" class="hud-btn small-btn flex-grow" title="Karakterin geçemeyeceği tel kafes engel ekle">
+              + Engel Kutusu Ekle
+            </button>
+            <button id="btn-clear-wall-boxes" class="hud-btn small-btn subtle" title="Eklenen tüm tel engelleri temizle">
+              Engelleri Temizle
+            </button>
           </div>
         </div>
 
-        <!-- Sekme 4: Kapı ve Kesit (Cutaway) -->
-        <div id="tab-door" class="dock-tab-pane" style="display: none;">
-          <div class="dock-button-row">
-            <button id="btn-toggle-door-panel" class="hud-btn primary">
-              Kapıyı Aç / Kapat
+        <!-- ==========================================
+             SEKME 3: KAMERALAR
+             ========================================== -->
+        <div id="tab-camera" class="studio-tab-pane" style="display: none;">
+          <div class="studio-ctrl-row">
+            <button id="btn-free-orbit" class="hud-btn flex-grow" title="Serbest döndürme moduna geç">
+              Serbest Orbit Modu
             </button>
-            <button id="btn-force-cutaway" class="hud-btn">
-              Kesit Modu: <span id="label-cutaway-mode">Otomatik (Yakınlıkta)</span>
+            <button id="btn-add-camera" class="hud-btn primary flex-grow" title="Mevcut kamera açısını yeni istasyon olarak kaydet">
+              + Açıyı Kaydet
             </button>
           </div>
 
-          <div class="dock-info-box">
-            <div>• <strong>Menteşe Mekaniği:</strong> Kapı sol menteşe pivot noktası etrafında tam 90 derece açılır.</div>
-            <div>• <strong>Şeffaf Kesit (Cutaway):</strong> Kapı açıldığında veya karakter kapıya yaklaştığında ön duvarlar şeffaflaşarak iç mekan görünür hale gelir.</div>
+          <div class="studio-ctrl-row" style="margin-top: 8px;">
+            <button id="btn-toggle-follow" class="hud-btn primary flex-grow" title="Kamera karakteri otomatik takip etsin">
+              ◉ Karakteri Takip Et: [AÇIK]
+            </button>
+            <button id="btn-toggle-tour" class="hud-btn flex-grow" title="Tüm istasyonları sırayla gezen otomatik kamera turu">
+              <span id="label-tour-btn">Kamera Turu</span>
+            </button>
+          </div>
+
+          <!-- Kaydedilen Kameralar Listesi -->
+          <div class="studio-sub-header">SABİT CCTV İSTASYONLARI:</div>
+          <div id="studio-camera-list" class="studio-camera-list-box">
+            <!-- JavaScript ile dinamik render edilir -->
+          </div>
+
+          <div class="studio-info-text">
+            * Karakter odaya girdiğinde kamera otomatik olarak tavan CCTV açısına yumuşakça geçer.
+          </div>
+        </div>
+
+        <!-- ==========================================
+             SEKME 4: KARAKTER & MERDİVEN
+             ========================================== -->
+        <div id="tab-character" class="studio-tab-pane" style="display: none;">
+          <div class="studio-slider-group">
+            <div class="slider-row-label">
+              <span>Yürüme Hızı:</span>
+              <span id="label-speed-val">4.2 m/s</span>
+            </div>
+            <input type="range" id="slider-character-speed" min="1.0" max="10.0" step="0.2" value="4.2" />
+          </div>
+
+          <div class="studio-slider-group" style="margin-top: 10px;">
+            <div class="slider-row-label">
+              <span>Sallantı Şiddeti (Wobble & Bobbing):</span>
+              <span id="label-wobble-val">1.0x</span>
+            </div>
+            <input type="range" id="slider-wobble-intensity" min="0.0" max="2.0" step="0.1" value="1.0" />
+          </div>
+
+          <div class="studio-ctrl-row" style="margin-top: 14px;">
+            <button id="btn-reset-spawn" class="hud-btn primary flex-grow" title="Karakteri (0,0,0) başlangıç zeminine ışınla">
+              ⟲ Başlangıç Noktasına Işınla
+            </button>
+          </div>
+
+          <!-- Prosedürel Emote Test Butonları -->
+          <div class="studio-sub-header" style="margin-top: 14px;">PROSEDÜREL HAREKET / EMOTE TESTİ:</div>
+          <div class="studio-button-grid">
+            <button id="btn-emote-jump" class="hud-btn small-btn" title="Karakter yerinde çift zıplar">
+              Zıpla (Jump)
+            </button>
+            <button id="btn-emote-wave" class="hud-btn small-btn" title="Karakter sağa sola sallanır">
+              Selam Ver (Wave)
+            </button>
+            <button id="btn-emote-spin" class="hud-btn small-btn" title="Karakter 360° döner">
+              Kutlama (Spin)
+            </button>
+          </div>
+
+          <div class="studio-info-text" style="margin-top: 12px;">
+            * Karakter 5 basamaklı merdiveni ve rampaları algılar, dikey olarak (Y ekseni) tırmanır. 2. kat zemininde yürürken alt kattaki masalara çarpmaz.
           </div>
         </div>
       </div>
-    </div>
+    </aside>
 
-    <!-- Bilgi Modalı -->
+    <!-- Bilgi & Kısayol Modalı -->
     <div id="modal-help" class="modal-layer">
       <div class="modal-dialog">
         <div class="modal-dialog-header">
-          <div class="modal-dialog-title">PROJE MİMARİSİ & KULLANIM</div>
-          <button id="btn-close-help" class="hud-btn" style="padding: 2px 8px;">✕</button>
+          <div class="modal-dialog-title">REJİ & STÜDYO SİSTEMİ REHBERİ</div>
+          <button id="btn-close-help" class="hud-btn icon-btn">✕</button>
         </div>
         <div class="modal-dialog-body">
-          <p><strong>1. Dokunmatik & Mobil Uyum:</strong> Capacitor ile derlenmek üzere optimize edilmiştir. `touch-action: none` ile ekran kayması önlenir, tek parmak tıklaması ile hedefe yürünür.</p>
-          <p><strong>2. Menteşeli Kapı & Kesit Modu:</strong> Kapıya dokunduğunuzda veya karakter 2.5 metre yakınına geldiğinde menteşesi etrafında 90° açılır ve oda duvarları şeffaf kesit moduna geçer.</p>
-          <p><strong>3. Otomatik Kamera Tetikleyicisi:</strong> Karakter kapıdan içeri girdiğinde kamera otomatik olarak iç tavan CCTV açısına yumuşakça (lerp) geçiş yapar.</p>
-          <p><strong>4. Katı Monokrom:</strong> Yalnızca saf siyah, beyaz ve gri tonları kullanılmıştır.</p>
+          <p><strong>1. Reji / Zaman Çizelgesi (Timeline):</strong> Sahnedeki hareketleri sırayla yürüten yönetmen modudur. 'Adım Kayıt Modu'nu açarak zemine tıkladığınızda adım kuyruğa otomatik eklenir.</p>
+          <p><strong>2. Kısayol Tuşları:</strong></p>
+          <p>• <strong>'H' Tuşu:</strong> Tüm panelleri gizler, sinematik tam ekran görünümüne geçer.</p>
+          <p>• <strong>'Space' (Boşluk):</strong> Reji akışını başlatır veya duraklatır.</p>
+          <p><strong>3. Katı Monokrom Kuralı:</strong> Yalnızca saf siyah (#000000), beyaz (#ffffff) ve gri tonları kullanılmıştır.</p>
+          <p><strong>4. APK & Masaüstü Uyumu:</strong> Capacitor ve dokunmatik ekranlar için sıfır gecikmeli `touch-action: none` mimarisi mevcuttur.</p>
         </div>
       </div>
     </div>

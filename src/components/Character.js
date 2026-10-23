@@ -1,8 +1,8 @@
 /**
  * Character.js
  * Çok katlı binalar ve merdivenler için 3 Boyutlu Navigasyon ve Prosedürel Animasyon Karakteri.
- * Merdiven tırmanırken dikey zemin yüksekliğini (Floor Snapping) algılar,
- * prosedürel bobbing ve wobble sallantısını merdiven yüksekliği üzerine bindirir.
+ * Timeline/Reji sistemi için async/Promise tabanlı komut yürütme (moveToPromise, playEmotePromise)
+ * ve ayarlanabilir hız ile sallantı şiddeti (wobbleIntensity) desteği içerir.
  */
 
 import * as THREE from 'three';
@@ -34,9 +34,21 @@ export class Character {
     this.targetPosition = new THREE.Vector3(0, 0, 0);
     this.currentFloorY = 0; // Karakterin bastığı dikey zemin kotu
     this.isMoving = false;
-    this.walkSpeed = 4.2; // m/s
+    this.walkSpeed = 4.2; // m/s (1 - 10 arası ayarlanabilir)
+    this.wobbleIntensity = 1.0; // Sallantı şiddeti çarpanı (0 - 2x)
     this.walkTime = 0;
     this.idleTime = 0;
+
+    // Timeline / Async Promise Takibi
+    this.activeMovePromise = null;
+    this.moveResolve = null;
+
+    // Emote Durumu
+    this.isEmoting = false;
+    this.emoteType = null;
+    this.emoteTime = 0;
+    this.emoteDuration = 1.2;
+    this.emoteResolve = null;
 
     // Karakter geometrilerini ve hedef halkasını oluştur
     this._buildCharacterMesh();
@@ -131,8 +143,6 @@ export class Character {
 
   /**
    * Karakteri 3D uzaydaki (X, Y, Z) hedef noktasına yönlendirir.
-   * 2. kata veya merdiven başına tıklandığında hedef Y seviyesini tam algılar.
-   *
    * @param {THREE.Vector3} point - 3D zemin/basamak/kat koordinatı
    */
   moveTo(point) {
@@ -166,7 +176,68 @@ export class Character {
       this.targetMarker.visible = true;
       this.markerActive = true;
       this.markerStartTime = performance.now();
+    } else {
+      // Zaten oradayız
+      this.isMoving = false;
+      this._resolveMovePromise(true);
     }
+  }
+
+  /**
+   * Reji / Zaman çizelgesi için Promise döndüren yürüme metodu.
+   * Karakter hedefe vardığında (veya duvarda sıkıştığında) resolve olur.
+   * @param {THREE.Vector3|Object} point
+   * @returns {Promise<boolean>}
+   */
+  moveToPromise(point) {
+    const targetVec = point instanceof THREE.Vector3
+      ? point
+      : new THREE.Vector3(point.x || 0, point.y || 0, point.z || 0);
+
+    // Varsa önceki bekleyen hareketi sonlandır
+    this._resolveMovePromise(false);
+
+    return new Promise((resolve) => {
+      this.moveResolve = resolve;
+      this.moveTo(targetVec);
+
+      // Hedefe zaten çok yakınsa hemen bitir
+      if (!this.isMoving) {
+        this._resolveMovePromise(true);
+      }
+    });
+  }
+
+  /**
+   * @private
+   */
+  _resolveMovePromise(success) {
+    if (this.moveResolve) {
+      const res = this.moveResolve;
+      this.moveResolve = null;
+      res(success);
+    }
+  }
+
+  /**
+   * Prosedürel Emote Animasyonu Başlatır (Promise döner)
+   * @param {'jump'|'wave'|'spin'} type
+   * @returns {Promise<void>}
+   */
+  playEmotePromise(type = 'jump') {
+    if (this.emoteResolve) {
+      this.emoteResolve();
+      this.emoteResolve = null;
+    }
+
+    this.isEmoting = true;
+    this.emoteType = type;
+    this.emoteTime = 0;
+    this.emoteDuration = type === 'spin' ? 1.0 : type === 'jump' ? 0.9 : 1.2;
+
+    return new Promise((resolve) => {
+      this.emoteResolve = resolve;
+    });
   }
 
   /**
@@ -189,6 +260,48 @@ export class Character {
 
     const currentPos = this.rootGroup.position;
 
+    // 2. Emote animasyonu işleme
+    if (this.isEmoting) {
+      this.emoteTime += delta;
+      const progress = Math.min(1.0, this.emoteTime / this.emoteDuration);
+
+      if (this.emoteType === 'jump') {
+        // Çift zıplama ve squash
+        const jumpPhase = Math.sin(progress * Math.PI * 2);
+        const jumpH = Math.max(0, jumpPhase) * 0.45;
+        this.visualGroup.position.y = jumpH;
+        this.visualGroup.scale.set(
+          1 - jumpH * 0.4,
+          1 + jumpH * 0.7,
+          1 - jumpH * 0.4
+        );
+      } else if (this.emoteType === 'spin') {
+        // 360 derece hızlı dönüş ve neşe sıçraması
+        this.rootGroup.rotation.y += delta * Math.PI * 4;
+        const bounce = Math.sin(progress * Math.PI) * 0.25;
+        this.visualGroup.position.y = bounce;
+      } else {
+        // Wave / Selam: Sağa sola neşeli sallanma
+        const wave = Math.sin(progress * Math.PI * 4) * 0.25;
+        this.visualGroup.rotation.z = wave;
+        this.visualGroup.position.y = Math.abs(wave) * 0.15;
+      }
+
+      if (progress >= 1.0) {
+        this.isEmoting = false;
+        this.visualGroup.position.y = 0;
+        this.visualGroup.rotation.z = 0;
+        this.visualGroup.scale.set(1, 1, 1);
+        if (this.emoteResolve) {
+          const res = this.emoteResolve;
+          this.emoteResolve = null;
+          res();
+        }
+      }
+      return; // Emote yaparken yürümeyi duraklat
+    }
+
+    // 3. Yürüme Mantığı
     // Yatay yön ve mesafe (X ve Z)
     const toTargetX = this.targetPosition.x - currentPos.x;
     const toTargetZ = this.targetPosition.z - currentPos.z;
@@ -203,7 +316,7 @@ export class Character {
         (toTargetZ / horizontalDist) * stepDist
       );
 
-      // 2. Çarpışma Denetimi ve Duvar/Mobilya Boyunca Kayma (Sliding)
+      // Çarpışma Denetimi ve Duvar/Mobilya Boyunca Kayma (Sliding)
       let resolvedStep = rawStep;
       if (this.collisionManager) {
         const collisionResult = this.collisionManager.resolveMovement(
@@ -217,6 +330,7 @@ export class Character {
         if (collisionResult.isColliding && resolvedStep.lengthSq() < 0.000005) {
           this.isMoving = false;
           this.onStateChange({ isMoving: false });
+          this._resolveMovePromise(false);
         }
       }
 
@@ -232,19 +346,19 @@ export class Character {
         currentPos.x += resolvedStep.x;
         currentPos.z += resolvedStep.z;
 
-        // 3. Prosedürel Yürüme Matematiği
+        // Prosedürel Yürüme Matematiği (wobbleIntensity ile ölçekli)
         this.walkTime += delta * (this.walkSpeed * 2.8);
 
         // a) Dikey Zıplama (Bobbing): |sin(t)| ile adımlama sıçraması
-        const bob = Math.abs(Math.sin(this.walkTime)) * 0.12;
+        const bob = Math.abs(Math.sin(this.walkTime)) * (0.12 * this.wobbleIntensity);
         this.visualGroup.position.y = bob;
 
         // b) Beşik Sallantısı (Roll): sin(t) ile sağa-sola adımlama yatışı
-        const roll = Math.sin(this.walkTime) * 0.07;
+        const roll = Math.sin(this.walkTime) * (0.07 * this.wobbleIntensity);
         this.visualGroup.rotation.z = roll;
 
         // c) Hız Eğimi (Pitch/Lean): Gövdenin hareket yönüne 6-7 derece öne yatması
-        const targetPitch = 0.11;
+        const targetPitch = 0.11 * Math.min(1.5, this.walkSpeed / 4.0);
         this.visualGroup.rotation.x = THREE.MathUtils.lerp(
           this.visualGroup.rotation.x,
           targetPitch,
@@ -252,16 +366,17 @@ export class Character {
         );
 
         // d) Squash & Stretch: Yere basma anında Y basılması ve X/Z genişlemesi
-        const squash = Math.cos(this.walkTime * 2.0) * 0.05;
+        const squash = Math.cos(this.walkTime * 2.0) * (0.05 * this.wobbleIntensity);
         this.visualGroup.scale.set(1.0 + squash * 0.5, 1.0 - squash, 1.0 + squash * 0.5);
 
         this.contactShadow.scale.set(1.0 - bob * 1.5, 1.0 - bob * 1.5, 1.0 - bob * 1.5);
       }
     } else {
-      // Karakter durdu (Idle)
+      // Karakter durdu (Hedefe vardı veya idle)
       if (this.isMoving) {
         this.isMoving = false;
         this.onStateChange({ isMoving: false });
+        this._resolveMovePromise(true);
       }
 
       this.idleTime += delta * 2.2;
@@ -280,8 +395,6 @@ export class Character {
     }
 
     // 4. ÇOK KATLI DİKEY ZEMİN KOTU YAKALAMA (Vertical Floor Snapping):
-    // Karakter ister yürüsün ister dursun, altındaki basamak, rampa veya 2. kat zeminini
-    // CollisionManager üzerinden tespit edip Y pozisyonunu yumuşakça (lerp) eşitler.
     if (this.collisionManager) {
       const targetFloorY = this.collisionManager.getFloorHeight(
         currentPos,
@@ -308,21 +421,38 @@ export class Character {
   }
 
   /**
-   * Karakteri başlangıç konumuna sıfırlar
+   * Karakteri belirtilen konuma ışınlar / sıfırlar
    */
-  resetPosition(x = 0, y = 0, z = 0) {
+  teleportTo(x = 0, y = 0, z = 0) {
     this.rootGroup.position.set(x, y, z);
     this.targetPosition.set(x, y, z);
     this.currentFloorY = y;
     this.isMoving = false;
+    this.isEmoting = false;
+    this.visualGroup.position.set(0, 0, 0);
+    this.visualGroup.rotation.set(0, 0, 0);
+    this.visualGroup.scale.set(1, 1, 1);
+    this._resolveMovePromise(true);
     this.onStateChange({ isMoving: false });
   }
 
+  resetPosition(x = 0, y = 0, z = 0) {
+    this.teleportTo(x, y, z);
+  }
+
   /**
-   * Yürüme hızını ayarlar
+   * Yürüme hızını ayarlar (1.0 - 10.0 m/s)
    * @param {number} speed
    */
   setSpeed(speed) {
-    this.walkSpeed = speed;
+    this.walkSpeed = Math.max(1.0, Math.min(12.0, speed));
+  }
+
+  /**
+   * Sallantı şiddetini ayarlar (0.0 - 2.0x)
+   * @param {number} intensity
+   */
+  setWobbleIntensity(intensity) {
+    this.wobbleIntensity = Math.max(0.0, Math.min(2.5, intensity));
   }
 }
