@@ -133,6 +133,9 @@
           <button class="studio-tab-btn" data-tab="tab-character" title="Karakter & Merdiven">
             🚶 KARAKTER
           </button>
+          <button class="studio-tab-btn" data-tab="tab-sprites" title="2D Spritesheet Animasyonu">
+            ▦ 2D
+          </button>
           <button class="studio-tab-btn" data-tab="tab-render" title="Dışa Aktar / Render">
             💾 RENDER
           </button>
@@ -408,7 +411,52 @@
         </div>
 
         <!-- ==========================================
-             SEKME 5: DIŞA AKTAR / RENDER
+             SEKME 5: 2D SPRITESHEET ANİMASYONU
+             ========================================== -->
+        <div id="tab-sprites" class="studio-tab-pane" style="display: none;">
+          <div class="studio-info-text">Şeffaf PNG/WebP/JPEG sprite sheet yükleyin. Kareler eşit boyutlu, aralıksız bir satır-sütun ızgarasında olmalı. 2D katman ekran üzerinde kalır ve video kaydına dahil edilir.</div>
+          <input id="file-picker-sprite-sheet" type="file" accept="image/png,image/webp,image/jpeg,.png,.webp,.jpg,.jpeg" style="display: none;" />
+          <div class="studio-ctrl-row sprite-upload-row">
+            <button id="btn-load-sprite-sheet" class="hud-btn primary flex-grow">Spritesheet Yükle</button>
+          </div>
+          <div class="sprite-sheet-grid">
+            <label class="timeline-field">Sütun
+              <input id="sprite-columns" class="hud-number-input" type="number" min="1" max="64" step="1" value="4" />
+            </label>
+            <label class="timeline-field">Satır
+              <input id="sprite-rows" class="hud-number-input" type="number" min="1" max="64" step="1" value="4" />
+            </label>
+            <label class="timeline-field">FPS
+              <input id="sprite-fps" class="hud-number-input" type="number" min="1" max="60" step="1" value="12" />
+            </label>
+          </div>
+          <label class="timeline-field sprite-select-field">2D karakter
+            <select id="sprite-actor-select" class="hud-select"></select>
+          </label>
+          <div class="sprite-sheet-grid sprite-transform-grid">
+            <label class="timeline-field">X (sol, px)
+              <input id="sprite-position-x" class="hud-number-input" type="number" min="0" step="1" value="0" />
+            </label>
+            <label class="timeline-field">Y (üst, px)
+              <input id="sprite-position-y" class="hud-number-input" type="number" min="0" step="1" value="0" />
+            </label>
+            <label class="timeline-field">Yükseklik (px)
+              <input id="sprite-display-height" class="hud-number-input" type="number" min="16" step="1" value="160" />
+            </label>
+          </div>
+          <div class="studio-ctrl-row sprite-actions-row">
+            <button id="btn-apply-sprite-transform" class="hud-btn flex-grow">Konumu Uygula</button>
+            <button id="btn-preview-sprite" class="hud-btn flex-grow">▶ Önizle</button>
+          </div>
+          <div class="studio-ctrl-row sprite-actions-row">
+            <button id="btn-add-sprite-timeline-step" class="hud-btn primary flex-grow">+ Zaman Çizelgesine Ekle</button>
+            <button id="btn-remove-sprite" class="hud-btn subtle">Sil</button>
+          </div>
+          <div id="studio-sprite-list" class="studio-sprite-list" aria-live="polite"></div>
+        </div>
+
+        <!-- ==========================================
+             SEKME 6: DIŞA AKTAR / RENDER
              ========================================== -->
         <div id="tab-render" class="studio-tab-pane" style="display: none;">
           <!-- Ekran Görüntüsü -->

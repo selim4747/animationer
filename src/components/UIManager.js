@@ -17,10 +17,11 @@ export class UIManager {
    * @param {import('./RecorderManager.js').RecorderManager} [context.recorderManager]
    * @param {Object} context.sceneHelpers - gridHelper, dirLight, hemiLight referansları
    */
-  constructor({ timelineManager, character, characterManager, onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, sceneHelpers }) {
+  constructor({ timelineManager, character, characterManager, spriteAnimationManager, onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, sceneHelpers }) {
     this.timeline = timelineManager;
     this.character = character;
     this.characters = characterManager || character;
+    this.sprites = spriteAnimationManager;
     this.onControlModeChange = onControlModeChange;
     this.door = door;
     this.cameraManager = cameraManager;
@@ -40,6 +41,7 @@ export class UIManager {
     this.updateTimelineUI();
     this.updateCameraList(this.cameraManager.stations, this.cameraManager.activeStationId);
     this.updateCharacterList(this.characters?.list?.() || []);
+    this.updateSpriteList(this.sprites?.list?.() || [], this.sprites?.selectedId);
   }
 
   setRecorder(recorderManager) {
@@ -141,6 +143,22 @@ export class UIManager {
       characterFilePicker: document.getElementById('file-picker-character'),
       controlModeSelect: document.getElementById('control-mode-select'),
       btnShowCharacter: document.getElementById('btn-show-character'),
+
+      // Sekme 5: 2D Spritesheet Animasyonu
+      spriteFilePicker: document.getElementById('file-picker-sprite-sheet'),
+      btnLoadSpriteSheet: document.getElementById('btn-load-sprite-sheet'),
+      spriteColumns: document.getElementById('sprite-columns'),
+      spriteRows: document.getElementById('sprite-rows'),
+      spriteFps: document.getElementById('sprite-fps'),
+      spriteActorSelect: document.getElementById('sprite-actor-select'),
+      spritePositionX: document.getElementById('sprite-position-x'),
+      spritePositionY: document.getElementById('sprite-position-y'),
+      spriteDisplayHeight: document.getElementById('sprite-display-height'),
+      btnApplySpriteTransform: document.getElementById('btn-apply-sprite-transform'),
+      btnPreviewSprite: document.getElementById('btn-preview-sprite'),
+      btnAddSpriteTimelineStep: document.getElementById('btn-add-sprite-timeline-step'),
+      btnRemoveSprite: document.getElementById('btn-remove-sprite'),
+      spriteListContainer: document.getElementById('studio-sprite-list'),
 
       // Sekme 5: DIŞA AKTAR / RENDER
       btnTakeScreenshot: document.getElementById('btn-take-screenshot'),
@@ -362,6 +380,61 @@ export class UIManager {
       } finally {
         d.characterFilePicker.value = '';
       }
+    });
+    d.btnLoadSpriteSheet?.addEventListener('click', () => d.spriteFilePicker?.click());
+    d.spriteFilePicker?.addEventListener('change', async (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      this.showToast('2D spritesheet yükleniyor…');
+      try {
+        const actor = await this.sprites.addSpriteSheet(file, {
+          columns: Number(d.spriteColumns?.value),
+          rows: Number(d.spriteRows?.value),
+          fps: Number(d.spriteFps?.value),
+        });
+        this.showToast(`${actor.name} 2D sahneye eklendi`);
+      } catch (error) {
+        this.showToast(error.message || 'Spritesheet yüklenemedi.');
+      } finally {
+        d.spriteFilePicker.value = '';
+      }
+    });
+    d.spriteActorSelect?.addEventListener('change', () => {
+      this.sprites?.select(d.spriteActorSelect.value);
+      this.updateSpriteList();
+    });
+    d.btnApplySpriteTransform?.addEventListener('click', () => {
+      const actor = this.sprites?.getActor();
+      if (!actor) return this.showToast('Önce bir 2D spritesheet yükleyin.');
+      this.sprites.setTransform(actor.id, {
+        x: Number(d.spritePositionX?.value),
+        y: Number(d.spritePositionY?.value),
+        height: Number(d.spriteDisplayHeight?.value),
+      });
+      this.showToast('2D karakter konumu ve boyutu güncellendi');
+    });
+    d.btnPreviewSprite?.addEventListener('click', () => {
+      const actor = this.sprites?.getActor();
+      if (!actor) return this.showToast('Önizleme için spritesheet yükleyin.');
+      if (actor.isPlaying) this.sprites.stopAnimation(actor.id);
+      else this.sprites.playAnimation(actor.id, { duration: null, fps: Number(d.spriteFps?.value), loop: true });
+    });
+    d.btnAddSpriteTimelineStep?.addEventListener('click', () => {
+      const actor = this.sprites?.getActor();
+      if (!actor) return this.showToast('Zaman çizelgesine eklemek için spritesheet yükleyin.');
+      const options = this.getTimelineActionOptions(actor.id);
+      if (!options.duration) options.duration = 2;
+      this.timeline.addStep('PLAY_SPRITE_ANIMATION', {
+        fps: Number(d.spriteFps?.value) || actor.fps,
+        loop: true,
+      }, `2D Animasyon: ${actor.name}`, options);
+      this.showToast('2D animasyon adımı zaman çizelgesine eklendi');
+    });
+    d.btnRemoveSprite?.addEventListener('click', () => {
+      const actor = this.sprites?.getActor();
+      if (!actor) return this.showToast('Silinecek 2D karakter yok.');
+      this.sprites.remove(actor.id);
+      this.showToast(`${actor.name} 2D sahneden silindi`);
     });
     d.controlModeSelect?.addEventListener('change', () => {
       this.onControlModeChange(d.controlModeSelect.value);
@@ -792,8 +865,8 @@ export class UIManager {
     }
   }
 
-  getTimelineActionOptions() {
-    const options = { actorId: this.characters?.selectedId };
+  getTimelineActionOptions(actorId = this.characters?.selectedId) {
+    const options = { actorId };
     const duration = Number(this.dom.timelineDuration?.value);
     if (Number.isFinite(duration) && duration > 0) options.duration = duration;
     if (this.timeline.playMode === 'scheduled') {
@@ -801,6 +874,58 @@ export class UIManager {
       options.startAt = Number.isFinite(startAt) ? Math.max(0, startAt) : 0;
     }
     return options;
+  }
+
+  updateSpriteList(actors = this.sprites?.list?.() || [], selectedId = this.sprites?.selectedId) {
+    const select = this.dom.spriteActorSelect;
+    if (select) {
+      select.replaceChildren();
+      if (actors.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'Önce spritesheet yükleyin';
+        select.appendChild(option);
+      } else {
+        actors.forEach((actor) => {
+          const option = document.createElement('option');
+          option.value = actor.id;
+          option.textContent = `${actor.name} (${actor.frameCount} kare)`;
+          select.appendChild(option);
+        });
+        if (actors.some((actor) => actor.id === selectedId)) select.value = selectedId;
+      }
+      select.disabled = actors.length === 0;
+    }
+
+    const actor = actors.find((item) => item.id === selectedId) || null;
+    if (actor) {
+      if (this.dom.spritePositionX) this.dom.spritePositionX.value = Math.round(actor.x);
+      if (this.dom.spritePositionY) this.dom.spritePositionY.value = Math.round(actor.y);
+      if (this.dom.spriteDisplayHeight) this.dom.spriteDisplayHeight.value = Math.round(actor.displayHeight);
+      if (this.dom.btnPreviewSprite) this.dom.btnPreviewSprite.textContent = actor.isPlaying ? '■ Durdur' : '▶ Önizle';
+    } else if (this.dom.btnPreviewSprite) {
+      this.dom.btnPreviewSprite.textContent = '▶ Önizle';
+    }
+    if (this.dom.btnRemoveSprite) this.dom.btnRemoveSprite.disabled = !actor;
+    if (this.dom.btnApplySpriteTransform) this.dom.btnApplySpriteTransform.disabled = !actor;
+    if (this.dom.btnPreviewSprite) this.dom.btnPreviewSprite.disabled = !actor;
+    if (this.dom.btnAddSpriteTimelineStep) this.dom.btnAddSpriteTimelineStep.disabled = !actor;
+
+    const list = this.dom.spriteListContainer;
+    if (list) {
+      list.replaceChildren();
+      actors.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = `sprite-list-item${item.id === selectedId ? ' active' : ''}`;
+        const name = document.createElement('span');
+        name.textContent = item.name;
+        const meta = document.createElement('span');
+        meta.className = 'sprite-list-meta';
+        meta.textContent = `${item.columns}×${item.rows} · ${item.fps} FPS${item.isPlaying ? ' · oynuyor' : ''}`;
+        row.append(name, meta);
+        list.appendChild(row);
+      });
+    }
   }
 
   updateCharacterList(actors = this.characters?.list?.() || []) {
@@ -861,6 +986,7 @@ export class UIManager {
       else if (step.type === 'PLAY_EMOTE') typeBadge = 'EMOTE';
       else if (step.type === 'FOLLOW') typeBadge = 'TAKİP';
       else if (step.type === 'SET_VISIBILITY') typeBadge = step.data.visible ? 'GÖSTER' : 'GİZLE';
+      else if (step.type === 'PLAY_SPRITE_ANIMATION') typeBadge = '2D ANİM';
 
       item.innerHTML = `
         <div class="step-num">${idx + 1}</div>
@@ -876,7 +1002,7 @@ export class UIManager {
         </div>
       `;
       item.querySelector('.step-title').textContent = step.title || 'Adım';
-      const actorName = this.characters?.getActor?.(step.actorId)?.name || (step.actorId ? 'Karakter' : 'Aktif karakter');
+      const actorName = this.characters?.getActor?.(step.actorId)?.name || this.sprites?.getActor?.(step.actorId)?.name || (step.actorId ? 'Karakter' : 'Aktif karakter');
       const meta = [actorName];
       if (Number.isFinite(step.startAt)) meta.push(`başlangıç ${step.startAt}s`);
       if (Number.isFinite(step.duration)) meta.push(`süre ${step.duration}s`);
