@@ -13,6 +13,7 @@ export const ACTION_TYPES = {
   PLAY_EMOTE: 'PLAY_EMOTE',
   FOLLOW: 'FOLLOW',
   SET_VISIBILITY: 'SET_VISIBILITY',
+  PLAY_SPRITE_ANIMATION: 'PLAY_SPRITE_ANIMATION',
 };
 
 export class TimelineManager {
@@ -23,10 +24,11 @@ export class TimelineManager {
    * @param {import('./CameraManager.js').CameraManager} options.cameraManager
    * @param {Function} options.onStateChange
    */
-  constructor({ character, door, cameraManager, onStateChange = () => {} }) {
+  constructor({ character, door, cameraManager, spriteAnimationManager, onStateChange = () => {} }) {
     this.character = character;
     this.door = door;
     this.cameraManager = cameraManager;
+    this.spriteAnimationManager = spriteAnimationManager;
     this.onStateChange = onStateChange;
 
     // Kuyruk Adımları
@@ -218,6 +220,8 @@ export class TimelineManager {
         return `Karakteri Takip Et: ${data.targetCharacterId || 'hedef'}`;
       case ACTION_TYPES.SET_VISIBILITY:
         return data.visible ? 'Karakteri Göster' : 'Karakteri Gizle';
+      case ACTION_TYPES.PLAY_SPRITE_ANIMATION:
+        return '2D Spritesheet Animasyonu';
       default:
         return 'Eylem';
     }
@@ -274,6 +278,7 @@ export class TimelineManager {
       this.isPaused = false;
       this.isPlaying = true;
       this.character?.pauseAll?.(false);
+      this.spriteAnimationManager?.pauseAll?.(false);
       if (this._pausePromiseResolver) {
         this._pausePromiseResolver();
         this._pausePromiseResolver = null;
@@ -339,6 +344,7 @@ export class TimelineManager {
       this.isPaused = false;
       this.isPlaying = true;
       this.character?.pauseAll?.(false);
+      this.spriteAnimationManager?.pauseAll?.(false);
       this._pausePromiseResolver?.();
       this._pausePromiseResolver = null;
       this._notify();
@@ -351,6 +357,7 @@ export class TimelineManager {
     this._abortPlayback = false;
     const playbackId = ++this._playbackId;
     this.character?.pauseAll?.(false);
+    this.spriteAnimationManager?.pauseAll?.(false);
     const schedule = this.steps
       .map((step, index) => ({
         step,
@@ -468,6 +475,16 @@ export class TimelineManager {
         break;
       }
 
+      case ACTION_TYPES.PLAY_SPRITE_ANIMATION: {
+        if (!this.spriteAnimationManager) throw new Error('2D spritesheet yöneticisi bulunamadı.');
+        await this.spriteAnimationManager.playAnimation(step.actorId, {
+          duration: step.duration || step.data.duration || 2,
+          fps: step.data.fps,
+          loop: step.data.loop !== false,
+        });
+        break;
+      }
+
       default:
         console.warn('Bilinmeyen timeline eylemi:', step.type);
     }
@@ -505,6 +522,7 @@ export class TimelineManager {
     if (this.isPlaying && !this.isPaused) {
       this.isPaused = true;
       this.character?.pauseAll?.(true);
+      this.spriteAnimationManager?.pauseAll?.(true);
       this._notify();
     }
   }
@@ -520,6 +538,8 @@ export class TimelineManager {
     this.currentStepIndex = -1;
     this.character?.pauseAll?.(false);
     this.character?.stopAllMotions?.();
+    this.spriteAnimationManager?.pauseAll?.(false);
+    this.spriteAnimationManager?.stopAll?.();
 
     if (this._pausePromiseResolver) {
       this._pausePromiseResolver();
@@ -649,6 +669,15 @@ export class TimelineManager {
             cleanData = { visible: data.visible };
             break;
           }
+          case ACTION_TYPES.PLAY_SPRITE_ANIMATION: {
+            const fps = Number(data.fps ?? 12);
+            const loop = data.loop ?? true;
+            if (!Number.isFinite(fps) || fps < 1 || fps > 60 || typeof loop !== 'boolean') {
+              throw new Error(`${index + 1}. adımın 2D animasyon ayarları geçersiz.`);
+            }
+            cleanData = { fps, loop };
+            break;
+          }
         }
         const title = typeof step.title === 'string' ? step.title.slice(0, 160) : '';
         const actorId = step.actorId === undefined ? undefined : (typeof step.actorId === 'string' && step.actorId.length <= 128 ? step.actorId : null);
@@ -656,6 +685,9 @@ export class TimelineManager {
         const duration = step.duration === undefined ? undefined : Number(step.duration);
         if (actorId === null || (startAt !== undefined && (!Number.isFinite(startAt) || startAt < 0 || startAt > 3600))) {
           throw new Error(`${index + 1}. adımın karakteri veya başlangıç zamanı geçersiz.`);
+        }
+        if (step.type === ACTION_TYPES.PLAY_SPRITE_ANIMATION && !actorId) {
+          throw new Error(`${index + 1}. adım için bir 2D sprite seçilmemiş.`);
         }
         if (duration !== undefined && (!Number.isFinite(duration) || duration <= 0 || duration > 3600)) {
           throw new Error(`${index + 1}. adımın süresi 0–3600 saniye arasında olmalı.`);

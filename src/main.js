@@ -14,6 +14,7 @@ import { CameraManager } from './components/CameraManager.js';
 import { TimelineManager, ACTION_TYPES } from './components/TimelineManager.js';
 import { RecorderManager } from './components/RecorderManager.js';
 import { UIManager } from './components/UIManager.js';
+import { SpriteAnimationManager } from './components/SpriteAnimationManager.js';
 
 class App {
   constructor() {
@@ -57,6 +58,10 @@ class App {
     );
     this.camera.position.set(13, 11, 16);
 
+    this.spriteScene = new THREE.Scene();
+    this.spriteCamera = new THREE.OrthographicCamera(0, window.innerWidth, window.innerHeight, 0, 0.1, 100);
+    this.spriteCamera.position.z = 10;
+
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
       powerPreference: 'high-performance',
@@ -65,6 +70,7 @@ class App {
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.autoClear = false;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.1;
@@ -135,6 +141,12 @@ class App {
       this.uiManager?.updateCharacterList(state.actors || this.character.list());
     });
 
+    this.spriteAnimationManager = new SpriteAnimationManager(this.spriteScene, {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      onStateChange: (state) => this.uiManager?.updateSpriteList(state.actors, state.selectedId),
+    });
+
     // 4. Kamera Yöneticisi & CCTV İstasyonları
     this.cameraManager = new CameraManager(
       this.camera,
@@ -154,6 +166,7 @@ class App {
       character: this.character,
       door: this.door,
       cameraManager: this.cameraManager,
+      spriteAnimationManager: this.spriteAnimationManager,
       onStateChange: (state) => {
         if (this.uiManager) {
           this.uiManager.updateTimelineUI();
@@ -368,6 +381,7 @@ class App {
       cameraManager: this.cameraManager,
       mapLoader: this.mapLoader,
       recorderManager: this.recorderManager,
+      spriteAnimationManager: this.spriteAnimationManager,
       characterManager: this.character,
       onControlModeChange: (mode) => this.setControlMode(mode),
       sceneHelpers: {
@@ -613,6 +627,12 @@ class App {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.spriteCamera.left = 0;
+    this.spriteCamera.right = window.innerWidth;
+    this.spriteCamera.top = window.innerHeight;
+    this.spriteCamera.bottom = 0;
+    this.spriteCamera.updateProjectionMatrix();
+    this.spriteAnimationManager.resize(window.innerWidth, window.innerHeight);
   }
 
   /**
@@ -628,6 +648,7 @@ class App {
 
     // 1. Karakter Navigasyonu ve Prosedürel Animasyon
     this.character.update(delta);
+    this.spriteAnimationManager.update(delta);
 
     // 2. Menteşeli Kapı ve Kesit (Cutaway) Ön Duvarlar
     this.door.update(delta, charPos);
@@ -635,8 +656,11 @@ class App {
     // 3. Kamera Hareketi & Odaya Giriş/Çıkış CCTV Tetikleyicisi
     this.cameraManager.update(delta, charPos, roomBounds);
 
-    // 4. Three.js Render
+    // 4. 3D sahne ve üzerine saydam 2D spritesheet katmanı
+    this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
+    this.renderer.clearDepth();
+    this.renderer.render(this.spriteScene, this.spriteCamera);
   }
 }
 
