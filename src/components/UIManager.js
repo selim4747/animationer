@@ -6,7 +6,7 @@
  * video/ekran görüntüsü dışa aktarma (RecorderManager) kontrollerini yönetir.
  */
 
-import { createAutosaveRecord } from './ProjectStore.js';
+import { AutosaveCoordinator } from './AutosaveCoordinator.js';
 
 export class UIManager {
   /**
@@ -25,8 +25,6 @@ export class UIManager {
     this.characters = characterManager || character;
     this.sprites = spriteAnimationManager;
     this.projectStore = projectStore;
-    this._restoringProject = false;
-    this._autosaveTimer = null;
     this.onControlModeChange = onControlModeChange;
     this.door = door;
     this.cameraManager = cameraManager;
@@ -41,81 +39,24 @@ export class UIManager {
     this._cacheDOM();
     this._bindEvents();
     this._initShortcuts();
-    this._connectAutosave();
+    this.autosave = new AutosaveCoordinator({
+      timeline: this.timeline,
+      sprites: this.sprites,
+      projectStore: this.projectStore,
+      onStatus: (msg) => { if (this.dom?.autosaveStatus) this.dom.autosaveStatus.textContent = msg; },
+      onError: (msg) => this.showToast(msg),
+    });
+    this.autosave.connect();
 
     // İlk durum senkronizasyonu
     this.updateTimelineUI();
     this.updateCameraList(this.cameraManager.stations, this.cameraManager.activeStationId);
     this.updateCharacterList(this.characters?.list?.() || []);
     this.updateSpriteList(this.sprites?.list?.() || [], this.sprites?.selectedId);
-    void this.restoreAutosave();
   }
 
   setRecorder(recorderManager) {
     this.recorder = recorderManager;
-  }
-
-  _connectAutosave() {
-    if (!this.projectStore) {
-      if (this.dom.autosaveStatus) this.dom.autosaveStatus.textContent = 'Otomatik kayıt desteklenmiyor.';
-      return;
-    }
-    const timelineNotify = this.timeline.onStateChange;
-    this.timeline.onStateChange = (state) => {
-      timelineNotify?.(state);
-      this._scheduleAutosave();
-    };
-    const spriteNotify = this.sprites.onStateChange;
-    this.sprites.onStateChange = (state) => {
-      spriteNotify?.(state);
-      this._scheduleAutosave();
-    };
-  }
-
-  _scheduleAutosave() {
-    if (!this.projectStore || this._restoringProject) return;
-    if (this.dom.autosaveStatus) this.dom.autosaveStatus.textContent = 'Otomatik kayıt bekliyor…';
-    clearTimeout(this._autosaveTimer);
-    this._autosaveTimer = setTimeout(() => { void this._saveAutosave(); }, 700);
-  }
-
-  async _saveAutosave() {
-    try {
-      const record = createAutosaveRecord({
-        timeline: JSON.parse(this.timeline.exportSequence()),
-        sprites: await this.sprites.exportAssetsForStorage(),
-        viewport: { width: window.innerWidth, height: window.innerHeight },
-      });
-      const savedAt = await this.projectStore.save(record);
-      if (this.dom.autosaveStatus) this.dom.autosaveStatus.textContent = `Otomatik kayıtlı · ${new Date(savedAt).toLocaleTimeString()}`;
-    } catch (error) {
-      if (this.dom.autosaveStatus) this.dom.autosaveStatus.textContent = `Otomatik kayıt başarısız: ${error.message}`;
-    }
-  }
-
-  async restoreAutosave() {
-    if (!this.projectStore) return;
-    try {
-      const record = await this.projectStore.load();
-      if (!record) {
-        if (this.dom.autosaveStatus) this.dom.autosaveStatus.textContent = 'Otomatik kayıt yok.';
-        return;
-      }
-      const candidate = new this.timeline.constructor({});
-      candidate.importSequence(record.timeline);
-      const spriteIds = new Set(record.sprites.map((asset) => asset.id));
-      const missingSprite = candidate.steps.find((step) => step.type === 'PLAY_SPRITE_ANIMATION' && !spriteIds.has(step.actorId));
-      if (missingSprite) throw new Error(`'${missingSprite.actorId}' sprite dosyası otomatik kayıtta yok.`);
-      this._restoringProject = true;
-      await this.sprites.importAssets(record.sprites);
-      this.timeline.steps = candidate.steps;
-      this.timeline.playMode = candidate.playMode;
-      this.timeline._notify();
-      if (this.dom.autosaveStatus) this.dom.autosaveStatus.textContent = 'Otomatik kayıt geri yüklendi (timeline + 2D sprite).';
-    } catch (error) {
-      if (this.dom.autosaveStatus) this.dom.autosaveStatus.textContent = `Otomatik kayıt geri yüklenemedi: ${error.message}`;
-      this.showToast(`Otomatik kayıt açılamadı; başlangıç projesi korundu: ${error.message}`);
-    } finally { this._restoringProject = false; }
   }
 
   _cacheDOM() {
