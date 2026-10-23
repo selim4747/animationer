@@ -352,6 +352,8 @@
             </label>
             <button id="btn-add-character" class="hud-btn primary">+ Karakter Ekle</button>
             <button id="btn-remove-character" class="hud-btn subtle">Seçileni Sil</button>
+            <button id="btn-load-character" class="hud-btn">.glb Model Yükle</button>
+            <input id="file-picker-character" type="file" accept=".glb,model/gltf-binary" style="display: none;" />
           </div>
           <label class="timeline-field control-mode-field">Kontrol yöntemi
             <select id="control-mode-select" class="hud-select">
@@ -363,7 +365,7 @@
           <div class="studio-ctrl-row" style="margin-top: 8px;">
             <button id="btn-show-character" class="hud-btn flex-grow">Seçileni Göster</button>
           </div>
-          <div class="studio-info-text">Karakter Ekle ile 20'ye kadar prosedürel aktör oluşturun. Her karakteri ayrı seçip hızını, pozisyonunu ve hareketini kontrol edebilirsiniz.</div>
+          <div class="studio-info-text">20'ye kadar karakter oluşturun veya rig/animasyon içerebilen .glb model yükleyin. Seçili karakterin hızı ve hareketi ayrı kontrol edilir; yürüme/idle klipleri varsa adlarından algılanır.</div>
           <div class="studio-slider-group">
             <div class="slider-row-label">
               <span>Yürüme Hızı:</span>

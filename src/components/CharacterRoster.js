@@ -1,4 +1,5 @@
 import { Character } from './Character.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const COLORS = [0xf4f4f4, 0xc9c9c9, 0x9e9e9e, 0x777777, 0xffffff];
 
@@ -55,6 +56,33 @@ export class CharacterRoster {
     return actor;
   }
 
+  async loadCharacterFile(file) {
+    if (!file || !/\.glb$/i.test(file.name || '')) {
+      throw new Error('Yalnızca .glb karakter dosyaları desteklenir.');
+    }
+    if (file.size > 50 * 1024 * 1024) throw new Error('Karakter dosyası 50 MB sınırını aşamaz.');
+    if (this.actors.length >= 20) throw new Error('En fazla 20 karakter eklenebilir.');
+
+    const loader = new GLTFLoader();
+    const gltf = await new Promise((resolve, reject) => {
+      file.arrayBuffer().then((buffer) => {
+        loader.parse(buffer, '', resolve, reject);
+      }).catch(reject);
+    });
+    if (!gltf?.scene) throw new Error('GLB dosyasından sahne okunamadı.');
+
+    const name = (file.name || 'Yüklenen karakter').replace(/\.glb$/i, '').slice(0, 48);
+    const actor = this.addCharacter(name || 'Yüklenen karakter');
+    try {
+      actor.character.setModel(gltf.scene, gltf.animations || []);
+      this.select(actor.id);
+      return actor;
+    } catch (error) {
+      this.removeCharacter(actor.id);
+      throw error;
+    }
+  }
+
   select(id) {
     if (!this.actors.some((actor) => actor.id === id)) return false;
     if (this.selectedId && this.selectedId !== id) this.getCharacter(this.selectedId)?.setControlVector(0, 0);
@@ -75,8 +103,14 @@ export class CharacterRoster {
     actor.character.targetMarker.material?.dispose?.();
     actor.character.rootGroup.traverse((object) => {
       object.geometry?.dispose?.();
-      if (Array.isArray(object.material)) object.material.forEach((material) => material.dispose?.());
-      else object.material?.dispose?.();
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      for (const material of materials) {
+        if (!material) continue;
+        for (const value of Object.values(material)) {
+          if (value?.isTexture) value.dispose();
+        }
+        material.dispose();
+      }
     });
     if (this.selectedId === id) this.selectedId = this.actors[Math.max(0, index - 1)].id;
     this._syncSelectedAppearance();

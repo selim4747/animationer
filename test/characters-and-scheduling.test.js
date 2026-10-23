@@ -97,3 +97,58 @@ test('stopping and immediately restarting scheduled playback does not revive the
   assert.equal(runs, 1);
   assert.equal(timeline.isPlaying, false);
 });
+
+test('character accepts an imported model and plays a matching locomotion clip', () => {
+  const character = new Character(new THREE.Scene());
+  const model = new THREE.Group();
+  model.add(new THREE.Mesh(new THREE.BoxGeometry(1, 2, 1), new THREE.MeshStandardMaterial()));
+  const walkClip = new THREE.AnimationClip('Walk', 1, [
+    new THREE.NumberKeyframeTrack('.position[y]', [0, 1], [0, 0.1]),
+  ]);
+
+  character.setModel(model, [walkClip]);
+  assert.equal(character.bodyMesh.parent, null);
+  assert.equal(model.parent, character.visualGroup);
+  closeTo(model.scale.y, 0.8);
+  character.setControlVector(1, 0);
+  character.update(0.1);
+  assert.equal(character.walkAction.isRunning(), true);
+  character.setControlVector(0, 0);
+  character.update(0.2);
+  assert.equal(character.animationState, 'idle');
+});
+
+test('roster loads a GLB file as a selected character', async () => {
+  const positions = Buffer.from(new Float32Array([0, 0, 0, 0, 2, 0, 1, 0, 0]).buffer);
+  const gltfJson = {
+    asset: { version: '2.0' },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+    buffers: [{ byteLength: positions.length }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: positions.length, target: 34962 }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3', min: [0, 0, 0], max: [1, 2, 0] }],
+  };
+  const jsonBytesRaw = Buffer.from(JSON.stringify(gltfJson));
+  const jsonBytes = Buffer.concat([jsonBytesRaw, Buffer.alloc((4 - (jsonBytesRaw.length % 4)) % 4, 0x20)]);
+  const jsonHeader = Buffer.alloc(8);
+  jsonHeader.writeUInt32LE(jsonBytes.length, 0);
+  jsonHeader.writeUInt32LE(0x4e4f534a, 4);
+  const binHeader = Buffer.alloc(8);
+  binHeader.writeUInt32LE(positions.length, 0);
+  binHeader.writeUInt32LE(0x004e4942, 4);
+  const header = Buffer.alloc(12);
+  header.writeUInt32LE(0x46546c67, 0);
+  header.writeUInt32LE(2, 4);
+  header.writeUInt32LE(12 + jsonHeader.length + jsonBytes.length + binHeader.length + positions.length, 8);
+  const file = new File([header, jsonHeader, jsonBytes, binHeader, positions], 'visitor.glb', { type: 'model/gltf-binary' });
+
+  const scene = new THREE.Scene();
+  const roster = new CharacterRoster(scene, null);
+  const actor = await roster.loadCharacterFile(file);
+  assert.equal(actor.name, 'visitor');
+  assert.equal(roster.selectedId, actor.id);
+  assert.equal(actor.character.modelRoot.parent, actor.character.visualGroup);
+  assert.equal(roster.list().length, 2);
+});

@@ -66,6 +66,62 @@ export class Character {
     this.collisionManager = collisionManager;
   }
 
+  setModel(model, animations = []) {
+    if (!model?.isObject3D) throw new Error('Dosyada kullanılabilir bir 3D model bulunamadı.');
+    const bounds = new THREE.Box3().setFromObject(model);
+    const height = bounds.max.y - bounds.min.y;
+    if (!Number.isFinite(height) || height < 0.05) throw new Error('Modelin ölçüleri geçersiz.');
+
+    [this.bodyMesh, this.visorMesh, this.packMesh].forEach((mesh) => {
+      this.visualGroup.remove(mesh);
+      mesh.geometry?.dispose?.();
+      mesh.material?.dispose?.();
+    });
+    model.scale.multiplyScalar(1.6 / height);
+    model.updateMatrixWorld(true);
+    const scaledBounds = new THREE.Box3().setFromObject(model);
+    model.position.y -= scaledBounds.min.y;
+    model.traverse((object) => {
+      if (object.isMesh) {
+        object.castShadow = true;
+        object.receiveShadow = true;
+      }
+    });
+    this.visualGroup.add(model);
+    this.modelRoot = model;
+
+    if (this.animationMixer) this.animationMixer.stopAllAction();
+    this.animationMixer = animations.length ? new THREE.AnimationMixer(model) : null;
+    this.walkAction = null;
+    this.idleAction = null;
+    this.activeAnimationAction = null;
+    this.animationState = null;
+    if (this.animationMixer) {
+      const walkClip = animations.find((clip) => /walk|run|locomotion/i.test(clip.name)) || (animations.length > 1 ? animations[0] : null);
+      const idleClip = animations.find((clip) => /idle|stand|rest/i.test(clip.name)) || animations.find((clip) => clip !== walkClip);
+      this.walkAction = walkClip ? this.animationMixer.clipAction(walkClip) : null;
+      this.idleAction = idleClip ? this.animationMixer.clipAction(idleClip) : null;
+      this._setModelAnimationState(false, true);
+    }
+  }
+
+  _setModelAnimationState(isMoving, immediate = false) {
+    const next = isMoving ? this.walkAction : this.idleAction;
+    if (next === this.activeAnimationAction) return;
+    if (!next) {
+      this.activeAnimationAction?.fadeOut(immediate ? 0 : 0.18);
+      this.activeAnimationAction = null;
+      this.animationState = isMoving ? 'walk' : 'idle';
+      return;
+    }
+    next.reset().play();
+    if (immediate) next.fadeIn(0);
+    else next.fadeIn(0.18);
+    this.activeAnimationAction?.fadeOut(immediate ? 0 : 0.18);
+    this.activeAnimationAction = next;
+    this.animationState = isMoving ? 'walk' : 'idle';
+  }
+
   /**
    * Monokrom stilize kapsül karakter geometrisini oluşturur
    * @private
@@ -319,6 +375,10 @@ export class Character {
    */
   update(delta) {
     if (this.timelinePaused) return;
+    this.animationMixer?.update(delta);
+    if (this.animationMixer && this.animationState !== (this.isMoving ? 'walk' : 'idle')) {
+      this._setModelAnimationState(this.isMoving);
+    }
     // 1. Hedef halkası animasyonu (büyüme ve sönümlenme)
     if (this.markerActive) {
       const elapsed = (performance.now() - this.markerStartTime) / 1000;

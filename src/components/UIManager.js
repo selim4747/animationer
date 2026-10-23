@@ -137,6 +137,8 @@ export class UIManager {
       characterSelect: document.getElementById('character-select'),
       btnAddCharacter: document.getElementById('btn-add-character'),
       btnRemoveCharacter: document.getElementById('btn-remove-character'),
+      btnLoadCharacter: document.getElementById('btn-load-character'),
+      characterFilePicker: document.getElementById('file-picker-character'),
       controlModeSelect: document.getElementById('control-mode-select'),
       btnShowCharacter: document.getElementById('btn-show-character'),
 
@@ -346,6 +348,20 @@ export class UIManager {
       const actor = this.characters.getActor();
       if (!this.characters.removeCharacter()) this.showToast('Sahnede en az bir karakter kalmalı.');
       else this.showToast(`${actor?.name || 'Karakter'} silindi`);
+    });
+    d.btnLoadCharacter?.addEventListener('click', () => d.characterFilePicker?.click());
+    d.characterFilePicker?.addEventListener('change', async (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      this.showToast('GLB karakter yükleniyor…');
+      try {
+        const actor = await this.characters.loadCharacterFile(file);
+        this.showToast(`${actor.name} yüklendi ve seçildi`);
+      } catch (error) {
+        this.showToast(error.message || 'GLB karakter yüklenemedi.');
+      } finally {
+        d.characterFilePicker.value = '';
+      }
     });
     d.controlModeSelect?.addEventListener('change', () => {
       this.onControlModeChange(d.controlModeSelect.value);
