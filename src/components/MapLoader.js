@@ -274,12 +274,25 @@ export class MapLoader {
     }
   }
 
+  setImageSize(scale) {
+    this.setScale(scale);
+  }
+
   setOpacity(opacity) {
     this.currentOpacity = opacity;
     if (this.currentPlane && this.currentPlane.material) {
       this.currentPlane.material.opacity = opacity;
       this.currentPlane.material.transparent = opacity < 1.0 || true;
     }
+  }
+
+  setImageOpacity(opacity) {
+    this.setOpacity(opacity);
+  }
+
+  setImageOrientation(mode) {
+    const isGround = mode === 'horizontal';
+    this.setOrientation(isGround);
   }
 
   handleFile(file) {
@@ -304,6 +317,37 @@ export class MapLoader {
     }
   }
 
+  loadFile(file) {
+    return this.handleFile(file);
+  }
+
+  /**
+   * Kamerayı yüklenmiş olan haritaya veya modele odaklar
+   * @param {THREE.PerspectiveCamera} camera
+   * @returns {THREE.Vector3}
+   */
+  focusCameraOnMap(camera) {
+    let target = new THREE.Vector3(0, 0.5, 0);
+    if (this.currentLoadedObject) {
+      const box = new THREE.Box3().setFromObject(this.currentLoadedObject);
+      target = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z, 8);
+      if (camera) {
+        camera.position.set(
+          target.x + maxDim * 0.85,
+          target.y + maxDim * 0.85,
+          target.z + maxDim * 1.05
+        );
+        camera.lookAt(target);
+      }
+    } else if (camera) {
+      camera.position.set(13, 11, 16);
+      camera.lookAt(target);
+    }
+    return target;
+  }
+
   /**
    * 2D Harita editörü için monokrom tel kafes mobilya/duvar engel kutusu ekler
    */
@@ -318,11 +362,27 @@ export class MapLoader {
     return box;
   }
 
+  addWallBox(x = 0, z = 0, w = 2.0, d = 1.0, h = 1.2) {
+    return this.createWallBox(x, z, w, d, h);
+  }
+
   clearAllWallBoxes() {
     if (this.collisionManager) {
       this.collisionManager.clearWallBoxes();
       this.onStatusChange({ type: 'wallBoxesCleared' });
     }
+  }
+
+  clearWallBoxes() {
+    this.clearAllWallBoxes();
+  }
+
+  loadProceduralFloorPlan() {
+    return this.loadDemoFloorPlan();
+  }
+
+  loadProceduralGallery() {
+    return this.loadDemo3DGallery();
   }
 
   /**
