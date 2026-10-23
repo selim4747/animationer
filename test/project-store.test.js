@@ -4,23 +4,28 @@ import {
   calculateProjectBytes,
   createAutosaveRecord,
   IndexedProjectStore,
+  MAX_CHARACTER_LIBRARY_BYTES,
+  MAX_CHARACTER_TEMPLATE_BYTES,
   MAX_PROJECT_BYTES,
   migrateProjectRecord,
   PROJECT_SCHEMA_VERSION,
+  validateCharacterTemplateRecord,
   validateProjectRecord,
 } from '../src/components/ProjectStore.js';
 
 class MemoryIndexedDB {
-  constructor() { this.data = new Map(); this.failNextWrite = false; }
+  constructor() { this.stores = new Map(); this.data = new Map(); this.failNextWrite = false; }
   open() {
     const request = {};
     queueMicrotask(() => {
       request.result = {
-        objectStoreNames: { contains: (name) => name === 'projects' },
-        createObjectStore() {},
+        objectStoreNames: { contains: (name) => this.stores.has(name) },
+        createObjectStore: (name) => { const data = new Map(); this.stores.set(name, data); if (name === 'projects') this.data = data; return data; },
         close() {},
-        transaction: () => {
+        transaction: (storeName) => {
           const tx = { error: null };
+          tx.abort = () => queueMicrotask(() => tx.onabort?.());
+          const data = this.stores.get(storeName);
           tx.objectStore = () => ({
             put: (value, key) => {
               queueMicrotask(() => {
@@ -29,18 +34,23 @@ class MemoryIndexedDB {
                   tx.error = new DOMException('Quota exceeded', 'QuotaExceededError');
                   tx.onabort?.();
                 } else {
-                  this.data.set(key, value);
+                  data.set(key, value);
                   tx.oncomplete?.();
                 }
               });
             },
+            getAll: () => {
+              const get = {};
+              queueMicrotask(() => { get.result = [...data.values()]; get.onsuccess?.(); });
+              return get;
+            },
             get: (key) => {
               const get = {};
-              queueMicrotask(() => { get.result = this.data.get(key); get.onsuccess?.(); });
+              queueMicrotask(() => { get.result = data.get(key); get.onsuccess?.(); });
               return get;
             },
             delete: (key) => {
-              queueMicrotask(() => { this.data.delete(key); tx.oncomplete?.(); });
+              queueMicrotask(() => { data.delete(key); tx.oncomplete?.(); });
             },
           });
           return tx;
@@ -103,4 +113,35 @@ test('IndexedDB autosave rolls back a quota failure and preserves the last valid
   assert.equal(restored.updatedAt, initial.updatedAt);
   await store.clear();
   assert.equal(await store.load(), null);
+});
+
+test('named 2D character templates persist in a separate library and can be deleted', async () => {
+  const store = new IndexedProjectStore(new MemoryIndexedDB());
+  const template = await store.saveCharacterTemplate({
+    id: 'template-hero', name: '  Hero  ', blob: new Blob(['png'], { type: 'image/png' }),
+    mimeType: 'image/png', fileName: 'hero.png', columns: 4, rows: 4, fps: 12,
+  });
+  assert.equal(template.name, 'Hero');
+  assert.deepEqual((await store.listCharacterTemplates()).map(({ id, name }) => ({ id, name })), [
+    { id: 'template-hero', name: 'Hero' },
+  ]);
+  assert.equal(await store.deleteCharacterTemplate('template-hero'), true);
+  assert.deepEqual(await store.listCharacterTemplates(), []);
+});
+
+test('2D character template and library limits are enforced before saving', async () => {
+  const makeBlob = (size) => {
+    const blob = new Blob(['x'], { type: 'image/png' });
+    Object.defineProperty(blob, 'size', { value: size });
+    return blob;
+  };
+  assert.throws(() => validateCharacterTemplateRecord({ id: 'bad', name: 'Bad', blob: makeBlob(MAX_CHARACTER_TEMPLATE_BYTES + 1), mimeType: 'image/png', columns: 1, rows: 1, fps: 12 }), /50 MB/i);
+
+  const store = new IndexedProjectStore(new MemoryIndexedDB());
+  for (let index = 0; index < 5; index++) {
+    await store.saveCharacterTemplate({ id: `template-${index}`, name: `Hero ${index}`, blob: makeBlob(MAX_CHARACTER_TEMPLATE_BYTES), mimeType: 'image/png', columns: 1, rows: 1, fps: 12 });
+  }
+  assert.equal(5 * MAX_CHARACTER_TEMPLATE_BYTES, MAX_CHARACTER_LIBRARY_BYTES);
+  await assert.rejects(() => store.saveCharacterTemplate({ id: 'template-overflow', name: 'Overflow', blob: makeBlob(1), mimeType: 'image/png', columns: 1, rows: 1, fps: 12 }), /250 MB/i);
+  assert.equal((await store.listCharacterTemplates()).length, 5);
 });

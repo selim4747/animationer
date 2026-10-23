@@ -354,6 +354,42 @@
             <button id="btn-remove-sprite" class="hud-btn subtle">Sil</button>
           </div>
           <div id="studio-sprite-list" class="studio-sprite-list" aria-live="polite"></div>
+
+          <div class="studio-sub-header" style="margin-top: 18px;">3D DÜNYADA 2D KARAKTER KÜTÜPHANESİ:</div>
+          <div class="studio-info-text">Spritesheet’i bir kez adlandırıp kaydedin; IndexedDB kitaplığında saklanır ve tekrar tekrar dünyaya eklenebilir. Karakterler kameraya dönük çizilir, sahne derinliğini ve dünya çarpışmalarını kullanır. Yürütmek için 2D hareket modunu açıp zemine dokunun.</div>
+          <input id="file-picker-world-sprite" type="file" accept="image/png,image/webp,image/jpeg,.png,.webp,.jpg,.jpeg" style="display: none;" />
+          <label class="timeline-field" style="margin-top: 8px;">Kitaplık adı
+            <input id="world-sprite-name" class="hud-number-input" type="text" maxlength="48" placeholder="Örn. Kahraman" />
+          </label>
+          <div class="sprite-sheet-grid">
+            <label class="timeline-field">Sütun
+              <input id="world-sprite-columns" class="hud-number-input" type="number" min="1" max="64" step="1" value="4" />
+            </label>
+            <label class="timeline-field">Satır
+              <input id="world-sprite-rows" class="hud-number-input" type="number" min="1" max="64" step="1" value="4" />
+            </label>
+            <label class="timeline-field">FPS
+              <input id="world-sprite-fps" class="hud-number-input" type="number" min="1" max="60" step="1" value="12" />
+            </label>
+          </div>
+          <div class="studio-ctrl-row sprite-actions-row">
+            <button id="btn-save-world-sprite-template" class="hud-btn primary flex-grow">Spritesheet’i Kitaplığa Ekle</button>
+          </div>
+          <label class="timeline-field">Kayıtlı 2D karakter
+            <select id="world-sprite-template-select" class="hud-select"></select>
+          </label>
+          <div class="studio-ctrl-row sprite-actions-row">
+            <button id="btn-spawn-world-sprite" class="hud-btn primary flex-grow">+ 3D Dünyaya Ekle</button>
+            <button id="btn-delete-world-sprite-template" class="hud-btn subtle">Kitaplıktan Sil</button>
+          </div>
+          <label class="timeline-field">Dünyadaki 2D karakter
+            <select id="world-sprite-actor-select" class="hud-select"></select>
+          </label>
+          <div class="studio-ctrl-row sprite-actions-row">
+            <button id="btn-world-sprite-control" class="hud-btn flex-grow" aria-pressed="false">2D Hareket Modu: Kapalı</button>
+            <button id="btn-remove-world-sprite" class="hud-btn subtle">Sahneden Sil</button>
+          </div>
+          <div id="studio-world-sprite-list" class="studio-sprite-list" aria-live="polite"></div>
         </div>
 
         <!-- ==========================================
