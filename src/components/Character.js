@@ -1,7 +1,7 @@
 /**
  * Character.js
  * Rig ve kemik içermeyen, tamamen matematiksel prosedürel animasyonlu monokrom karakter sınıfı.
- * Tap-to-Move / Point-and-Click hareketi, dikey bobbing, beşik sallantısı (roll), öne eğilme ve squash & stretch.
+ * CollisionManager ile duvar çarpışma kontrolü ve duvar boyunca kayma (Wall Sliding) desteği içerir.
  */
 
 import * as THREE from 'three';
@@ -9,13 +9,18 @@ import * as THREE from 'three';
 export class Character {
   /**
    * @param {THREE.Scene} scene - Three.js sahnesi
-   * @param {Function} onStateChange - Durum değişim geri çağırma işlevi
+   * @param {CollisionManager} collisionManager - Çarpışma yöneticisi referansı
+   * @param {Function} onStateChange - Durum değişim bildirim işlevi
    */
-  constructor(scene, onStateChange = () => {}) {
+  constructor(scene, collisionManager = null, onStateChange = () => {}) {
     this.scene = scene;
+    this.collisionManager = collisionManager;
     this.onStateChange = onStateChange;
 
-    // Ana pozisyon grubu (Dünya koordinatları ve Y-ekseni dönüşü)
+    // Çarpışma yarıçapı (Modelin duvara gömülmesini engelleyen tampon mesafe)
+    this.collisionRadius = 0.34;
+
+    // Ana pozisyon grubu (Dünya koordinatları ve Y-ekseni yönü)
     this.rootGroup = new THREE.Group();
     this.rootGroup.position.set(0, 0, 0);
 
@@ -35,6 +40,14 @@ export class Character {
     this._buildTargetMarker();
 
     this.scene.add(this.rootGroup);
+  }
+
+  /**
+   * Çarpışma yöneticisi referansını ayarlar
+   * @param {CollisionManager} collisionManager
+   */
+  setCollisionManager(collisionManager) {
+    this.collisionManager = collisionManager;
   }
 
   /**
@@ -140,7 +153,7 @@ export class Character {
   }
 
   /**
-   * Her render karesinde karakterin hareketini ve prosedürel animasyonunu günceller
+   * Her render karesinde karakterin hareketini, çarpışmasını ve prosedürel animasyonunu günceller
    * @param {number} delta - Geçen kare süresi (saniye)
    */
   update(delta) {
@@ -163,43 +176,65 @@ export class Character {
     const distance = toTarget.length();
 
     if (this.isMoving && distance > 0.12) {
-      // 2. Y-Ekseninde Hedefe Yumuşak Dönüş (LookAt / Angular difference)
-      const targetAngle = Math.atan2(toTarget.x, toTarget.z);
-      let angleDiff = targetAngle - this.rootGroup.rotation.y;
-      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-      this.rootGroup.rotation.y += angleDiff * Math.min(1.0, delta * 12.0);
-
-      // 3. İleriye Doğru Öteleme
+      // İstenen hareket adımı vektörü
       const stepDist = Math.min(distance, this.walkSpeed * delta);
-      toTarget.normalize();
-      currentPos.addScaledVector(toTarget, stepDist);
+      const rawStep = toTarget.clone().normalize().multiplyScalar(stepDist);
 
-      // 4. Prosedürel Yürüme Matematiği
-      this.walkTime += delta * (this.walkSpeed * 2.8);
+      // 2. Çarpışma Denetimi ve Duvar Boyunca Kayma (Wall Sliding)
+      let resolvedStep = rawStep;
+      if (this.collisionManager) {
+        const collisionResult = this.collisionManager.resolveMovement(
+          currentPos,
+          rawStep,
+          this.collisionRadius
+        );
+        resolvedStep = collisionResult.resolvedStep;
 
-      // a) Dikey Zıplama (Bobbing): |sin(t)| ile adımlama sıçraması
-      const bob = Math.abs(Math.sin(this.walkTime)) * 0.13;
-      this.visualGroup.position.y = bob;
+        // Eğer karakter duvara tamamen çarptıysa ve kayma adım boyu çok küçükse durdur
+        if (collisionResult.isColliding && resolvedStep.lengthSq() < 0.00002) {
+          this.isMoving = false;
+          this.onStateChange({ isMoving: false });
+        }
+      }
 
-      // b) Beşik Sallantısı (Roll/Wobble): sin(t) ile sağa-sola adımlama yatışı
-      const roll = Math.sin(this.walkTime) * 0.08;
-      this.visualGroup.rotation.z = roll;
+      // Adım atılabiliyorsa konumu güncelle
+      if (resolvedStep.lengthSq() > 0.00001) {
+        // Y-Ekseninde Hedefe / Kayma Yönüne Yumuşak Dönüş
+        const moveDir = resolvedStep.clone().normalize();
+        const targetAngle = Math.atan2(moveDir.x, moveDir.z);
+        let angleDiff = targetAngle - this.rootGroup.rotation.y;
+        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+        this.rootGroup.rotation.y += angleDiff * Math.min(1.0, delta * 12.0);
 
-      // c) Hız Eğimi (Pitch/Lean): Gövdenin hareket yönüne 6-7 derece öne yatması
-      const targetPitch = 0.12;
-      this.visualGroup.rotation.x = THREE.MathUtils.lerp(
-        this.visualGroup.rotation.x,
-        targetPitch,
-        delta * 10.0
-      );
+        currentPos.add(resolvedStep);
 
-      // d) Squash & Stretch: Yere çarpış anında Y basılması ve X/Z genişlemesi
-      const squash = Math.cos(this.walkTime * 2.0) * 0.055;
-      this.visualGroup.scale.set(1.0 + squash * 0.5, 1.0 - squash, 1.0 + squash * 0.5);
+        // 3. Prosedürel Yürüme Matematiği
+        this.walkTime += delta * (this.walkSpeed * 2.8);
 
-      // Gölge boyutu senkronizasyonu
-      this.contactShadow.scale.set(1.0 - bob * 1.5, 1.0 - bob * 1.5, 1.0 - bob * 1.5);
+        // a) Dikey Zıplama (Bobbing): |sin(t)| ile adımlama sıçraması
+        const bob = Math.abs(Math.sin(this.walkTime)) * 0.13;
+        this.visualGroup.position.y = bob;
+
+        // b) Beşik Sallantısı (Roll/Wobble): sin(t) ile sağa-sola adımlama yatışı
+        const roll = Math.sin(this.walkTime) * 0.08;
+        this.visualGroup.rotation.z = roll;
+
+        // c) Hız Eğimi (Pitch/Lean): Gövdenin hareket yönüne 6-7 derece öne yatması
+        const targetPitch = 0.12;
+        this.visualGroup.rotation.x = THREE.MathUtils.lerp(
+          this.visualGroup.rotation.x,
+          targetPitch,
+          delta * 10.0
+        );
+
+        // d) Squash & Stretch: Yere çarpış anında Y basılması ve X/Z genişlemesi
+        const squash = Math.cos(this.walkTime * 2.0) * 0.055;
+        this.visualGroup.scale.set(1.0 + squash * 0.5, 1.0 - squash, 1.0 + squash * 0.5);
+
+        // Gölge boyutu senkronizasyonu
+        this.contactShadow.scale.set(1.0 - bob * 1.5, 1.0 - bob * 1.5, 1.0 - bob * 1.5);
+      }
     } else {
       // Karakter durdu (Idle)
       if (this.isMoving) {

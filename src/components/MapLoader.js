@@ -1,7 +1,8 @@
 /**
  * MapLoader.js
  * 3D (.glb, .gltf) ve 2D (.png, .jpg, .webp) harita/zemin yükleyici sınıfı.
- * Orijinal en-boy oranını (aspect ratio) korur, yatay/dikey yönelim ve alfa şeffaflık ayarlarını yönetir.
+ * Yüklenen 3D modellerdeki duvarları ve 2D harita için kullanıcı engel kutularını
+ * CollisionManager'a otomatik kaydeder.
  */
 
 import * as THREE from 'three';
@@ -10,16 +11,19 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 export class MapLoader {
   /**
    * @param {THREE.Scene} scene - Three.js sahnesi
+   * @param {CollisionManager} collisionManager - Çarpışma yöneticisi
    * @param {Function} onStatusChange - Bildirim geri çağırma işlevi
    */
-  constructor(scene, onStatusChange = () => {}) {
+  constructor(scene, collisionManager = null, onStatusChange = () => {}) {
     this.scene = scene;
+    this.collisionManager = collisionManager;
     this.onStatusChange = onStatusChange;
 
     this.currentLoadedObject = null;
     this.currentObjectType = 'none'; // '3d' | '2d' | 'none'
     this.currentTexture = null;
     this.currentPlane = null;
+    this.registered3DColliders = [];
 
     this.imageAspectRatio = 1.0;
     this.isGroundOrientation = true;
@@ -31,10 +35,20 @@ export class MapLoader {
     this.textureLoader = new THREE.TextureLoader();
   }
 
+  setCollisionManager(collisionManager) {
+    this.collisionManager = collisionManager;
+  }
+
   /**
-   * Sahnede var olan haritayı/modeli bellekten ve sahneden tamamen temizler
+   * Sahnede var olan haritayı/modeli ve ilgili çarpışma nesnelerini temizler
    */
   clear() {
+    // 3D Model ile eklenen collider'ları CollisionManager'dan kaldır
+    if (this.collisionManager && this.registered3DColliders.length > 0) {
+      this.registered3DColliders.forEach((col) => this.collisionManager.removeCollider(col));
+      this.registered3DColliders = [];
+    }
+
     if (this.currentLoadedObject) {
       this.scene.remove(this.currentLoadedObject);
       this.currentLoadedObject.traverse((node) => {
@@ -61,7 +75,7 @@ export class MapLoader {
   }
 
   /**
-   * 3D GLB veya GLTF dosyasını yükler
+   * 3D GLB veya GLTF dosyasını yükler ve duvarları çarpışma sistemine bağlar
    * @param {string} url - Dosya ObjectURL veya bağlantısı
    * @param {string} fileName - Dosya adı
    */
@@ -76,20 +90,32 @@ export class MapLoader {
         this.currentLoadedObject = model;
         this.currentObjectType = '3d';
 
-        // Gölgeleri aç ve monokrom optimizasyonu uygula
-        model.traverse((node) => {
-          if (node.isMesh) {
-            node.castShadow = true;
-            node.receiveShadow = true;
-          }
-        });
-
         // BoundingBox hesapla: X ve Z ekseninde ortala, tabanı Y = 0 zeminine oturt
         const box = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
         model.position.x -= center.x;
         model.position.z -= center.z;
         model.position.y -= box.min.y;
+
+        // Gölgeleri aç ve duvar/engel mesh'lerini CollisionManager'a kaydet
+        const wallRegex = /wall|duvar|obstacle|col|barrier|pillar|sutun|border/i;
+        model.traverse((node) => {
+          if (node.isMesh) {
+            node.castShadow = true;
+            node.receiveShadow = true;
+
+            // Eğer adı duvar içeriyorsa veya zemin olmayan dikey bir nesneyse collider yap
+            const isNamedObstacle = wallRegex.test(node.name);
+            const isVerticalObstacle = node.geometry && !/floor|ground|zemin|plane/i.test(node.name);
+
+            if (isNamedObstacle || isVerticalObstacle) {
+              if (this.collisionManager) {
+                this.collisionManager.addCollider(node);
+                this.registered3DColliders.push(node);
+              }
+            }
+          }
+        });
 
         this.scene.add(model);
         this.onStatusChange({
@@ -98,6 +124,7 @@ export class MapLoader {
           name: fileName,
           object: model,
           box: new THREE.Box3().setFromObject(model),
+          colliderCount: this.registered3DColliders.length,
         });
       },
       undefined,
@@ -173,7 +200,7 @@ export class MapLoader {
 
   /**
    * 2D Görselin yatay (zemin XZ) veya dikey (arka plan XY) açısını değiştirir
-   * @param {boolean} isGround - true ise yatay zemin, false ise dikey duvar
+   * @param {boolean} isGround
    */
   setOrientation(isGround) {
     if (!this.currentPlane) return;
@@ -182,18 +209,15 @@ export class MapLoader {
     const width = this.currentScale;
     const height = this.currentScale / this.imageAspectRatio;
 
-    // Geometriyi güncel boyutla yeniden oluştur
     this.currentPlane.geometry.dispose();
     this.currentPlane.geometry = new THREE.PlaneGeometry(width, height);
 
     if (isGround) {
-      // Yatay zemin (XZ düzlemi) - Z-fighting önlemek için Y=0.012 offset
       this.currentPlane.rotation.x = -Math.PI / 2;
       this.currentPlane.rotation.y = 0;
       this.currentPlane.rotation.z = 0;
       this.currentPlane.position.set(0, 0.012, 0);
     } else {
-      // Dikey arka plan (XY düzlemi)
       this.currentPlane.rotation.x = 0;
       this.currentPlane.rotation.y = 0;
       this.currentPlane.rotation.z = 0;
@@ -201,10 +225,6 @@ export class MapLoader {
     }
   }
 
-  /**
-   * 2D Görselin ölçeğini ayarlar
-   * @param {number} scale
-   */
   setScale(scale) {
     this.currentScale = scale;
     if (this.currentPlane) {
@@ -212,10 +232,6 @@ export class MapLoader {
     }
   }
 
-  /**
-   * 2D Görselin opaklığını ayarlar
-   * @param {number} opacity
-   */
   setOpacity(opacity) {
     this.currentOpacity = opacity;
     if (this.currentPlane && this.currentPlane.material) {
@@ -224,10 +240,6 @@ export class MapLoader {
     }
   }
 
-  /**
-   * Kullanıcı dosya seçiciden dosya yüklediğinde çalışır
-   * @param {File} file
-   */
   handleFile(file) {
     if (!file) return;
     const name = file.name.toLowerCase();
@@ -251,7 +263,28 @@ export class MapLoader {
   }
 
   /**
-   * Cihazda yerel dosya bulunmadığında anında test için monokrom 2D mimari kat planı dokusu üretir
+   * Kullanıcının 2D harita üzerine monokrom tel kafes engel kutusu eklemesini sağlar
+   * @param {number} x
+   * @param {number} z
+   * @param {number} w
+   * @param {number} d
+   */
+  createWallBox(x = 0, z = 0, w = 2.0, d = 0.5) {
+    if (!this.collisionManager) return null;
+    const box = this.collisionManager.addWallBox(x, z, w, d, 2.0);
+    this.onStatusChange({ type: 'wallBoxAdded', box, count: this.collisionManager.wallBoxes.length });
+    return box;
+  }
+
+  clearAllWallBoxes() {
+    if (this.collisionManager) {
+      this.collisionManager.clearWallBoxes();
+      this.onStatusChange({ type: 'wallBoxesCleared' });
+    }
+  }
+
+  /**
+   * 2D Kat planı demosunu ve sınır engel kutularını otomatik kurar
    */
   loadDemoFloorPlan() {
     const canvas = document.createElement('canvas');
@@ -259,11 +292,9 @@ export class MapLoader {
     canvas.height = 1000;
     const ctx = canvas.getContext('2d');
 
-    // Monokrom zemin
     ctx.fillStyle = '#0f0f0f';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Kılavuz ızgara çizgileri
     ctx.strokeStyle = '#222222';
     ctx.lineWidth = 1;
     for (let x = 0; x < canvas.width; x += 40) {
@@ -279,7 +310,6 @@ export class MapLoader {
       ctx.stroke();
     }
 
-    // Odalar
     const rooms = [
       { name: 'KORİDOR / GİRİŞ', x: 80, y: 80, w: 420, h: 480 },
       { name: 'ANA SALON', x: 520, y: 80, w: 1000, h: 480 },
@@ -304,7 +334,6 @@ export class MapLoader {
       ctx.fillText(`${(r.w / 100).toFixed(1)}m × ${(r.h / 100).toFixed(1)}m`, r.x + 20, r.y + 66);
     });
 
-    // Dış çevre duvarı
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 10;
     ctx.strokeRect(80, 80, 1440, 840);
@@ -312,11 +341,24 @@ export class MapLoader {
     canvas.toBlob((blob) => {
       const url = URL.createObjectURL(blob);
       this.loadImage(url, 'Demo_Kat_Plani.png');
+
+      // 2D planın sınırlarına ve iç bölmelerine otomatik tel kafes engel kutuları yerleştir
+      if (this.collisionManager) {
+        this.clearAllWallBoxes();
+        // Dış sınır duvarları
+        this.createWallBox(0, 4.8, 16.0, 0.4);   // Ön duvar
+        this.createWallBox(0, -4.8, 16.0, 0.4);  // Arka duvar
+        this.createWallBox(-7.8, 0, 0.4, 10.0);  // Sol duvar
+        this.createWallBox(7.8, 0, 0.4, 10.0);   // Sağ duvar
+        // İç oda bölme duvarı (kapı aralıklı)
+        this.createWallBox(-2.5, 0.5, 0.4, 4.5);
+        this.createWallBox(2.5, 0.5, 0.4, 4.5);
+      }
     });
   }
 
   /**
-   * Monokrom 3D Galeri sergileme odası oluşturur
+   * Monokrom 3D Galeri ve duvar engellerini oluşturur
    */
   loadDemo3DGallery() {
     this.clear();
@@ -328,33 +370,37 @@ export class MapLoader {
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.position.y = 0.2;
     floor.receiveShadow = true;
+    floor.name = 'floor';
     group.add(floor);
 
-    // Arka Duvar
+    // Arka Duvar (Engel)
     const wallGeo = new THREE.BoxGeometry(22, 7, 0.5);
     const wallMat = new THREE.MeshStandardMaterial({ color: 0x121212, roughness: 0.8 });
     const wall = new THREE.Mesh(wallGeo, wallMat);
     wall.position.set(0, 3.7, -8.7);
     wall.receiveShadow = true;
+    wall.name = 'backWall';
     group.add(wall);
 
-    // Yan Duvar
+    // Yan Duvar (Engel)
     const sideWallGeo = new THREE.BoxGeometry(0.5, 7, 18);
     const sideWall = new THREE.Mesh(sideWallGeo, wallMat);
     sideWall.position.set(-10.7, 3.7, 0);
     sideWall.receiveShadow = true;
+    sideWall.name = 'sideWall';
     group.add(sideWall);
 
-    // Monokrom Heykel Kaidesi
+    // Monokrom Heykel Kaidesi (Engel)
     const pedGeo = new THREE.CylinderGeometry(1.6, 2.0, 1.2, 32);
     const pedMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.3 });
     const pedestal = new THREE.Mesh(pedGeo, pedMat);
     pedestal.position.set(0, 1.0, 0);
     pedestal.castShadow = true;
     pedestal.receiveShadow = true;
+    pedestal.name = 'pedestal_obstacle';
     group.add(pedestal);
 
-    // Monokrom Krom Torus Düğüm
+    // Heykel
     const knotGeo = new THREE.TorusKnotGeometry(0.9, 0.28, 128, 32);
     const knotMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
@@ -366,6 +412,14 @@ export class MapLoader {
     knot.castShadow = true;
     group.add(knot);
 
+    // Duvarları CollisionManager'a ekle
+    if (this.collisionManager) {
+      this.collisionManager.addCollider(wall);
+      this.collisionManager.addCollider(sideWall);
+      this.collisionManager.addCollider(pedestal);
+      this.registered3DColliders.push(wall, sideWall, pedestal);
+    }
+
     this.currentLoadedObject = group;
     this.currentObjectType = '3d';
     this.scene.add(group);
@@ -376,12 +430,10 @@ export class MapLoader {
       name: '3D Galeri (Örnek)',
       object: group,
       box: new THREE.Box3().setFromObject(group),
+      colliderCount: this.registered3DColliders.length,
     });
   }
 
-  /**
-   * Tıklanabilir zemin yüzeyini döndürür (Raycasting için)
-   */
   getWalkableObjects() {
     const list = [];
     if (this.currentPlane && this.isGroundOrientation) {

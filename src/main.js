@@ -1,10 +1,11 @@
 /**
  * main.js
  * Modüler Three.js WebGL & Capacitor mimarisini başlatan ana giriş noktası.
- * MapLoader, Character, Door ve CameraManager bileşenlerini koordine eder.
+ * CollisionManager, MapLoader, Character, Door ve CameraManager bileşenlerini koordine eder.
  */
 
 import * as THREE from 'three';
+import { CollisionManager } from './components/CollisionManager.js';
 import { MapLoader } from './components/MapLoader.js';
 import { Character } from './components/Character.js';
 import { Door } from './components/Door.js';
@@ -104,21 +105,24 @@ class App {
   }
 
   /**
-   * Modüler bileşenleri ilklendirir
+   * Modüler bileşenleri ilklendirir ve CollisionManager ile bağlar
    * @private
    */
   _initComponents() {
-    // 1. Menteşeli Kapı & Kesit Mimarisi
-    this.door = new Door(this.scene, (state) => {
+    // 1. Çarpışma Yöneticisi (Hafif Raycast & BoundingBox sistemi)
+    this.collisionManager = new CollisionManager(this.scene);
+
+    // 2. Menteşeli Kapı & Kesit Mimarisi (Sabit duvarları ve kapalı kapıyı collider olarak kaydeder)
+    this.door = new Door(this.scene, this.collisionManager, (state) => {
       this._updateDoorHUD(state.isOpen);
     });
 
-    // 2. Prosedürel Karakter
-    this.character = new Character(this.scene, (state) => {
+    // 3. Prosedürel Karakter (CollisionManager ile duvar boyunca kayma yapar)
+    this.character = new Character(this.scene, this.collisionManager, (state) => {
       this._updateCharacterHUD(state.isMoving);
     });
 
-    // 3. Kamera Yöneticisi & CCTV İstasyonları
+    // 4. Kamera Yöneticisi & CCTV İstasyonları
     this.cameraManager = new CameraManager(
       this.camera,
       this.renderer.domElement,
@@ -127,18 +131,17 @@ class App {
       }
     );
 
-    // 4. Harita / Model Yükleyici
-    this.mapLoader = new MapLoader(this.scene, (status) => {
+    // 5. Harita / Model Yükleyici (3D ve 2D engelleri CollisionManager'a bağlar)
+    this.mapLoader = new MapLoader(this.scene, this.collisionManager, (status) => {
       this._updateMapHUD(status);
     });
   }
 
   /**
-   * HUD arayüz öğeleri ve olay bağlayıcıları
+   * HUD arayüz öğeleri ve durum etiketleri
    * @private
    */
   _initUI() {
-    // Rozet Öğeleri
     this.badgeCamText = document.getElementById('label-camera-mode');
     this.badgeCharText = document.getElementById('label-char-mode');
     this.badgeCharEl = document.getElementById('badge-char-mode');
@@ -146,10 +149,7 @@ class App {
     this.badgeDoorEl = document.getElementById('badge-door-mode');
     this.toastEl = document.getElementById('toast');
 
-    // İstasyon listesi container
     this.stationGridEl = document.getElementById('station-cards-grid');
-
-    // İlk istasyon listesini çiz
     this._renderStationsList(this.cameraManager.stations, null);
   }
 
@@ -170,7 +170,7 @@ class App {
       const dist = Math.hypot(dx, dy);
       const elapsed = performance.now() - this.pointerDownTime;
 
-      // Eğer kullanıcı kamerayı çevirmek yerine ekrana dokunup bıraktıysa (Tap)
+      // Kullanıcı kamerayı döndürmek yerine kısa dokunduysa (Tap)
       if (dist < 8 && elapsed < 400) {
         this._handleCanvasTap(e);
       }
@@ -347,19 +347,32 @@ class App {
       this.showToast('Yüklü harita kaldırıldı.');
     });
 
-    // 13. Hızlı Demolar
+    // 13. Engel Kutusu Ekle & Temizle (2D Harita Çarpışma Editörü)
+    document.getElementById('btn-add-wall-box').addEventListener('click', () => {
+      // Karakterin önünde veya merkezde yeni bir tel kafes engel kutusu oluştur
+      const charPos = this.character.getPosition();
+      const newBox = this.mapLoader.createWallBox(charPos.x + 1.2, charPos.z + 1.2, 2.0, 0.6);
+      this.showToast('Tel kafes engel kutusu eklendi.');
+    });
+
+    document.getElementById('btn-clear-wall-boxes').addEventListener('click', () => {
+      this.mapLoader.clearAllWallBoxes();
+      this.showToast('Tüm engel kutuları temizlendi.');
+    });
+
+    // 14. Hızlı Demolar
     document.getElementById('btn-load-floorplan').addEventListener('click', () => {
       this.mapLoader.loadDemoFloorPlan();
       document.getElementById('panel-image-options').style.display = 'flex';
-      this.showToast('2D Kat Planı yüklendi.');
+      this.showToast('2D Kat Planı ve sınır duvarları yüklendi.');
     });
     document.getElementById('btn-load-gallery').addEventListener('click', () => {
       this.mapLoader.loadDemo3DGallery();
       document.getElementById('panel-image-options').style.display = 'none';
-      this.showToast('3D Galeri yüklendi.');
+      this.showToast('3D Galeri ve duvar engelleri yüklendi.');
     });
 
-    // 14. Kesit Zorlama Modu Butonu
+    // 15. Kesit Zorlama Modu Butonu
     const btnCutaway = document.getElementById('btn-force-cutaway');
     const labelCutaway = document.getElementById('label-cutaway-mode');
     btnCutaway.addEventListener('click', () => {
@@ -369,7 +382,7 @@ class App {
       this.showToast(`Kesit Modu: ${labelCutaway.textContent}`);
     });
 
-    // 15. Yardım Modalı
+    // 16. Yardım Modalı
     const modal = document.getElementById('modal-help');
     document.getElementById('btn-open-help').addEventListener('click', () => modal.classList.add('open'));
     document.getElementById('btn-close-help').addEventListener('click', () => modal.classList.remove('open'));
@@ -394,7 +407,7 @@ class App {
     const doorHit = this.raycaster.intersectObject(doorMesh, true);
     if (doorHit.length > 0) {
       this.door.toggle();
-      this.showToast(this.door.isOpen ? 'Kapı açıldı.' : 'Kapı kapandı.');
+      this.showToast(this.door.isOpen ? 'Kapı açıldı (Engel kalktı).' : 'Kapı kapandı (Engel aktif).');
       return;
     }
 
@@ -467,7 +480,6 @@ class App {
     });
   }
 
-  // --- HUD Durum Güncellemeleri ---
   _updateDoorHUD(isOpen) {
     this.badgeDoorText.textContent = isOpen ? 'Kapı: Açık' : 'Kapı: Kapalı';
     this.badgeDoorEl.classList.toggle('outline', !isOpen);
@@ -518,7 +530,7 @@ class App {
 
     const delta = Math.min(0.1, this.clock.getDelta());
 
-    // 1. Karakteri Güncelle
+    // 1. Karakteri Güncelle (Çarpışma & Duvar Boyunca Kayma hesaplamaları dahil)
     this.character.update(delta);
 
     // 2. Kapı Menteşesini ve Kesit Duvarlarını Güncelle

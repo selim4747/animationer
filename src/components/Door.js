@@ -2,6 +2,7 @@
  * Door.js
  * Pivot noktası (menteşe) etrafında açılan kapı mekaniği ve
  * kapı arkasındaki iç mekanın dışarıdan görünmesini sağlayan şeffaf kesit (cutaway) mimarisi.
+ * Kapı açıldığında çarpışma engeli kalkar, kapandığında tekrar engel olur.
  */
 
 import * as THREE from 'three';
@@ -9,10 +10,12 @@ import * as THREE from 'three';
 export class Door {
   /**
    * @param {THREE.Scene} scene - Three.js sahnesi
+   * @param {CollisionManager} collisionManager - Çarpışma yöneticisi
    * @param {Function} onStateChange - Kapı durumu değişim bildirim işlevi
    */
-  constructor(scene, onStateChange = () => {}) {
+  constructor(scene, collisionManager = null, onStateChange = () => {}) {
     this.scene = scene;
+    this.collisionManager = collisionManager;
     this.onStateChange = onStateChange;
 
     this.isOpen = false;
@@ -37,11 +40,39 @@ export class Door {
     this._buildRoomStructure();
     this._buildHingedDoor();
 
+    // Kapı ve oda duvarlarını çarpışma sistemine bağla
+    this._registerColliders();
+
     // İç Mekan BoundingBox (Karakter içeri girdiğinde Kamera Tetikleyicisi için)
     this.interiorBounds = new THREE.Box3(
       new THREE.Vector3(-4.0, 0, -11.5),
       new THREE.Vector3(4.0, 4.0, -4.2)
     );
+  }
+
+  setCollisionManager(collisionManager) {
+    this.collisionManager = collisionManager;
+    this._registerColliders();
+  }
+
+  /**
+   * Oda duvarları ve kapalı kapıyı CollisionManager'a kaydeder
+   * @private
+   */
+  _registerColliders() {
+    if (!this.collisionManager) return;
+
+    // Sabit oda duvarlarını engel olarak ekle
+    if (this.backWall) this.collisionManager.addCollider(this.backWall);
+    if (this.leftWall) this.collisionManager.addCollider(this.leftWall);
+    if (this.rightWall) this.collisionManager.addCollider(this.rightWall);
+    if (this.frontLeftWall) this.collisionManager.addCollider(this.frontLeftWall);
+    if (this.frontRightWall) this.collisionManager.addCollider(this.frontRightWall);
+
+    // Kapı kapalıysa kapı kanadını engel olarak ekle
+    if (!this.isOpen && this.doorMesh) {
+      this.collisionManager.addCollider(this.doorMesh);
+    }
   }
 
   /**
@@ -68,22 +99,22 @@ export class Door {
     });
 
     // Arka Duvar
-    const backWall = new THREE.Mesh(new THREE.BoxGeometry(8.2, 3.2, 0.3), solidWallMat);
-    backWall.position.set(0, 1.7, -11.8);
-    backWall.receiveShadow = true;
-    this.roomGroup.add(backWall);
+    this.backWall = new THREE.Mesh(new THREE.BoxGeometry(8.2, 3.2, 0.3), solidWallMat);
+    this.backWall.position.set(0, 1.7, -11.8);
+    this.backWall.receiveShadow = true;
+    this.roomGroup.add(this.backWall);
 
     // Sol Duvar
-    const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.2, 8.2), solidWallMat);
-    leftWall.position.set(-4.0, 1.7, -7.8);
-    leftWall.receiveShadow = true;
-    this.roomGroup.add(leftWall);
+    this.leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.2, 8.2), solidWallMat);
+    this.leftWall.position.set(-4.0, 1.7, -7.8);
+    this.leftWall.receiveShadow = true;
+    this.roomGroup.add(this.leftWall);
 
     // Sağ Duvar
-    const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.2, 8.2), solidWallMat);
-    rightWall.position.set(4.0, 1.7, -7.8);
-    rightWall.receiveShadow = true;
-    this.roomGroup.add(rightWall);
+    this.rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.2, 8.2), solidWallMat);
+    this.rightWall.position.set(4.0, 1.7, -7.8);
+    this.rightWall.receiveShadow = true;
+    this.roomGroup.add(this.rightWall);
 
     // 3. Ön Kesit Duvarları (Şeffaf / Cutaway Olabilen Duvarlar)
     this.cutawayMaterial = new THREE.MeshStandardMaterial({
@@ -146,7 +177,6 @@ export class Door {
    * @private
    */
   _buildHingedDoor() {
-    // Kapı Kasası (Siyah metal profil)
     const frameMat = new THREE.MeshStandardMaterial({
       color: 0x0a0a0a,
       roughness: 0.3,
@@ -166,12 +196,9 @@ export class Door {
     this.hingePivot.position.set(-this.doorWidth / 2, 0, -3.8);
     this.roomGroup.add(this.hingePivot);
 
-    // Kapı Kanadı Mesh'i:
-    // Menteşe etrafında doğal dönüş için geometrinin sol kenarını pivot merkezine sıfırlıyoruz:
-    // x konumu = +doorWidth / 2
     const doorGeo = new THREE.BoxGeometry(this.doorWidth, this.doorHeight, this.doorThickness);
     const doorMat = new THREE.MeshStandardMaterial({
-      color: 0xefefef, // Minimalist beyaz kapı yüzeyi
+      color: 0xefefef,
       roughness: 0.25,
       metalness: 0.1,
     });
@@ -195,18 +222,26 @@ export class Door {
   }
 
   /**
-   * Kapıyı açar veya kapatır
+   * Kapıyı açar veya kapatır, CollisionManager üzerindeki kapı engelini günceller
    */
   toggle() {
-    this.isOpen = !this.isOpen;
-    this.targetAngle = this.isOpen ? -Math.PI / 2 : 0;
-    this.onStateChange({ isOpen: this.isOpen });
+    if (this.isOpen) {
+      this.close();
+    } else {
+      this.open();
+    }
   }
 
   open() {
     if (!this.isOpen) {
       this.isOpen = true;
       this.targetAngle = -Math.PI / 2;
+
+      // Kapı açıldığında çarpışma engelini kaldır (Karakter kapı boşluğundan geçebilsin)
+      if (this.collisionManager && this.doorMesh) {
+        this.collisionManager.removeCollider(this.doorMesh);
+      }
+
       this.onStateChange({ isOpen: true });
     }
   }
@@ -215,6 +250,12 @@ export class Door {
     if (this.isOpen) {
       this.isOpen = false;
       this.targetAngle = 0;
+
+      // Kapı kapandığında tekrar çarpışma engeli ekle
+      if (this.collisionManager && this.doorMesh) {
+        this.collisionManager.addCollider(this.doorMesh);
+      }
+
       this.onStateChange({ isOpen: false });
     }
   }
@@ -225,7 +266,6 @@ export class Door {
    * @param {THREE.Vector3} characterPos - Karakterin güncel konumu
    */
   update(delta, characterPos) {
-    // 1. Karakter Kapıya Yaklaştı mı? (2.6 metre mesafe kontrolü)
     const doorWorldCenter = new THREE.Vector3(0, 1.0, -3.8);
     const distToCharacter = characterPos ? characterPos.distanceTo(doorWorldCenter) : 999;
     const isCharacterNear = distToCharacter < 2.6;
@@ -235,12 +275,11 @@ export class Door {
       this.open();
     }
 
-    // 2. Menteşe Açısı Yumuşak Geçiş (Lerp)
+    // Menteşe Açısı Yumuşak Geçiş (Lerp)
     this.currentAngle = THREE.MathUtils.lerp(this.currentAngle, this.targetAngle, delta * 6.0);
     this.hingePivot.rotation.y = this.currentAngle;
 
-    // 3. Kesit Modu (Cutaway) Mantığı:
-    // Kapı açıksa veya karakter kapıya/içeriye yakınsa ön duvarlar şeffaflaşarak iç mekan görünür hale gelir.
+    // Kesit Modu (Cutaway)
     const shouldCutaway = this.isOpen || isCharacterNear || this.forceCutaway;
     this.targetCutawayOpacity = shouldCutaway ? 0.18 : 1.0;
 
@@ -252,22 +291,14 @@ export class Door {
 
     if (this.cutawayMaterial) {
       this.cutawayMaterial.opacity = this.currentCutawayOpacity;
-      // Çok şeffafken arka nesnelerin düzgün görünmesi için depthWrite'ı ayarla
       this.cutawayMaterial.depthWrite = this.currentCutawayOpacity > 0.5;
     }
   }
 
-  /**
-   * Tıklama / dokunma raycasting tespiti için kapı mesh'ini döndürür
-   */
   getInteractiveMesh() {
     return this.doorMesh;
   }
 
-  /**
-   * Oda iç mekan BoundingBox'ını döndürür (Kamera geçiş tetikleyicisi için)
-   * @returns {THREE.Box3}
-   */
   getRoomBounds() {
     return this.interiorBounds;
   }
