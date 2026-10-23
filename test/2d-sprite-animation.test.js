@@ -68,3 +68,30 @@ test('timeline JSON accepts 2D sprite actions and rejects missing actors or inva
     data: { fps: 12, loop: true },
   }] }));
 });
+
+test('sprite hit testing and pointer-driven transforms use stage coordinates', () => {
+  const manager = new SpriteAnimationManager(new THREE.Scene(), { width: 400, height: 300 });
+  const actor = makeActor();
+  actor.frameWidth = 32; actor.frameHeight = 32; actor.displayHeight = 64;
+  manager.actors.push(actor);
+  assert.equal(manager.hitTest(20, 30), actor);
+  assert.equal(manager.hitTest(100, 100), null);
+  manager.setTransform(actor.id, { x: 380, y: -5, height: 80 });
+  assert.deepEqual([actor.x, actor.y, actor.displayHeight], [380, 0, 80]);
+});
+
+test('portable project export embeds original sprite image and timeline timing remains serializable', async () => {
+  const manager = new SpriteAnimationManager(new THREE.Scene(), { width: 400, height: 300 });
+  const actor = makeActor();
+  actor.sourceFile = new File([new Uint8Array([1, 2, 3])], 'walk.png', { type: 'image/png' });
+  manager.actors.push(actor);
+  const [asset] = await manager.exportAssets();
+  assert.equal(asset.fileName, 'walk.png');
+  assert.equal(asset.data, 'AQID');
+  const timeline = new TimelineManager({});
+  timeline.steps = [{ id: 'a', type: ACTION_TYPES.PLAY_SPRITE_ANIMATION, actorId: actor.id, startAt: 1.5, duration: 4, data: { fps: 12, loop: false } }];
+  const saved = JSON.parse(timeline.exportSequence());
+  assert.equal(saved.steps[0].startAt, 1.5);
+  assert.equal(saved.steps[0].duration, 4);
+  assert.equal(saved.steps[0].data.loop, false);
+});

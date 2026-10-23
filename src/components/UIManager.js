@@ -312,9 +312,13 @@ export class UIManager {
 
     // JSON İçe / Dışa Aktarma
     if (d.btnExportJSON) {
-      d.btnExportJSON.addEventListener('click', () => {
-        this.timeline.downloadSequenceJSON('studio-timeline-sequence.json');
-        this.showToast('Zaman Çizelgesi JSON Olarak İndirildi');
+      d.btnExportJSON.addEventListener('click', async () => {
+        try {
+          const payload = { ...JSON.parse(this.timeline.exportSequence()), format: 'animationer-project', projectVersion: 1, sprites: await this.sprites.exportAssets() };
+          const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'animationer-project.json'; link.click(); URL.revokeObjectURL(url);
+          this.showToast('Proje ve gömülü spritesheet görselleri indirildi');
+        } catch (error) { this.showToast(`Proje kaydedilemedi: ${error.message}`); }
       });
     }
 
@@ -326,8 +330,14 @@ export class UIManager {
           const reader = new FileReader();
           reader.onload = (evt) => {
             try {
-              this.timeline.importSequence(evt.target.result);
-              this.showToast('Zaman Çizelgesi Başarıyla Yüklendi');
+              const payload = JSON.parse(evt.target.result);
+              if (payload?.format === 'animationer-project') {
+                const assetIds = new Set((payload.sprites || []).map((asset) => asset?.id));
+                const missing = (payload.steps || []).find((step) => step.type === 'PLAY_SPRITE_ANIMATION' && !assetIds.has(step.actorId));
+                if (missing) throw new Error(`'${missing.actorId}' sprite varlığı proje dosyasında yok; mevcut sahne korunuyor.`);
+                this.timeline.importSequence(payload);
+                this.sprites.importAssets(payload.sprites || []).then(() => this.showToast('Proje, zaman çizelgesi ve görsel varlıklarla yüklendi')).catch((error) => this.showToast(`Proje görselleri yüklenemedi: ${error.message}`));
+              } else { this.timeline.importSequence(payload); this.showToast('Eski biçim zaman çizelgesi yüklendi (görseller bu dosyada bulunmuyor)'); }
             } catch (err) {
               this.showToast('HATA: Geçersiz JSON Dosyası!');
             }
@@ -1001,6 +1011,21 @@ export class UIManager {
           <button class="step-btn-icon btn-step-delete" title="Sil">✕</button>
         </div>
       `;
+      if (step.type === 'PLAY_SPRITE_ANIMATION') {
+        const editor = document.createElement('div'); editor.className = 'timeline-sprite-editor';
+        const spriteSelect = document.createElement('select'); spriteSelect.className = 'hud-select'; spriteSelect.setAttribute('aria-label', 'Animasyon spritesheet');
+        for (const sprite of this.sprites?.list?.() || []) { const option = document.createElement('option'); option.value = sprite.id; option.textContent = sprite.name; spriteSelect.appendChild(option); }
+        spriteSelect.value = step.actorId || ''; spriteSelect.addEventListener('change', (event) => { event.stopPropagation(); step.actorId = spriteSelect.value; });
+        const duration = document.createElement('input'); duration.type = 'number'; duration.min = '0.01'; duration.max = '3600'; duration.step = '0.1'; duration.value = step.duration ?? 2; duration.setAttribute('aria-label', 'Süre (s)');
+        duration.addEventListener('change', (event) => { event.stopPropagation(); const value = Number(duration.value); if (Number.isFinite(value) && value > 0) step.duration = value; else duration.value = step.duration ?? 2; });
+        const start = document.createElement('input'); start.type = 'number'; start.min = '0'; start.max = '3600'; start.step = '0.1'; start.value = step.startAt ?? 0; start.setAttribute('aria-label', 'Başlangıç (s)');
+        start.addEventListener('change', (event) => { event.stopPropagation(); const value = Number(start.value); if (Number.isFinite(value) && value >= 0) step.startAt = value; else start.value = step.startAt ?? 0; });
+        const loop = document.createElement('select'); loop.className = 'hud-select'; loop.setAttribute('aria-label', 'Oynatma biçimi');
+        for (const [value, label] of [['true', 'Loop'], ['false', 'Tek sefer']]) { const option = document.createElement('option'); option.value = value; option.textContent = label; loop.appendChild(option); }
+        loop.value = String(step.data?.loop !== false); loop.addEventListener('change', (event) => { event.stopPropagation(); step.data.loop = loop.value === 'true'; });
+        for (const control of [spriteSelect, duration, start, loop]) control.addEventListener('click', (event) => event.stopPropagation());
+        editor.append(spriteSelect, duration, start, loop); item.querySelector('.step-content').appendChild(editor);
+      }
       item.querySelector('.step-title').textContent = step.title || 'Adım';
       const actorName = this.characters?.getActor?.(step.actorId)?.name || this.sprites?.getActor?.(step.actorId)?.name || (step.actorId ? 'Karakter' : 'Aktif karakter');
       const meta = [actorName];
