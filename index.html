@@ -26,6 +26,16 @@
       </div>
     </div>
 
+    <div id="joystick-controls" class="movement-control joystick-control" aria-label="Hareket joystick'i" style="display: none;">
+      <div id="joystick-base" class="joystick-base"><div id="joystick-knob" class="joystick-knob"></div></div>
+    </div>
+    <div id="arrow-controls" class="movement-control arrow-control" aria-label="Karakter yön tuşları" style="display: none;">
+      <button class="direction-button direction-up" data-direction="up" aria-label="İleri">▲</button>
+      <button class="direction-button direction-left" data-direction="left" aria-label="Sola">◀</button>
+      <button class="direction-button direction-down" data-direction="down" aria-label="Geri">▼</button>
+      <button class="direction-button direction-right" data-direction="right" aria-label="Sağa">▶</button>
+    </div>
+
     <!-- Üst Monokrom Başlık & Durum Çubuğu -->
     <header class="top-hud">
       <div class="hud-brand">
@@ -132,6 +142,21 @@
              SEKME 1: REJİ / TIMELINE
              ========================================== -->
         <div id="tab-timeline" class="studio-tab-pane" style="display: block;">
+          <div class="studio-ctrl-row timeline-schedule-controls">
+            <label class="timeline-field">Oynatma
+              <select id="timeline-play-mode" class="hud-select">
+                <option value="sequential">Sıralı</option>
+                <option value="scheduled">Zamanlı / Eşzamanlı</option>
+              </select>
+            </label>
+            <label class="timeline-field">Başlangıç (sn)
+              <input id="timeline-start-at" class="hud-number-input" type="number" min="0" max="3600" step="0.5" value="0" />
+            </label>
+            <label class="timeline-field">Süre (sn)
+              <input id="timeline-duration" class="hud-number-input" type="number" min="0" max="3600" step="0.5" placeholder="Varsayılan" />
+            </label>
+          </div>
+          <div class="studio-info-text">Zamanlı sahne: bir karakteri seçin, başlangıç/süreyi ayarlayın ve Adım Kayıt Modu açıkken zemine tıklayın. Diğer karakter için hedef seçip + Takip Et, ardından hedef zamana + Gizle ekleyin. Zamanlı kayıt tıklamaları sahneyi önceden oynatmaz.</div>
           <!-- Oynatma ve Kayıt Kontrolleri -->
           <div class="studio-ctrl-row">
             <button id="btn-timeline-play" class="hud-btn primary flex-grow" title="Kuyruğu Baştan/Kaldığı Yerden Oynat">
@@ -170,7 +195,16 @@
             <button id="btn-add-emote-step" class="hud-btn small-btn" title="Karakter emote adımı ekle">
               + Emote (Zıpla)
             </button>
+            <button id="btn-add-follow-step" class="hud-btn small-btn" title="Seçili karakteri hedef karakteri takip ettir">
+              + Takip Et
+            </button>
+            <button id="btn-add-hide-step" class="hud-btn small-btn" title="Seçili karakteri bu zaman noktasında gizle">
+              + Gizle
+            </button>
           </div>
+          <label class="timeline-field follow-target-field">Takip hedefi
+            <select id="timeline-follow-target" class="hud-select"></select>
+          </label>
 
           <!-- Kuyruk Listesi -->
           <div class="studio-sub-header">EYLEM SIRASI (ACTION QUEUE):</div>
@@ -312,12 +346,32 @@
              SEKME 4: KARAKTER & MERDİVEN
              ========================================== -->
         <div id="tab-character" class="studio-tab-pane" style="display: none;">
+          <div class="character-roster-controls">
+            <label class="timeline-field">Aktif karakter
+              <select id="character-select" class="hud-select"></select>
+            </label>
+            <button id="btn-add-character" class="hud-btn primary">+ Karakter Ekle</button>
+            <button id="btn-remove-character" class="hud-btn subtle">Seçileni Sil</button>
+            <button id="btn-load-character" class="hud-btn">.glb Model Yükle</button>
+            <input id="file-picker-character" type="file" accept=".glb,model/gltf-binary" style="display: none;" />
+          </div>
+          <label class="timeline-field control-mode-field">Kontrol yöntemi
+            <select id="control-mode-select" class="hud-select">
+              <option value="tap">Sahneye dokun / tıkla</option>
+              <option value="joystick">Joystick</option>
+              <option value="arrows">Yön tuşları</option>
+            </select>
+          </label>
+          <div class="studio-ctrl-row" style="margin-top: 8px;">
+            <button id="btn-show-character" class="hud-btn flex-grow">Seçileni Göster</button>
+          </div>
+          <div class="studio-info-text">20'ye kadar karakter oluşturun veya rig/animasyon içerebilen .glb model yükleyin. Seçili karakterin hızı ve hareketi ayrı kontrol edilir; yürüme/idle klipleri varsa adlarından algılanır.</div>
           <div class="studio-slider-group">
             <div class="slider-row-label">
               <span>Yürüme Hızı:</span>
               <span id="label-speed-val">4.2 m/s</span>
             </div>
-            <input type="range" id="slider-character-speed" min="1.0" max="10.0" step="0.2" value="4.2" />
+            <input type="range" id="slider-character-speed" min="0.2" max="10.0" step="0.1" value="4.2" />
           </div>
 
           <div class="studio-slider-group" style="margin-top: 10px;">

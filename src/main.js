@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { CollisionManager } from './components/CollisionManager.js';
 import { MapLoader } from './components/MapLoader.js';
-import { Character } from './components/Character.js';
+import { CharacterRoster } from './components/CharacterRoster.js';
 import { Door } from './components/Door.js';
 import { CameraManager } from './components/CameraManager.js';
 import { TimelineManager, ACTION_TYPES } from './components/TimelineManager.js';
@@ -23,6 +23,8 @@ class App {
     // Dokunma (Tap) vs Sürükleme (Drag) ayrımı için değişkenler
     this.pointerDownPos = { x: 0, y: 0 };
     this.pointerDownTime = 0;
+    this.controlMode = 'tap';
+    this.pressedDirections = new Set();
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
 
@@ -128,8 +130,9 @@ class App {
     });
 
     // 3. Prosedürel Karakter (3D Navigasyon ve Floor Snapping)
-    this.character = new Character(this.scene, this.collisionManager, (state) => {
-      this._updateCharacterHUD(state.isMoving);
+    this.character = new CharacterRoster(this.scene, this.collisionManager, (state) => {
+      this._updateCharacterHUD(this.character?.selectedCharacter?.isMoving || false);
+      this.uiManager?.updateCharacterList(state.actors || this.character.list());
     });
 
     // 4. Kamera Yöneticisi & CCTV İstasyonları
@@ -365,6 +368,8 @@ class App {
       cameraManager: this.cameraManager,
       mapLoader: this.mapLoader,
       recorderManager: this.recorderManager,
+      characterManager: this.character,
+      onControlModeChange: (mode) => this.setControlMode(mode),
       sceneHelpers: {
         gridHelper: this.gridHelper,
         dirLight: this.dirLight,
@@ -398,6 +403,7 @@ class App {
         this._handleCanvasTap(e);
       }
     });
+    this._bindCharacterControls();
 
     // Tam Ekran Sürükle-Bırak (Drag & Drop)
     const overlay = document.getElementById('drag-overlay');
@@ -423,6 +429,97 @@ class App {
     });
   }
 
+  setControlMode(mode) {
+    this.controlMode = ['tap', 'joystick', 'arrows'].includes(mode) ? mode : 'tap';
+    this.character.setControlVector(0, 0);
+    this.pressedDirections.clear();
+    const joystick = document.getElementById('joystick-controls');
+    const arrows = document.getElementById('arrow-controls');
+    if (joystick) joystick.style.display = this.controlMode === 'joystick' ? 'block' : 'none';
+    if (arrows) arrows.style.display = this.controlMode === 'arrows' ? 'grid' : 'none';
+  }
+
+  _bindCharacterControls() {
+    const applyDirections = () => {
+      const x = Number(this.pressedDirections.has('right')) - Number(this.pressedDirections.has('left'));
+      const z = Number(this.pressedDirections.has('down')) - Number(this.pressedDirections.has('up'));
+      this.character.setControlVector(x, z);
+    };
+
+    document.querySelectorAll('[data-direction]').forEach((button) => {
+      const direction = button.dataset.direction;
+      button.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        button.setPointerCapture?.(event.pointerId);
+        this.pressedDirections.add(direction);
+        applyDirections();
+      });
+      const release = (event) => {
+        event.preventDefault();
+        this.pressedDirections.delete(direction);
+        applyDirections();
+      };
+      button.addEventListener('pointerup', release);
+      button.addEventListener('pointercancel', release);
+      button.addEventListener('lostpointercapture', release);
+    });
+
+    const keyDirections = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right' };
+    window.addEventListener('keydown', (event) => {
+      if (this.controlMode !== 'arrows' || ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) return;
+      const direction = keyDirections[event.code];
+      if (!direction) return;
+      event.preventDefault();
+      this.pressedDirections.add(direction);
+      applyDirections();
+    });
+    window.addEventListener('keyup', (event) => {
+      const direction = keyDirections[event.code];
+      if (!direction || !this.pressedDirections.has(direction)) return;
+      this.pressedDirections.delete(direction);
+      applyDirections();
+    });
+    window.addEventListener('blur', () => {
+      this.pressedDirections.clear();
+      this.character.setControlVector(0, 0);
+    });
+
+    const base = document.getElementById('joystick-base');
+    const knob = document.getElementById('joystick-knob');
+    let joystickPointer = null;
+    const moveJoystick = (event) => {
+      if (joystickPointer !== event.pointerId || !base || !knob) return;
+      const rect = base.getBoundingClientRect();
+      const radius = rect.width * 0.36;
+      const dx = event.clientX - (rect.left + rect.width / 2);
+      const dy = event.clientY - (rect.top + rect.height / 2);
+      const length = Math.hypot(dx, dy);
+      const factor = length > radius ? radius / length : 1;
+      const nx = dx * factor / radius;
+      const nz = dy * factor / radius;
+      knob.style.transform = `translate(${dx * factor}px, ${dy * factor}px)`;
+      this.character.setControlVector(nx, nz);
+    };
+    if (base && knob) {
+      base.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        joystickPointer = event.pointerId;
+        base.setPointerCapture(event.pointerId);
+        moveJoystick(event);
+      });
+      base.addEventListener('pointermove', moveJoystick);
+      const resetJoystick = (event) => {
+        if (joystickPointer !== event.pointerId) return;
+        joystickPointer = null;
+        knob.style.transform = 'translate(0, 0)';
+        this.character.setControlVector(0, 0);
+      };
+      base.addEventListener('pointerup', resetJoystick);
+      base.addEventListener('pointercancel', resetJoystick);
+    }
+    this.setControlMode('tap');
+  }
+
   /**
    * Canvas'a tek dokunma/tıklama yapıldığında Raycasting uygular
    * @private
@@ -439,15 +536,16 @@ class App {
     if (doorMesh) {
       const doorHits = this.raycaster.intersectObject(doorMesh, true);
       if (doorHits.length > 0) {
+        const recordOnly = this.timelineManager?.isRecording && this.timelineManager?.playMode === 'scheduled';
         // Eğer Reji Kayıt Modu açıksa bu kapı tıklamasını adıma ekle
         if (this.timelineManager && this.timelineManager.isRecording) {
           this.timelineManager.recordClickAsStep(ACTION_TYPES.TRIGGER_DOOR, {
             action: this.door.isOpen ? 'close' : 'open',
           });
         }
-        this.door.toggle();
+        if (!recordOnly) this.door.toggle();
         if (this.uiManager) {
-          this.uiManager.showToast(`Kapı ${this.door.isOpen ? 'Açıldı' : 'Kapatıldı'}`);
+          this.uiManager.showToast(recordOnly ? 'Kapı eylemi zaman çizelgesine eklendi' : `Kapı ${this.door.isOpen ? 'Açıldı' : 'Kapatıldı'}`);
         }
         return;
       }
@@ -466,16 +564,18 @@ class App {
       const targetPoint = hits[0].point;
 
       // Eğer Reji Kayıt Modu açıksa tıklanan koordinatı yeni bir yürüme adımına dönüştür!
-      if (this.timelineManager && this.timelineManager.isRecording) {
-        this.timelineManager.recordClickAsStep(ACTION_TYPES.MOVE_TO, {
-          x: Number(targetPoint.x.toFixed(2)),
-          y: Number(targetPoint.y.toFixed(2)),
-          z: Number(targetPoint.z.toFixed(2)),
-        });
-      }
+        if (this.timelineManager && this.timelineManager.isRecording) {
+          this.timelineManager.recordClickAsStep(ACTION_TYPES.MOVE_TO, {
+            x: Number(targetPoint.x.toFixed(2)),
+            y: Number(targetPoint.y.toFixed(2)),
+            z: Number(targetPoint.z.toFixed(2)),
+          }, this.uiManager?.getTimelineActionOptions?.());
+        }
 
       // Karakteri hedef noktaya yönlendir
-      this.character.moveTo(targetPoint);
+      if (this.controlMode === 'tap' && !(this.timelineManager?.isRecording && this.timelineManager?.playMode === 'scheduled')) {
+        this.character.moveTo(targetPoint);
+      }
     }
   }
 

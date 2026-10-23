@@ -11,6 +11,8 @@ export const ACTION_TYPES = {
   TRIGGER_DOOR: 'TRIGGER_DOOR',
   SWITCH_CAMERA: 'SWITCH_CAMERA',
   PLAY_EMOTE: 'PLAY_EMOTE',
+  FOLLOW: 'FOLLOW',
+  SET_VISIBILITY: 'SET_VISIBILITY',
 };
 
 export class TimelineManager {
@@ -36,9 +38,11 @@ export class TimelineManager {
     this.currentStepIndex = -1;
     this._abortPlayback = false;
     this._pausePromiseResolver = null;
+    this._playbackId = 0;
 
     // Adım Kaydetme Modu
     this.isRecording = false;
+    this.playMode = 'sequential';
 
     // Varsayılan zengin bir demo akışı yükle
     this._initDefaultDemoSequence();
@@ -114,6 +118,7 @@ export class TimelineManager {
       currentStepIndex: this.currentStepIndex,
       steps: [...this.steps],
       isRecording: this.isRecording,
+      playMode: this.playMode,
     });
   }
 
@@ -132,7 +137,7 @@ export class TimelineManager {
    * @param {string} type
    * @param {Object} data
    */
-  recordClickAsStep(type, data) {
+  recordClickAsStep(type, data, options = {}) {
     if (!this.isRecording) return;
 
     let title = 'Yeni Eylem';
@@ -156,6 +161,7 @@ export class TimelineManager {
       type,
       title,
       data,
+      ...this._cleanTimingOptions(options),
     };
 
     this.steps.push(step);
@@ -166,16 +172,34 @@ export class TimelineManager {
   /**
    * Manuel adım ekleme
    */
-  addStep(type, data = {}, title = '') {
+  addStep(type, data = {}, title = '', options = {}) {
     const step = {
       id: 'step-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
       type,
       title: title || this._getDefaultTitleForType(type, data),
       data,
+      ...this._cleanTimingOptions(options),
     };
     this.steps.push(step);
     this._notify();
     return step;
+  }
+
+  _cleanTimingOptions(options = {}) {
+    const clean = {};
+    if (typeof options.actorId === 'string') clean.actorId = options.actorId.slice(0, 128);
+    if (options.startAt !== '' && options.startAt !== null && Number.isFinite(Number(options.startAt))) {
+      clean.startAt = Math.max(0, Math.min(3600, Number(options.startAt)));
+    }
+    if (options.duration !== '' && options.duration !== null && Number.isFinite(Number(options.duration)) && Number(options.duration) > 0) {
+      clean.duration = Math.max(0.1, Math.min(3600, Number(options.duration)));
+    }
+    return clean;
+  }
+
+  setPlayMode(mode) {
+    this.playMode = mode === 'scheduled' ? 'scheduled' : 'sequential';
+    this._notify();
   }
 
   _getDefaultTitleForType(type, data) {
@@ -190,6 +214,10 @@ export class TimelineManager {
         return 'Kameraya Geç';
       case ACTION_TYPES.PLAY_EMOTE:
         return `Karakter Emote: ${data.emote || 'jump'}`;
+      case ACTION_TYPES.FOLLOW:
+        return `Karakteri Takip Et: ${data.targetCharacterId || 'hedef'}`;
+      case ACTION_TYPES.SET_VISIBILITY:
+        return data.visible ? 'Karakteri Göster' : 'Karakteri Gizle';
       default:
         return 'Eylem';
     }
@@ -238,12 +266,14 @@ export class TimelineManager {
    * Tüm adımları sırayla çalıştırır (Play)
    */
   async play() {
+    if (this.playMode === 'scheduled') return this._playScheduled();
     if (this.steps.length === 0) return;
 
     if (this.isPaused) {
       // Duraklatılmış yerden devam et
       this.isPaused = false;
       this.isPlaying = true;
+      this.character?.pauseAll?.(false);
       if (this._pausePromiseResolver) {
         this._pausePromiseResolver();
         this._pausePromiseResolver = null;
@@ -257,6 +287,7 @@ export class TimelineManager {
     this.isPlaying = true;
     this.isPaused = false;
     this._abortPlayback = false;
+    const playbackId = ++this._playbackId;
 
     // Eğer son adımdaysak başa dön
     if (this.currentStepIndex < 0 || this.currentStepIndex >= this.steps.length - 1) {
@@ -268,14 +299,14 @@ export class TimelineManager {
     let playbackFailed = false;
     try {
       while (this.currentStepIndex < this.steps.length) {
-        if (this._abortPlayback) break;
+        if (this._abortPlayback || playbackId !== this._playbackId) break;
 
         // Pause bekleme kontrolü
         if (this.isPaused) {
           await new Promise((resolve) => {
             this._pausePromiseResolver = resolve;
           });
-          if (this._abortPlayback) break;
+          if (this._abortPlayback || playbackId !== this._playbackId) break;
         }
 
         const step = this.steps[this.currentStepIndex];
@@ -283,21 +314,84 @@ export class TimelineManager {
 
         await this._executeStep(step);
 
-        if (this._abortPlayback) break;
+        if (this._abortPlayback || playbackId !== this._playbackId) break;
         this.currentStepIndex++;
       }
     } catch (err) {
       playbackFailed = true;
       console.error('Timeline oynatma hatası:', err);
     } finally {
-      this.isPlaying = false;
-      this.isPaused = false;
-      if (this.currentStepIndex >= this.steps.length) {
-        this.currentStepIndex = -1; // Tamamlandı
+      if (playbackId === this._playbackId) {
+        this.isPlaying = false;
+        this.isPaused = false;
+        if (this.currentStepIndex >= this.steps.length) {
+          this.currentStepIndex = -1; // Tamamlandı
+        }
+        this._notify();
       }
-      this._notify();
     }
-    return !playbackFailed && !this._abortPlayback;
+    return !playbackFailed && !this._abortPlayback && playbackId === this._playbackId;
+  }
+
+  async _playScheduled() {
+    if (this.steps.length === 0) return true;
+    if (this.isPaused) {
+      this.isPaused = false;
+      this.isPlaying = true;
+      this.character?.pauseAll?.(false);
+      this._pausePromiseResolver?.();
+      this._pausePromiseResolver = null;
+      this._notify();
+      return true;
+    }
+    if (this.isPlaying) return false;
+
+    this.isPlaying = true;
+    this.isPaused = false;
+    this._abortPlayback = false;
+    const playbackId = ++this._playbackId;
+    this.character?.pauseAll?.(false);
+    const schedule = this.steps
+      .map((step, index) => ({
+        step,
+        index,
+        startAt: Number.isFinite(step.startAt) ? step.startAt : index * 2,
+      }))
+      .sort((a, b) => a.startAt - b.startAt || a.index - b.index);
+    this._notify();
+
+    const runningActions = [];
+    let previousStartAt = 0;
+    let failed = false;
+    try {
+      for (const item of schedule) {
+        if (this._abortPlayback || playbackId !== this._playbackId) break;
+        await this._sleepWithAbort(Math.max(0, item.startAt - previousStartAt) * 1000, playbackId);
+        if (this._abortPlayback || playbackId !== this._playbackId) break;
+        previousStartAt = item.startAt;
+        this.currentStepIndex = item.index;
+        this._notify();
+        runningActions.push(Promise.resolve(this._executeStep(item.step)));
+      }
+      const results = await Promise.allSettled(runningActions);
+      failed = results.some((result) => result.status === 'rejected');
+      if (failed) {
+        const firstError = results.find((result) => result.status === 'rejected')?.reason;
+        throw firstError;
+      }
+    } catch (error) {
+      console.error('Zamanlı reji oynatma hatası:', error);
+      failed = true;
+    } finally {
+      if (playbackId === this._playbackId) {
+        this.isPlaying = false;
+        this.isPaused = false;
+        this.character?.pauseAll?.(false);
+        this.currentStepIndex = -1;
+        this._notify();
+      }
+    }
+    return !failed && !this._abortPlayback && playbackId === this._playbackId;
   }
 
   /**
@@ -306,17 +400,20 @@ export class TimelineManager {
    */
   async _executeStep(step) {
     if (!step) return;
+    const actor = this.character?.getCharacter
+      ? (this.character.getCharacter(step.actorId) || this.character.selectedCharacter)
+      : this.character;
 
     switch (step.type) {
       case ACTION_TYPES.MOVE_TO: {
-        if (this.character && step.data) {
-          await this.character.moveToPromise(step.data);
+        if (actor && step.data) {
+          await actor.moveToPromise(step.data, { duration: step.duration });
         }
         break;
       }
 
       case ACTION_TYPES.WAIT: {
-        const ms = (step.data.duration || 1) * 1000;
+        const ms = (step.duration || step.data.duration || 1) * 1000;
         await this._sleepWithAbort(ms);
         break;
       }
@@ -346,10 +443,28 @@ export class TimelineManager {
       }
 
       case ACTION_TYPES.PLAY_EMOTE: {
-        if (this.character) {
+        if (actor) {
           const emote = step.data.emote || 'jump';
-          await this.character.playEmotePromise(emote);
+          await actor.playEmotePromise(emote);
         }
+        break;
+      }
+
+      case ACTION_TYPES.FOLLOW: {
+        const targetId = step.data.targetCharacterId;
+        if (this.character?.followCharacter && targetId) {
+          await this.character.followCharacter(step.actorId || this.character.selectedId, targetId, {
+            duration: step.duration || step.data.duration || 10,
+            offset: step.data.offset || { x: 0, y: 0, z: 1.2 },
+          });
+        }
+        break;
+      }
+
+      case ACTION_TYPES.SET_VISIBILITY: {
+        const visible = Boolean(step.data.visible);
+        if (this.character?.setVisible) this.character.setVisible(step.actorId || this.character.selectedId, visible);
+        else actor?.setVisible?.(visible);
         break;
       }
 
@@ -362,16 +477,20 @@ export class TimelineManager {
    * İptal veya pause duyarlı uyku
    * @private
    */
-  _sleepWithAbort(ms) {
+  _sleepWithAbort(ms, playbackId = this._playbackId) {
     return new Promise((resolve) => {
-      const start = performance.now();
+      let elapsed = 0;
+      let previous = performance.now();
       const interval = setInterval(() => {
-        if (this._abortPlayback) {
+        const now = performance.now();
+        if (this._abortPlayback || playbackId !== this._playbackId) {
           clearInterval(interval);
           resolve();
           return;
         }
-        if (!this.isPaused && performance.now() - start >= ms) {
+        if (!this.isPaused) elapsed += now - previous;
+        previous = now;
+        if (!this.isPaused && elapsed >= ms) {
           clearInterval(interval);
           resolve();
         }
@@ -385,6 +504,7 @@ export class TimelineManager {
   pause() {
     if (this.isPlaying && !this.isPaused) {
       this.isPaused = true;
+      this.character?.pauseAll?.(true);
       this._notify();
     }
   }
@@ -393,10 +513,13 @@ export class TimelineManager {
    * Oynatmayı tamamen durdurur ve başa alır
    */
   stop() {
+    this._playbackId += 1;
     this._abortPlayback = true;
     this.isPlaying = false;
     this.isPaused = false;
     this.currentStepIndex = -1;
+    this.character?.pauseAll?.(false);
+    this.character?.stopAllMotions?.();
 
     if (this._pausePromiseResolver) {
       this._pausePromiseResolver();
@@ -414,6 +537,7 @@ export class TimelineManager {
     const payload = {
       version: '1.0.0',
       timestamp: new Date().toISOString(),
+      playMode: this.playMode,
       steps: this.steps,
     };
     return JSON.stringify(payload, null, 2);
@@ -443,6 +567,9 @@ export class TimelineManager {
     try {
       const data = typeof jsonInput === 'string' ? JSON.parse(jsonInput) : jsonInput;
       const rawSteps = Array.isArray(data) ? data : data?.steps;
+      if (!Array.isArray(data) && data?.playMode !== undefined && !['sequential', 'scheduled'].includes(data.playMode)) {
+        throw new Error('Zaman çizelgesi oynatma modu geçersiz.');
+      }
       if (!Array.isArray(rawSteps)) {
         throw new Error('Geçersiz sequence JSON yapısı: "steps" dizisi bulunamadı.');
       }
@@ -504,18 +631,49 @@ export class TimelineManager {
             cleanData = { emote };
             break;
           }
+          case ACTION_TYPES.FOLLOW: {
+            const targetCharacterId = typeof data.targetCharacterId === 'string' && data.targetCharacterId.length <= 128
+              ? data.targetCharacterId
+              : '';
+            if (!targetCharacterId) throw new Error(`${index + 1}. adımın takip karakteri geçersiz.`);
+            const rawOffset = data.offset && typeof data.offset === 'object' ? data.offset : {};
+            const offset = { x: Number(rawOffset.x ?? 0), y: Number(rawOffset.y ?? 0), z: Number(rawOffset.z ?? 1.2) };
+            if (Object.values(offset).some((value) => !Number.isFinite(value) || Math.abs(value) > 1000)) {
+              throw new Error(`${index + 1}. adımın takip mesafesi geçersiz.`);
+            }
+            cleanData = { targetCharacterId, offset };
+            break;
+          }
+          case ACTION_TYPES.SET_VISIBILITY: {
+            if (typeof data.visible !== 'boolean') throw new Error(`${index + 1}. adımın görünürlük değeri geçersiz.`);
+            cleanData = { visible: data.visible };
+            break;
+          }
         }
         const title = typeof step.title === 'string' ? step.title.slice(0, 160) : '';
+        const actorId = step.actorId === undefined ? undefined : (typeof step.actorId === 'string' && step.actorId.length <= 128 ? step.actorId : null);
+        const startAt = step.startAt === undefined ? undefined : Number(step.startAt);
+        const duration = step.duration === undefined ? undefined : Number(step.duration);
+        if (actorId === null || (startAt !== undefined && (!Number.isFinite(startAt) || startAt < 0 || startAt > 3600))) {
+          throw new Error(`${index + 1}. adımın karakteri veya başlangıç zamanı geçersiz.`);
+        }
+        if (duration !== undefined && (!Number.isFinite(duration) || duration <= 0 || duration > 3600)) {
+          throw new Error(`${index + 1}. adımın süresi 0–3600 saniye arasında olmalı.`);
+        }
         return {
           id: `step-import-${index + 1}`,
           type: step.type,
           title: title || this._getDefaultTitleForType(step.type, cleanData),
           data: cleanData,
+          ...(actorId === undefined ? {} : { actorId }),
+          ...(startAt === undefined ? {} : { startAt }),
+          ...(duration === undefined ? {} : { duration }),
         };
       });
 
       this.stop();
       this.steps = validatedSteps;
+      this.playMode = data?.playMode === 'scheduled' ? 'scheduled' : 'sequential';
       this._notify();
       return true;
     } catch (err) {
