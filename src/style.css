@@ -572,6 +572,26 @@ html, body {
   gap: 2px;
 }
 
+.step-run-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.step-run-button:focus-visible {
+  outline: 2px solid var(--mono-white);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+.step-run-button .step-meta { max-width: 100%; }
+
 .step-badge {
   font-size: 8.5px;
   font-weight: 700;

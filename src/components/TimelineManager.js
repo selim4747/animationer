@@ -314,6 +314,7 @@ export class TimelineManager {
           if (this._abortPlayback || playbackId !== this._playbackId) break;
         }
 
+        if (!(await this._waitUntilResumed(playbackId))) break;
         const step = this.steps[this.currentStepIndex];
         this._notify();
 
@@ -374,6 +375,8 @@ export class TimelineManager {
       for (const item of schedule) {
         if (this._abortPlayback || playbackId !== this._playbackId) break;
         await this._sleepWithAbort(Math.max(0, item.startAt - previousStartAt) * 1000, playbackId);
+        if (this._abortPlayback || playbackId !== this._playbackId) break;
+        if (!(await this._waitUntilResumed(playbackId))) break;
         if (this._abortPlayback || playbackId !== this._playbackId) break;
         previousStartAt = item.startAt;
         this.currentStepIndex = item.index;
@@ -512,6 +515,19 @@ export class TimelineManager {
           resolve();
         }
       }, 30);
+    });
+  }
+
+  _waitUntilResumed(playbackId) {
+    if (this._abortPlayback || playbackId !== this._playbackId) return Promise.resolve(false);
+    if (!this.isPaused) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const check = () => {
+        if (this._abortPlayback || playbackId !== this._playbackId) return resolve(false);
+        if (!this.isPaused) return resolve(true);
+        setTimeout(check, 30);
+      };
+      check();
     });
   }
 

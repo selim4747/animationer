@@ -1001,9 +1001,11 @@ export class UIManager {
       item.innerHTML = `
         <div class="step-num">${idx + 1}</div>
         <div class="step-content">
-          <div class="step-badge">${typeBadge}</div>
-          <div class="step-title"></div>
-          <div class="step-meta"></div>
+          <button type="button" class="step-run-button">
+            <span class="step-badge">${typeBadge}</span>
+            <span class="step-title"></span>
+            <span class="step-meta"></span>
+          </button>
         </div>
         <div class="step-actions">
           <button class="step-btn-icon btn-step-up" title="Yukarı Taşı">▲</button>
@@ -1046,7 +1048,9 @@ export class UIManager {
         this.timeline.removeStep(idx);
       });
 
-      item.addEventListener('click', () => {
+      const runButton = item.querySelector('.step-run-button');
+      runButton.setAttribute('aria-label', `Çalıştır: ${idx + 1}. adım, ${step.title || 'Adım'}`);
+      runButton.addEventListener('click', () => {
         this.timeline.currentStepIndex = idx;
         this.timeline._executeStep(step);
         this.showToast(`${idx + 1}. Adım Çalıştırıldı: ${step.title}`);
