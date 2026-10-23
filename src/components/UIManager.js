@@ -328,18 +328,27 @@ export class UIManager {
         const file = e.target.files && e.target.files[0];
         if (file) {
           const reader = new FileReader();
-          reader.onload = (evt) => {
+          reader.onload = async (evt) => {
             try {
               const payload = JSON.parse(evt.target.result);
               if (payload?.format === 'animationer-project') {
-                const assetIds = new Set((payload.sprites || []).map((asset) => asset?.id));
-                const missing = (payload.steps || []).find((step) => step.type === 'PLAY_SPRITE_ANIMATION' && !assetIds.has(step.actorId));
-                if (missing) throw new Error(`'${missing.actorId}' sprite varlığı proje dosyasında yok; mevcut sahne korunuyor.`);
-                this.timeline.importSequence(payload);
-                this.sprites.importAssets(payload.sprites || []).then(() => this.showToast('Proje, zaman çizelgesi ve görsel varlıklarla yüklendi')).catch((error) => this.showToast(`Proje görselleri yüklenemedi: ${error.message}`));
+                const assets = payload.sprites || [];
+                const assetIds = this.sprites.constructor.validateProjectAssets(assets);
+                const candidateTimeline = new this.timeline.constructor({});
+                candidateTimeline.importSequence(payload);
+                const missing = candidateTimeline.steps.find((step) => step.type === 'PLAY_SPRITE_ANIMATION' && !assetIds.has(step.actorId));
+                if (missing) throw new Error(`'${missing.actorId}' sprite dosyası projede yok; mevcut sahne korundu.`);
+
+                // Görseller geçici sahnede tamamen yüklenip doğrulanmadan mevcut proje değiştirilmez.
+                await this.sprites.importAssets(assets);
+                this.timeline.stop();
+                this.timeline.steps = candidateTimeline.steps;
+                this.timeline.playMode = candidateTimeline.playMode;
+                this.timeline._notify();
+                this.showToast('Proje, zaman çizelgesi ve görsel varlıklarla yüklendi');
               } else { this.timeline.importSequence(payload); this.showToast('Eski biçim zaman çizelgesi yüklendi (görseller bu dosyada bulunmuyor)'); }
             } catch (err) {
-              this.showToast('HATA: Geçersiz JSON Dosyası!');
+              this.showToast(`Proje yüklenemedi; mevcut sahne korundu: ${err.message || 'geçersiz dosya'}`);
             }
           };
           reader.readAsText(file);

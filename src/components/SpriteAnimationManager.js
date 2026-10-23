@@ -115,21 +115,65 @@ export class SpriteAnimationManager {
       return { id: actor.id, name: actor.name, columns: actor.columns, rows: actor.rows, fps: actor.fps, x: actor.x, y: actor.y, displayHeight: actor.displayHeight, mimeType: actor.sourceFile.type, fileName: actor.sourceFile.name, data: btoa(binary) };
     }));
   }
-  async importAssets(assets = []) {
+  static validateProjectAssets(assets = []) {
     if (!Array.isArray(assets) || assets.length > 100) throw new Error('Projedeki spritesheet listesi geçersiz veya çok büyük.');
+    const ids = new Set();
     for (const asset of assets) {
-      if (!asset || typeof asset.data !== 'string' || asset.data.length > 70 * 1024 * 1024) throw new Error('Spritesheet dosyası eksik veya güvenli boyut sınırını aşıyor.');
-      const binary = atob(asset.data);
-      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-      const file = new File([bytes], asset.fileName || `${asset.name || 'sprite'}.png`, { type: asset.mimeType || 'image/png' });
-      const actor = await this.addSpriteSheet(file, { columns: asset.columns, rows: asset.rows, fps: asset.fps });
-      actor.name = String(asset.name || actor.name).slice(0, 48);
-      actor.id = typeof asset.id === 'string' && asset.id.length <= 128 ? asset.id : actor.id;
-      this.nextId = Math.max(this.nextId, Number(actor.id.match(/(\d+)$/)?.[1] || 0) + 1);
-      this.selectedId = actor.id;
-      this.setTransform(actor.id, { x: Number(asset.x), y: Number(asset.y), height: Number(asset.displayHeight) });
+      if (!asset || typeof asset !== 'object' || typeof asset.id !== 'string' || !asset.id || asset.id.length > 128) {
+        throw new Error('Projedeki spritesheet kimliği geçersiz.');
+      }
+      if (ids.has(asset.id)) throw new Error(`Projede yinelenen spritesheet kimliği var: ${asset.id}`);
+      ids.add(asset.id);
+      if (typeof asset.data !== 'string' || asset.data.length > 70 * 1024 * 1024) {
+        throw new Error('Spritesheet dosyası eksik veya güvenli boyut sınırını aşıyor.');
+      }
+    }
+    return ids;
+  }
+
+  async importAssets(assets = []) {
+    const ids = SpriteAnimationManager.validateProjectAssets(assets);
+    const stagingScene = new THREE.Scene();
+    const staging = new SpriteAnimationManager(stagingScene, {
+      width: this.width,
+      height: this.height,
+      onStateChange: () => {},
+    });
+    try {
+      for (const asset of assets) {
+        const binary = atob(asset.data);
+        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+        const file = new File([bytes], asset.fileName || `${asset.name || 'sprite'}.png`, { type: asset.mimeType || 'image/png' });
+        const actor = await staging.addSpriteSheet(file, { columns: asset.columns, rows: asset.rows, fps: asset.fps });
+        actor.name = String(asset.name || actor.name).slice(0, 48);
+        actor.id = asset.id;
+        staging.nextId = Math.max(staging.nextId, Number(actor.id.match(/(\d+)$/)?.[1] || 0) + 1);
+        staging.selectedId = actor.id;
+        staging.setTransform(actor.id, { x: Number(asset.x), y: Number(asset.y), height: Number(asset.displayHeight) });
+      }
+    } catch (error) {
+      for (const actor of staging.actors) {
+        actor.texture.dispose();
+        actor.sprite.material.dispose();
+      }
+      throw error;
+    }
+
+    for (const actor of this.actors) {
+      this.stopAnimation(actor.id, false);
+      this.scene.remove(actor.sprite);
+      actor.texture.dispose();
+      actor.sprite.material.dispose();
+    }
+    this.actors = staging.actors;
+    this.selectedId = staging.selectedId;
+    this.nextId = Math.max(1, staging.nextId);
+    for (const actor of this.actors) {
+      stagingScene.remove(actor.sprite);
+      this.scene.add(actor.sprite);
     }
     this._notify('loaded');
+    return ids;
   }
   getActor(id = this.selectedId) {
     return this.actors.find((actor) => actor.id === id) || null;
@@ -248,7 +292,15 @@ export class SpriteAnimationManager {
   resize(width, height) {
     this.width = Math.max(1, width);
     this.height = Math.max(1, height);
-    for (const actor of this.actors) this._setPosition(actor);
+    for (const actor of this.actors) {
+      const spriteWidth = actor.displayHeight * (actor.frameWidth / actor.frameHeight);
+      const halfWidth = Math.min(this.width / 2, spriteWidth / 2);
+      const halfHeight = Math.min(this.height / 2, actor.displayHeight / 2);
+      actor.x = Math.max(halfWidth, Math.min(this.width - halfWidth, actor.x));
+      actor.y = Math.max(halfHeight, Math.min(this.height - halfHeight, actor.y));
+      this._setPosition(actor);
+    }
+    this._notify('resized');
   }
 
   _notify(type, actor) {
