@@ -24,6 +24,8 @@ class App {
     // Dokunma (Tap) vs Sürükleme (Drag) ayrımı için değişkenler
     this.pointerDownPos = { x: 0, y: 0 };
     this.pointerDownTime = 0;
+    this.spriteDrag = null;
+    this.pointerDragged = false;
     this.controlMode = 'tap';
     this.pressedDirections = new Set();
     this.raycaster = new THREE.Raycaster();
@@ -403,17 +405,42 @@ class App {
     const dom = this.renderer.domElement;
 
     dom.addEventListener('pointerdown', (e) => {
+      const rect = dom.getBoundingClientRect();
+      const sx = (e.clientX - rect.left) * (this.spriteAnimationManager.width / rect.width);
+      const sy = (e.clientY - rect.top) * (this.spriteAnimationManager.height / rect.height);
+      const sprite = this.spriteAnimationManager.hitTest(sx, sy);
+      this.pointerDragged = false;
+      if (sprite) {
+        this.spriteAnimationManager.select(sprite.id);
+        this.spriteDrag = { pointerId: e.pointerId, id: sprite.id, dx: sprite.x - sx, dy: sprite.y - sy };
+        dom.setPointerCapture?.(e.pointerId);
+        e.preventDefault();
+      }
       this.pointerDownPos.x = e.clientX;
       this.pointerDownPos.y = e.clientY;
       this.pointerDownTime = performance.now();
     });
 
+    dom.addEventListener('pointermove', (e) => {
+      if (!this.spriteDrag || this.spriteDrag.pointerId !== e.pointerId) return;
+      const rect = dom.getBoundingClientRect();
+      const sx = (e.clientX - rect.left) * (this.spriteAnimationManager.width / rect.width);
+      const sy = (e.clientY - rect.top) * (this.spriteAnimationManager.height / rect.height);
+      if (Math.hypot(e.clientX - this.pointerDownPos.x, e.clientY - this.pointerDownPos.y) > 3) this.pointerDragged = true;
+      this.spriteAnimationManager.setTransform(this.spriteDrag.id, { x: sx + this.spriteDrag.dx, y: sy + this.spriteDrag.dy });
+      e.preventDefault();
+    });
+    const finishSpriteDrag = (e) => { if (this.spriteDrag?.pointerId === e.pointerId) this.spriteDrag = null; };
+    dom.addEventListener('pointercancel', finishSpriteDrag);
     dom.addEventListener('pointerup', (e) => {
+      const wasSpriteInteraction = Boolean(this.spriteDrag);
+      const wasSpriteDrag = this.pointerDragged;
+      finishSpriteDrag(e);
       const dist = Math.hypot(e.clientX - this.pointerDownPos.x, e.clientY - this.pointerDownPos.y);
       const elapsed = performance.now() - this.pointerDownTime;
 
       // Eğer 10 pikselden az hareket edildiyse ve süre < 350ms ise bu bir TAP (dokunma) hareketidir!
-      if (dist < 10 && elapsed < 350) {
+      if (!wasSpriteInteraction && !wasSpriteDrag && dist < 10 && elapsed < 350) {
         this._handleCanvasTap(e);
       }
     });

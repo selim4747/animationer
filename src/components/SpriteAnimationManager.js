@@ -87,6 +87,7 @@ export class SpriteAnimationManager {
       frameProgress: 0,
       duration: null,
       resolver: null,
+      sourceFile: file,
     };
     this._setFrame(actor, 0);
     this._setPosition(actor);
@@ -97,6 +98,39 @@ export class SpriteAnimationManager {
     return actor;
   }
 
+  hitTest(x, y) {
+    for (let index = this.actors.length - 1; index >= 0; index--) {
+      const actor = this.actors[index];
+      const width = actor.displayHeight * (actor.frameWidth / actor.frameHeight);
+      if (Math.abs(x - actor.x) <= width / 2 && Math.abs(y - actor.y) <= actor.displayHeight / 2) return actor;
+    }
+    return null;
+  }
+  async exportAssets() {
+    return Promise.all(this.actors.map(async (actor) => {
+      if (!actor.sourceFile) throw new Error(`"${actor.name}" spritesheet kaynağı yok; taşınabilir proje kaydedilemedi.`);
+      const bytes = new Uint8Array(await actor.sourceFile.arrayBuffer());
+      let binary = '';
+      for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+      return { id: actor.id, name: actor.name, columns: actor.columns, rows: actor.rows, fps: actor.fps, x: actor.x, y: actor.y, displayHeight: actor.displayHeight, mimeType: actor.sourceFile.type, fileName: actor.sourceFile.name, data: btoa(binary) };
+    }));
+  }
+  async importAssets(assets = []) {
+    if (!Array.isArray(assets) || assets.length > 100) throw new Error('Projedeki spritesheet listesi geçersiz veya çok büyük.');
+    for (const asset of assets) {
+      if (!asset || typeof asset.data !== 'string' || asset.data.length > 70 * 1024 * 1024) throw new Error('Spritesheet dosyası eksik veya güvenli boyut sınırını aşıyor.');
+      const binary = atob(asset.data);
+      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+      const file = new File([bytes], asset.fileName || `${asset.name || 'sprite'}.png`, { type: asset.mimeType || 'image/png' });
+      const actor = await this.addSpriteSheet(file, { columns: asset.columns, rows: asset.rows, fps: asset.fps });
+      actor.name = String(asset.name || actor.name).slice(0, 48);
+      actor.id = typeof asset.id === 'string' && asset.id.length <= 128 ? asset.id : actor.id;
+      this.nextId = Math.max(this.nextId, Number(actor.id.match(/(\d+)$/)?.[1] || 0) + 1);
+      this.selectedId = actor.id;
+      this.setTransform(actor.id, { x: Number(asset.x), y: Number(asset.y), height: Number(asset.displayHeight) });
+    }
+    this._notify('loaded');
+  }
   getActor(id = this.selectedId) {
     return this.actors.find((actor) => actor.id === id) || null;
   }
