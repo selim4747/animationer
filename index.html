@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>3D & 2D Sahne, Karakter ve Reji Stüdyosu</title>
-    <meta name="description" content="Vite ve Capacitor uyumlu monokrom Three.js sahnesi, zaman çizelgesi eylem kuyruğu (timeline), prosedürel animasyonlu karakter ve menteşeli kapı mekaniği." />
+    <title>3D & 2D Sahne, Karakter, Reji ve Render Stüdyosu</title>
+    <meta name="description" content="Vite ve Capacitor uyumlu monokrom Three.js sahnesi, zaman çizelgesi eylem kuyruğu (timeline), 60 FPS video/ekran görüntüsü dışa aktarma (render) motoru." />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
@@ -31,13 +31,19 @@
       <div class="hud-brand">
         <span class="brand-square">REJİ</span>
         <div class="brand-text">
-          <div class="brand-name">STUDIO // TIMELINE</div>
+          <div class="brand-name">STUDIO // TIMELINE & RENDER</div>
           <div class="brand-desc">Capacitor & WebGL Engine</div>
         </div>
       </div>
 
       <div class="hud-actions">
-        <!-- Adım Kayıt Modu Rozeti (Sadece kayıt açıkken yanıp söner) -->
+        <!-- Video Kayıt Rozeti (Yalnızca video kaydı yapılırken yanıp söner) -->
+        <div id="badge-recorder-mode" class="hud-badge active-record" style="display: none;">
+          <span class="badge-indicator pulse"></span>
+          <span id="label-recorder-mode">● REC 00:00</span>
+        </div>
+
+        <!-- Adım Kayıt Modu Rozeti (Sadece timeline adım kaydı açıkken yanıp söner) -->
         <div id="badge-record-mode" class="hud-badge active-record" style="display: none;">
           <span class="badge-indicator pulse"></span>
           <span id="label-record-mode">Kayıt: Tıklananı Ekle</span>
@@ -103,19 +109,22 @@
 
       <!-- Panel İçeriği (Katlanabilir Gövde) -->
       <div id="panel-body-wrapper" class="studio-panel-body">
-        <!-- Sekme Düğmeleri -->
+        <!-- Sekme Düğmeleri (5 Sekme) -->
         <nav class="studio-tabs-nav">
-          <button class="studio-tab-btn active" data-tab="tab-timeline">
-            🎬 REJİ / TIMELINE
+          <button class="studio-tab-btn active" data-tab="tab-timeline" title="Zaman Çizelgesi & Reji">
+            🎬 REJİ
           </button>
-          <button class="studio-tab-btn" data-tab="tab-scene">
-            📁 SAHNE / HARİTA
+          <button class="studio-tab-btn" data-tab="tab-scene" title="Sahne & Harita Yükleyici">
+            📁 SAHNE
           </button>
-          <button class="studio-tab-btn" data-tab="tab-camera">
-            🎥 KAMERALAR
+          <button class="studio-tab-btn" data-tab="tab-camera" title="Kameralar & CCTV">
+            🎥 KAMERA
           </button>
-          <button class="studio-tab-btn" data-tab="tab-character">
-            🚶 KARAKTER & MERDİVEN
+          <button class="studio-tab-btn" data-tab="tab-character" title="Karakter & Merdiven">
+            🚶 KARAKTER
+          </button>
+          <button class="studio-tab-btn" data-tab="tab-render" title="Dışa Aktar / Render">
+            💾 RENDER
           </button>
         </nav>
 
@@ -343,6 +352,58 @@
             * Karakter 5 basamaklı merdiveni ve rampaları algılar, dikey olarak (Y ekseni) tırmanır. 2. kat zemininde yürürken alt kattaki masalara çarpmaz.
           </div>
         </div>
+
+        <!-- ==========================================
+             SEKME 5: DIŞA AKTAR / RENDER
+             ========================================== -->
+        <div id="tab-render" class="studio-tab-pane" style="display: none;">
+          <!-- Ekran Görüntüsü -->
+          <div class="studio-sub-header">FOTOĞRAF / EKRAN GÖRÜNTÜSÜ:</div>
+          <div class="studio-ctrl-row">
+            <button id="btn-take-screenshot" class="hud-btn primary flex-grow" title="O anki 3D sahneyi temiz ve yüksek çözünürlüklü PNG olarak indir">
+              📸 Anlık Ekran Görüntüsü Al (PNG)
+            </button>
+          </div>
+
+          <!-- Video Kayıt Kontrolleri -->
+          <div class="studio-sub-header" style="margin-top: 14px;">VİDEO KAYDI (60 FPS WEBGL RENDER):</div>
+
+          <!-- Çözünürlük ve Kalite -->
+          <div class="studio-slider-group" style="margin-bottom: 8px;">
+            <div class="slider-row-label">
+              <span>Render Kalitesi:</span>
+              <span id="label-render-res">1080p HD (8.5 Mbps)</span>
+            </div>
+            <div class="studio-ctrl-row">
+              <button id="btn-quality-720p" class="hud-btn flex-grow">720p Standart</button>
+              <button id="btn-quality-1080p" class="hud-btn flex-grow active">1080p HD (60 FPS)</button>
+            </div>
+          </div>
+
+          <!-- Manuel Kayıt Düğmesi -->
+          <div class="studio-ctrl-row">
+            <button id="btn-toggle-video-record" class="hud-btn flex-grow" title="Canvas video kaydını başlat veya durdur">
+              ● Manuel Video Kaydı Başlat
+            </button>
+          </div>
+
+          <!-- Rejiyi Oynat ve Kaydet (Otomatik Sinematik) -->
+          <div class="studio-ctrl-row" style="margin-top: 10px;">
+            <button id="btn-record-sequence" class="hud-btn primary flex-grow" title="Paneli gizleyerek Reji akışını baştan sona kaydeder ve videoyu indirir">
+              🎬 Rejiyi Oynat ve Kaydet (Otomatik)
+            </button>
+          </div>
+
+          <!-- Anlık Kayıt Durum Göstergesi -->
+          <div id="render-recording-banner" class="studio-recording-banner" style="display: none;">
+            <span class="banner-pulse-dot"></span>
+            <span id="label-banner-timer">CANVAS KAYDEDİLİYOR: 00:00</span>
+          </div>
+
+          <div class="studio-info-text" style="margin-top: 12px;">
+            * <strong>Rejiyi Oynat ve Kaydet:</strong> Panel otomatik gizlenir, sahne 0. adımdan itibaren 60 FPS WebM/MP4 olarak kaydedilir ve akış bitince video doğrudan cihazınıza indirilir.
+          </div>
+        </div>
       </div>
     </aside>
 
@@ -355,11 +416,12 @@
         </div>
         <div class="modal-dialog-body">
           <p><strong>1. Reji / Zaman Çizelgesi (Timeline):</strong> Sahnedeki hareketleri sırayla yürüten yönetmen modudur. 'Adım Kayıt Modu'nu açarak zemine tıkladığınızda adım kuyruğa otomatik eklenir.</p>
-          <p><strong>2. Kısayol Tuşları:</strong></p>
+          <p><strong>2. Video & Render Motoru:</strong> 'RENDER' sekmesinden 60 FPS video veya anlık yüksek çözünürlüklü PNG alabilirsiniz. 'Rejiyi Oynat ve Kaydet' butonu tüm sahneyi sinematik modda videoya çeker.</p>
+          <p><strong>3. Kısayol Tuşları:</strong></p>
           <p>• <strong>'H' Tuşu:</strong> Tüm panelleri gizler, sinematik tam ekran görünümüne geçer.</p>
           <p>• <strong>'Space' (Boşluk):</strong> Reji akışını başlatır veya duraklatır.</p>
-          <p><strong>3. Katı Monokrom Kuralı:</strong> Yalnızca saf siyah (#000000), beyaz (#ffffff) ve gri tonları kullanılmıştır.</p>
-          <p><strong>4. APK & Masaüstü Uyumu:</strong> Capacitor ve dokunmatik ekranlar için sıfır gecikmeli `touch-action: none` mimarisi mevcuttur.</p>
+          <p><strong>4. Katı Monokrom Kuralı:</strong> Yalnızca saf siyah (#000000), beyaz (#ffffff) ve gri tonları kullanılmıştır.</p>
+          <p><strong>5. APK & Masaüstü Uyumu:</strong> Capacitor ve dokunmatik ekranlar için sıfır gecikmeli `touch-action: none` mimarisi mevcuttur.</p>
         </div>
       </div>
     </div>

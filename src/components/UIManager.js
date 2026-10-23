@@ -1,8 +1,9 @@
 /**
  * UIManager.js
  * Monokrom Stüdyo HUD Panelini yöneten arayüz sınıfı.
- * Sekmeler (Sahne, Kameralar, Karakter, Reji/Timeline), kaydırıcılar,
- * sinematik mod ('H' kısayolu), bildirimler (Toast) ve olay dinleyicilerini yönetir.
+ * Sekmeler (Sahne, Kameralar, Karakter, Reji/Timeline, Render/Dışa Aktar),
+ * kaydırıcılar, sinematik mod ('H' kısayolu), bildirimler (Toast) ve
+ * video/ekran görüntüsü dışa aktarma (RecorderManager) kontrollerini yönetir.
  */
 
 export class UIManager {
@@ -13,14 +14,16 @@ export class UIManager {
    * @param {import('./Door.js').Door} context.door
    * @param {import('./CameraManager.js').CameraManager} context.cameraManager
    * @param {import('./MapLoader.js').MapLoader} context.mapLoader
+   * @param {import('./RecorderManager.js').RecorderManager} [context.recorderManager]
    * @param {Object} context.sceneHelpers - gridHelper, dirLight, hemiLight referansları
    */
-  constructor({ timelineManager, character, door, cameraManager, mapLoader, sceneHelpers }) {
+  constructor({ timelineManager, character, door, cameraManager, mapLoader, recorderManager, sceneHelpers }) {
     this.timeline = timelineManager;
     this.character = character;
     this.door = door;
     this.cameraManager = cameraManager;
     this.mapLoader = mapLoader;
+    this.recorder = recorderManager;
     this.sceneHelpers = sceneHelpers || {};
 
     this.isPanelHidden = false; // 'H' tuşu ve sinematik mod
@@ -36,6 +39,10 @@ export class UIManager {
     this.updateCameraList(this.cameraManager.stations, this.cameraManager.activeStationId);
   }
 
+  setRecorder(recorderManager) {
+    this.recorder = recorderManager;
+  }
+
   _cacheDOM() {
     this.dom = {
       // Ana Panel & Başlık
@@ -46,6 +53,8 @@ export class UIManager {
       panelBody: document.getElementById('panel-body-wrapper'),
 
       // Üst Durum Rozetleri
+      badgeRecorderMode: document.getElementById('badge-recorder-mode'),
+      labelRecorderMode: document.getElementById('label-recorder-mode'),
       badgeRecordMode: document.getElementById('badge-record-mode'),
       labelRecordMode: document.getElementById('label-record-mode'),
       badgeTimelineStatus: document.getElementById('badge-timeline-status'),
@@ -64,7 +73,22 @@ export class UIManager {
       tabButtons: document.querySelectorAll('.studio-tab-btn'),
       tabPanes: document.querySelectorAll('.studio-tab-pane'),
 
-      // Sekme 1: SAHNE / HARİTA
+      // Sekme 1: REJİ / TIMELINE
+      timelineListContainer: document.getElementById('timeline-steps-list'),
+      btnTimelinePlay: document.getElementById('btn-timeline-play'),
+      btnTimelinePause: document.getElementById('btn-timeline-pause'),
+      btnTimelineStop: document.getElementById('btn-timeline-stop'),
+      btnToggleRecord: document.getElementById('btn-toggle-record-mode'),
+      btnAddWaitStep: document.getElementById('btn-add-wait-step'),
+      btnAddDoorStep: document.getElementById('btn-add-door-step'),
+      btnAddCamStep: document.getElementById('btn-add-cam-step'),
+      btnAddEmoteStep: document.getElementById('btn-add-emote-step'),
+      btnExportJSON: document.getElementById('btn-export-timeline-json'),
+      btnImportJSON: document.getElementById('btn-import-timeline-json'),
+      fileInputJSON: document.getElementById('file-picker-timeline-json'),
+      btnClearTimeline: document.getElementById('btn-clear-timeline'),
+
+      // Sekme 2: SAHNE / HARİTA
       filePicker: document.getElementById('file-picker'),
       btnTriggerFile: document.getElementById('btn-trigger-file-pick'),
       dropZone: document.getElementById('studio-drop-zone'),
@@ -84,7 +108,7 @@ export class UIManager {
       btnAddWallBox: document.getElementById('btn-add-wall-box'),
       btnClearWallBoxes: document.getElementById('btn-clear-wall-boxes'),
 
-      // Sekme 2: KAMERALAR
+      // Sekme 3: KAMERALAR
       btnFreeOrbit: document.getElementById('btn-free-orbit'),
       btnAddCamera: document.getElementById('btn-add-camera'),
       btnToggleFollow: document.getElementById('btn-toggle-follow'),
@@ -92,7 +116,7 @@ export class UIManager {
       labelTourBtn: document.getElementById('label-tour-btn'),
       cameraListContainer: document.getElementById('studio-camera-list'),
 
-      // Sekme 3: KARAKTER & MERDİVEN
+      // Sekme 4: KARAKTER & MERDİVEN
       sliderSpeed: document.getElementById('slider-character-speed'),
       labelSpeedVal: document.getElementById('label-speed-val'),
       sliderWobble: document.getElementById('slider-wobble-intensity'),
@@ -102,20 +126,15 @@ export class UIManager {
       btnEmoteWave: document.getElementById('btn-emote-wave'),
       btnEmoteSpin: document.getElementById('btn-emote-spin'),
 
-      // Sekme 4: REJİ / TIMELINE
-      timelineListContainer: document.getElementById('timeline-steps-list'),
-      btnTimelinePlay: document.getElementById('btn-timeline-play'),
-      btnTimelinePause: document.getElementById('btn-timeline-pause'),
-      btnTimelineStop: document.getElementById('btn-timeline-stop'),
-      btnToggleRecord: document.getElementById('btn-toggle-record-mode'),
-      btnAddWaitStep: document.getElementById('btn-add-wait-step'),
-      btnAddDoorStep: document.getElementById('btn-add-door-step'),
-      btnAddCamStep: document.getElementById('btn-add-cam-step'),
-      btnAddEmoteStep: document.getElementById('btn-add-emote-step'),
-      btnExportJSON: document.getElementById('btn-export-timeline-json'),
-      btnImportJSON: document.getElementById('btn-import-timeline-json'),
-      fileInputJSON: document.getElementById('file-picker-timeline-json'),
-      btnClearTimeline: document.getElementById('btn-clear-timeline'),
+      // Sekme 5: DIŞA AKTAR / RENDER
+      btnTakeScreenshot: document.getElementById('btn-take-screenshot'),
+      btnQuality720p: document.getElementById('btn-quality-720p'),
+      btnQuality1080p: document.getElementById('btn-quality-1080p'),
+      labelRenderRes: document.getElementById('label-render-res'),
+      btnToggleVideoRecord: document.getElementById('btn-toggle-video-record'),
+      btnRecordSequence: document.getElementById('btn-record-sequence'),
+      renderRecordingBanner: document.getElementById('render-recording-banner'),
+      labelBannerTimer: document.getElementById('label-banner-timer'),
 
       // Toast & Modallar
       toast: document.getElementById('toast'),
@@ -156,7 +175,124 @@ export class UIManager {
       });
     }
 
-    // --- SEKME 1: SAHNE / HARİTA ---
+    // --- SEKME 1: REJİ / TIMELINE ---
+    if (d.btnTimelinePlay) {
+      d.btnTimelinePlay.addEventListener('click', () => {
+        this.timeline.play();
+        this.showToast('Reji Zaman Çizelgesi Oynatılıyor ▶');
+      });
+    }
+
+    if (d.btnQuickPlay) {
+      d.btnQuickPlay.addEventListener('click', () => {
+        if (this.timeline.isPlaying) {
+          this.timeline.pause();
+          this.showToast('Reji Duraklatıldı ⏸');
+        } else {
+          this.timeline.play();
+          this.showToast('Reji Oynatılıyor ▶');
+        }
+      });
+    }
+
+    if (d.btnTimelinePause) {
+      d.btnTimelinePause.addEventListener('click', () => {
+        this.timeline.pause();
+        this.showToast('Reji Duraklatıldı ⏸');
+      });
+    }
+
+    if (d.btnTimelineStop) {
+      d.btnTimelineStop.addEventListener('click', () => {
+        this.timeline.stop();
+        this.showToast('Reji Durduruldu ve Başa Alındı ⏹');
+      });
+    }
+
+    if (d.btnToggleRecord) {
+      d.btnToggleRecord.addEventListener('click', () => {
+        const isRec = this.timeline.toggleRecordMode();
+        this.updateRecordModeButton(isRec);
+        this.showToast(
+          isRec
+            ? 'Adım Kaydetme Modu AÇIK: Zemine veya kapıya dokunduğunuzda adıma eklenir'
+            : 'Adım Kaydetme Modu KAPALI'
+        );
+      });
+    }
+
+    // Hızlı Adım Ekleme Butonları
+    if (d.btnAddWaitStep) {
+      d.btnAddWaitStep.addEventListener('click', () => {
+        this.timeline.addStep('WAIT', { duration: 2 }, '2 Saniye Durakla');
+        this.showToast('Kuyruğa 2s Bekleme Adımı Eklendi');
+      });
+    }
+
+    if (d.btnAddDoorStep) {
+      d.btnAddDoorStep.addEventListener('click', () => {
+        this.timeline.addStep('TRIGGER_DOOR', { action: 'toggle' }, 'Kapıyı Tetikle (Aç/Kapat)');
+        this.showToast('Kuyruğa Kapı Adımı Eklendi');
+      });
+    }
+
+    if (d.btnAddCamStep) {
+      d.btnAddCamStep.addEventListener('click', () => {
+        const curStation = this.cameraManager.stations[0];
+        const stationId = this.cameraManager.activeStationId || (curStation ? curStation.id : 'station-ext');
+        const st = this.cameraManager.stations.find((s) => s.id === stationId);
+        this.timeline.addStep(
+          'SWITCH_CAMERA',
+          { stationId },
+          `Kameraya Geç: ${st ? st.name : 'Kamera 1'}`
+        );
+        this.showToast('Kuyruğa Kamera Değişimi Eklendi');
+      });
+    }
+
+    if (d.btnAddEmoteStep) {
+      d.btnAddEmoteStep.addEventListener('click', () => {
+        this.timeline.addStep('PLAY_EMOTE', { emote: 'jump' }, 'Karakter Zıplasın (Emote)');
+        this.showToast('Kuyruğa Emote Adımı Eklendi');
+      });
+    }
+
+    // JSON İçe / Dışa Aktarma
+    if (d.btnExportJSON) {
+      d.btnExportJSON.addEventListener('click', () => {
+        this.timeline.downloadSequenceJSON('studio-timeline-sequence.json');
+        this.showToast('Zaman Çizelgesi JSON Olarak İndirildi');
+      });
+    }
+
+    if (d.btnImportJSON && d.fileInputJSON) {
+      d.btnImportJSON.addEventListener('click', () => d.fileInputJSON.click());
+      d.fileInputJSON.addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (evt) => {
+            try {
+              this.timeline.importSequence(evt.target.result);
+              this.showToast('Zaman Çizelgesi Başarıyla Yüklendi');
+            } catch (err) {
+              this.showToast('HATA: Geçersiz JSON Dosyası!');
+            }
+          };
+          reader.readAsText(file);
+          d.fileInputJSON.value = '';
+        }
+      });
+    }
+
+    if (d.btnClearTimeline) {
+      d.btnClearTimeline.addEventListener('click', () => {
+        this.timeline.clear();
+        this.showToast('Kuyruk Temizlendi');
+      });
+    }
+
+    // --- SEKME 2: SAHNE / HARİTA ---
     if (d.btnTriggerFile && d.filePicker) {
       d.btnTriggerFile.addEventListener('click', () => d.filePicker.click());
       d.filePicker.addEventListener('change', (e) => {
@@ -280,7 +416,7 @@ export class UIManager {
       });
     }
 
-    // --- SEKME 2: KAMERALAR ---
+    // --- SEKME 3: KAMERALAR ---
     if (d.btnFreeOrbit) {
       d.btnFreeOrbit.addEventListener('click', () => {
         this.cameraManager.setFreeMode();
@@ -319,7 +455,7 @@ export class UIManager {
       });
     }
 
-    // --- SEKME 3: KARAKTER & MERDİVEN ---
+    // --- SEKME 4: KARAKTER & MERDİVEN ---
     if (d.sliderSpeed) {
       d.sliderSpeed.addEventListener('input', (e) => {
         const val = parseFloat(e.target.value);
@@ -364,120 +500,74 @@ export class UIManager {
       });
     }
 
-    // --- SEKME 4: REJİ / TIMELINE ---
-    if (d.btnTimelinePlay) {
-      d.btnTimelinePlay.addEventListener('click', () => {
-        this.timeline.play();
-        this.showToast('Reji Zaman Çizelgesi Oynatılıyor ▶');
+    // --- SEKME 5: DIŞA AKTAR / RENDER ---
+    if (d.btnTakeScreenshot) {
+      d.btnTakeScreenshot.addEventListener('click', () => {
+        if (this.recorder) {
+          const fn = this.recorder.takeScreenshot();
+          if (fn) {
+            this.showToast(`📸 Ekran Görüntüsü İndirildi (${fn})`);
+          }
+        }
       });
     }
 
-    if (d.btnQuickPlay) {
-      d.btnQuickPlay.addEventListener('click', () => {
-        if (this.timeline.isPlaying) {
-          this.timeline.pause();
-          this.showToast('Reji Duraklatıldı ⏸');
+    if (d.btnQuality720p && d.btnQuality1080p) {
+      d.btnQuality720p.addEventListener('click', () => {
+        if (this.recorder) this.recorder.setQuality('720p');
+        d.btnQuality720p.classList.add('active');
+        d.btnQuality1080p.classList.remove('active');
+        if (d.labelRenderRes) d.labelRenderRes.textContent = '720p (4.0 Mbps)';
+        this.showToast('Render Kalitesi: 720p');
+      });
+
+      d.btnQuality1080p.addEventListener('click', () => {
+        if (this.recorder) this.recorder.setQuality('1080p');
+        d.btnQuality1080p.classList.add('active');
+        d.btnQuality720p.classList.remove('active');
+        if (d.labelRenderRes) d.labelRenderRes.textContent = '1080p HD (8.5 Mbps)';
+        this.showToast('Render Kalitesi: 1080p HD (60 FPS)');
+      });
+    }
+
+    if (d.btnToggleVideoRecord) {
+      d.btnToggleVideoRecord.addEventListener('click', () => {
+        if (!this.recorder) return;
+        if (this.recorder.isRecording) {
+          this.recorder.stopRecording();
+          this.showToast('Video kaydı durduruluyor ve indiriliyor...');
         } else {
-          this.timeline.play();
-          this.showToast('Reji Oynatılıyor ▶');
+          const ok = this.recorder.startRecording();
+          if (ok) {
+            this.showToast('● 60 FPS Video Kaydı Başlatıldı');
+          } else {
+            this.showToast('HATA: Video kaydı başlatılamadı!');
+          }
         }
       });
     }
 
-    if (d.btnTimelinePause) {
-      d.btnTimelinePause.addEventListener('click', () => {
-        this.timeline.pause();
-        this.showToast('Reji Duraklatıldı ⏸');
-      });
-    }
+    if (d.btnRecordSequence) {
+      d.btnRecordSequence.addEventListener('click', () => {
+        if (!this.recorder || this.recorder.isRecording) return;
 
-    if (d.btnTimelineStop) {
-      d.btnTimelineStop.addEventListener('click', () => {
-        this.timeline.stop();
-        this.showToast('Reji Durduruldu ve Başa Alındı ⏹');
-      });
-    }
+        this.showToast('🎬 Reji Kaydı Başlatılıyor (Sinematik Tam Ekran)...');
 
-    if (d.btnToggleRecord) {
-      d.btnToggleRecord.addEventListener('click', () => {
-        const isRec = this.timeline.toggleRecordMode();
-        this.updateRecordModeButton(isRec);
-        this.showToast(
-          isRec
-            ? 'Adım Kaydetme Modu AÇIK: Zemine veya kapıya dokunduğunuzda adıma eklenir'
-            : 'Adım Kaydetme Modu KAPALI'
-        );
-      });
-    }
-
-    // Hızlı Adım Ekleme Butonları
-    if (d.btnAddWaitStep) {
-      d.btnAddWaitStep.addEventListener('click', () => {
-        this.timeline.addStep('WAIT', { duration: 2 }, '2 Saniye Durakla');
-        this.showToast('Kuyruğa 2s Bekleme Adımı Eklendi');
-      });
-    }
-
-    if (d.btnAddDoorStep) {
-      d.btnAddDoorStep.addEventListener('click', () => {
-        this.timeline.addStep('TRIGGER_DOOR', { action: 'toggle' }, 'Kapıyı Tetikle (Aç/Kapat)');
-        this.showToast('Kuyruğa Kapı Adımı Eklendi');
-      });
-    }
-
-    if (d.btnAddCamStep) {
-      d.btnAddCamStep.addEventListener('click', () => {
-        const curStation = this.cameraManager.stations[0];
-        const stationId = this.cameraManager.activeStationId || (curStation ? curStation.id : 'station-ext');
-        const st = this.cameraManager.stations.find((s) => s.id === stationId);
-        this.timeline.addStep(
-          'SWITCH_CAMERA',
-          { stationId },
-          `Kameraya Geç: ${st ? st.name : 'Kamera 1'}`
-        );
-        this.showToast('Kuyruğa Kamera Değişimi Eklendi');
-      });
-    }
-
-    if (d.btnAddEmoteStep) {
-      d.btnAddEmoteStep.addEventListener('click', () => {
-        this.timeline.addStep('PLAY_EMOTE', { emote: 'jump' }, 'Karakter Zıplasın (Emote)');
-        this.showToast('Kuyruğa Emote Adımı Eklendi');
-      });
-    }
-
-    // JSON İçe / Dışa Aktarma
-    if (d.btnExportJSON) {
-      d.btnExportJSON.addEventListener('click', () => {
-        this.timeline.downloadSequenceJSON('studio-timeline-sequence.json');
-        this.showToast('Zaman Çizelgesi JSON Olarak İndirildi');
-      });
-    }
-
-    if (d.btnImportJSON && d.fileInputJSON) {
-      d.btnImportJSON.addEventListener('click', () => d.fileInputJSON.click());
-      d.fileInputJSON.addEventListener('change', (e) => {
-        const file = e.target.files && e.target.files[0];
-        if (file) {
-          const reader = new FileReader();
-          reader.onload = (evt) => {
-            try {
-              this.timeline.importSequence(evt.target.result);
-              this.showToast('Zaman Çizelgesi Başarıyla Yüklendi');
-            } catch (err) {
-              this.showToast('HATA: Geçersiz JSON Dosyası!');
+        this.recorder.recordTimelineSequence(this.timeline, {
+          onBeforeStart: () => {
+            // Kayıt esnasında arayüz görünmesin (Sinematik mod)
+            if (!this.isPanelHidden) {
+              this.togglePanelVisibility();
             }
-          };
-          reader.readAsText(file);
-          d.fileInputJSON.value = '';
-        }
-      });
-    }
-
-    if (d.btnClearTimeline) {
-      d.btnClearTimeline.addEventListener('click', () => {
-        this.timeline.clear();
-        this.showToast('Kuyruk Temizlendi');
+          },
+          onAfterFinish: () => {
+            // Kayıt bitince paneli geri getir
+            if (this.isPanelHidden) {
+              this.togglePanelVisibility();
+            }
+            this.showToast('🎬 Reji Videosu Başarıyla İndirildi!');
+          },
+        });
       });
     }
 
@@ -499,6 +589,43 @@ export class UIManager {
       d.btnCloseHelp.addEventListener('click', () => {
         d.modalHelp.classList.remove('active');
       });
+    }
+  }
+
+  /**
+   * RecorderManager durum değişikliklerini arayüze yansıtır
+   */
+  updateRecorderUI({ isRecording, duration, formattedDuration, filename }) {
+    const d = this.dom;
+
+    // Üst rozet
+    if (d.badgeRecorderMode) {
+      d.badgeRecorderMode.style.display = isRecording ? 'inline-flex' : 'none';
+      if (d.labelRecorderMode) {
+        d.labelRecorderMode.textContent = `● REC ${formattedDuration || '00:00'}`;
+      }
+    }
+
+    // Tab 5 buton ve banner
+    if (d.btnToggleVideoRecord) {
+      if (isRecording) {
+        d.btnToggleVideoRecord.classList.add('recording-active');
+        d.btnToggleVideoRecord.textContent = `⏹ Kaydı Durdur (${formattedDuration || '00:00'})`;
+      } else {
+        d.btnToggleVideoRecord.classList.remove('recording-active');
+        d.btnToggleVideoRecord.textContent = '● Manuel Video Kaydı Başlat';
+      }
+    }
+
+    if (d.renderRecordingBanner) {
+      d.renderRecordingBanner.style.display = isRecording ? 'flex' : 'none';
+      if (d.labelBannerTimer) {
+        d.labelBannerTimer.textContent = `CANVAS KAYDEDİLİYOR: ${formattedDuration || '00:00'}`;
+      }
+    }
+
+    if (filename && !isRecording) {
+      this.showToast(`Video Kaydedildi: ${filename}`);
     }
   }
 
@@ -608,7 +735,6 @@ export class UIManager {
         item.classList.add('step-active');
       }
 
-      // Adım türü ikonu / etiketi
       let typeBadge = 'EYLEM';
       if (step.type === 'MOVE_TO') typeBadge = 'YÜRÜ';
       else if (step.type === 'WAIT') typeBadge = 'BEKLE';
@@ -642,7 +768,6 @@ export class UIManager {
         this.timeline.removeStep(idx);
       });
 
-      // Kartın üzerine tıklandığında sadece o adımı çalıştır
       item.addEventListener('click', () => {
         this.timeline.currentStepIndex = idx;
         this.timeline._executeStep(step);
@@ -652,7 +777,6 @@ export class UIManager {
       list.appendChild(item);
     });
 
-    // Durum rozeti güncelle
     if (this.dom.labelTimelineStatus) {
       if (this.timeline.isPlaying) {
         this.dom.labelTimelineStatus.textContent = `Reji: Adım ${this.timeline.currentStepIndex + 1}/${this.timeline.steps.length}`;

@@ -381,7 +381,7 @@ html, body {
 /* Sekmeler Gezinti Çubuğu */
 .studio-tabs-nav {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   background: var(--mono-dark-900);
   border-bottom: 1px solid var(--mono-border);
   gap: 1px;
@@ -392,8 +392,8 @@ html, body {
   color: var(--mono-gray);
   border: none;
   border-bottom: 2px solid transparent;
-  padding: 9px 8px;
-  font-size: 10.5px;
+  padding: 8px 3px;
+  font-size: 9.5px;
   font-family: monospace;
   font-weight: 700;
   text-align: center;
@@ -413,6 +413,32 @@ html, body {
   background: var(--mono-dark-700);
   color: var(--mono-white);
   border-bottom: 2px solid var(--mono-white);
+}
+
+/* Anlık Kayıt Durum Banner'ı */
+.studio-recording-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: var(--mono-white);
+  color: var(--mono-black);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: monospace;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  box-shadow: 0 0 14px rgba(255, 255, 255, 0.4);
+}
+
+.banner-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--mono-black);
+  animation: pulseWhite 0.9s infinite alternate;
 }
 
 /* Sekme İçerik Alanı */

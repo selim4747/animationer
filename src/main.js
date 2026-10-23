@@ -12,6 +12,7 @@ import { Character } from './components/Character.js';
 import { Door } from './components/Door.js';
 import { CameraManager } from './components/CameraManager.js';
 import { TimelineManager, ACTION_TYPES } from './components/TimelineManager.js';
+import { RecorderManager } from './components/RecorderManager.js';
 import { UIManager } from './components/UIManager.js';
 
 class App {
@@ -58,6 +59,7 @@ class App {
       antialias: true,
       powerPreference: 'high-performance',
       alpha: false,
+      preserveDrawingBuffer: true,
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -152,6 +154,15 @@ class App {
       onStateChange: (state) => {
         if (this.uiManager) {
           this.uiManager.updateTimelineUI();
+        }
+      },
+    });
+
+    // 7. Video ve Ekran Görüntüsü Dışa Aktarma Yöneticisi (RecorderManager)
+    this.recorderManager = new RecorderManager(this.renderer.domElement, {
+      onStateChange: (state) => {
+        if (this.uiManager) {
+          this.uiManager.updateRecorderUI(state);
         }
       },
     });
@@ -353,6 +364,7 @@ class App {
       door: this.door,
       cameraManager: this.cameraManager,
       mapLoader: this.mapLoader,
+      recorderManager: this.recorderManager,
       sceneHelpers: {
         gridHelper: this.gridHelper,
         dirLight: this.dirLight,
