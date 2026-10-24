@@ -5,6 +5,8 @@
  * sırayla çalıştırır, kaydeder, dışa ve içe aktarır.
  */
 
+import { saveGeneratedFile } from '../utils/FileExportManager.js';
+
 export const ACTION_TYPES = {
   MOVE_TO: 'MOVE_TO',
   WAIT: 'WAIT',
@@ -586,17 +588,10 @@ export class TimelineManager {
   /**
    * JSON dosyasını kullanıcı cihazına indirir
    */
-  downloadSequenceJSON(filename = 'monochrome-timeline.json') {
+  async downloadSequenceJSON(filename = 'monochrome-timeline.json') {
     const jsonStr = this.exportSequence();
     const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    return saveGeneratedFile(blob, filename);
   }
 
   /**

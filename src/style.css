@@ -426,7 +426,7 @@ html, body {
   flex-direction: column;
   max-height: calc(100vh - 130px);
   overflow-y: auto;
-  transition: max-height 0.2s ease;
+  transition: none;
 }
 
 .studio-panel-body.collapsed {

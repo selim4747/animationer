@@ -3,6 +3,8 @@
  * Canvas video kaydı ve PNG ekran görüntüsü dışa aktarma yöneticisi.
  * Video profilleri çözünürlüğü değil, MediaRecorder için istenen bitrate'i belirler.
  */
+import { saveGeneratedFile } from '../utils/FileExportManager.js';
+
 export class RecorderManager {
   constructor(canvas, { onStateChange = () => {} } = {}) {
     this.canvas = canvas;
@@ -13,6 +15,7 @@ export class RecorderManager {
     this.recordStartTime = 0;
     this.recordDurationSeconds = 0;
     this.timerInterval = null;
+    this.lastDownloadResult = null;
     this.quality = 'high';
     this.bitrate = 8500000;
     this.stream = null;
@@ -50,6 +53,7 @@ export class RecorderManager {
       if (mimeType) options.mimeType = mimeType;
       this.mediaRecorder = new MediaRecorder(this.stream, options);
       this.recordedChunks = [];
+      this.lastDownloadResult = null;
       this.mediaRecorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) this.recordedChunks.push(event.data);
       };
@@ -87,22 +91,33 @@ export class RecorderManager {
       clearInterval(this.timerInterval);
       this.isRecording = false;
       const recorder = this.mediaRecorder;
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
         const mimeType = recorder.mimeType || this._getSupportedMimeType() || 'video/webm';
         const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
         const blob = new Blob(this.recordedChunks, { type: mimeType });
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const filename = `diorama_scene_${timestamp}.${extension}`;
-        this._downloadBlob(blob, filename);
-        this._cleanupStream();
-        this.mediaRecorder = null;
-        this.onStateChange({
-          isRecording: false,
-          duration: this.recordDurationSeconds,
-          formattedDuration: '00:00',
-          filename,
-        });
-        resolve(blob);
+        try {
+          const downloadResult = await this._downloadBlob(blob, filename);
+          this.lastDownloadResult = downloadResult;
+          this.onStateChange({
+            isRecording: false,
+            duration: this.recordDurationSeconds,
+            formattedDuration: '00:00',
+            filename: downloadResult.saved ? filename : undefined,
+            downloadResult,
+            canceled: downloadResult.canceled || false,
+            error: downloadResult.saved || downloadResult.canceled ? undefined : 'Dosya cihaza kaydedilemedi.',
+          });
+          resolve(blob);
+        } catch (error) {
+          this.lastDownloadResult = { saved: false, error: error.message || 'Dosya cihaza kaydedilemedi.' };
+          this.onStateChange({ isRecording: false, error: this.lastDownloadResult.error });
+          resolve(null);
+        } finally {
+          this._cleanupStream();
+          this.mediaRecorder = null;
+        }
       };
       recorder.onerror = (event) => {
         clearInterval(this.timerInterval);
@@ -137,22 +152,17 @@ export class RecorderManager {
     return `${mins}:${secs}`;
   }
 
-  takeScreenshot(customName) {
-    if (!this.canvas) return null;
+  async takeScreenshot(customName) {
+    if (!this.canvas) return { saved: false, error: 'Sahne görüntüsü bulunamadı.' };
     try {
-      const dataURL = this.canvas.toDataURL('image/png');
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const blob = await new Promise((resolve) => this.canvas.toBlob(resolve, 'image/png'));
+      if (!blob) throw new Error('PNG görüntüsü oluşturulamadı.');
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 23);
       const filename = customName || `diorama_snapshot_${timestamp}.png`;
-      const link = document.createElement('a');
-      link.href = dataURL;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      return filename;
+      return { ...(await saveGeneratedFile(blob, filename)), filename };
     } catch (error) {
-      console.error('Ekran görüntüsü alınamadı:', error);
-      return null;
+      console.error('Ekran görüntüsü kaydedilemedi:', error);
+      return { saved: false, error: error.message || 'Ekran görüntüsü kaydedilemedi.' };
     }
   }
 
@@ -169,6 +179,7 @@ export class RecorderManager {
     let success = false;
     let errorMessage = '';
     let blob = null;
+    let downloadResult = null;
     try {
       onBeforeStart();
       timelineManager.stop();
@@ -179,31 +190,30 @@ export class RecorderManager {
       if (played === false) throw new Error('Reji oynatımı tamamlanmadı; video kısmi olabilir.');
       await this._sleep(600);
       blob = await this.stopRecording();
-      if (!blob || blob.size === 0) throw new Error('Video dosyası oluşturulamadı.');
+      if (!blob || blob.size === 0) {
+        throw new Error(this.lastDownloadResult?.error || 'Video dosyası oluşturulamadı.');
+      }
+      downloadResult = this.lastDownloadResult;
+      if (downloadResult && !downloadResult.saved) {
+        throw new Error(downloadResult.canceled ? 'Dosya kaydetme iptal edildi.' : downloadResult.error || 'Video dosyası cihaza kaydedilemedi.');
+      }
       success = true;
     } catch (error) {
       errorMessage = error.message || 'Reji videosu kaydedilemedi.';
     } finally {
       if (this.isRecording) await this.stopRecording();
-      const result = { success, error: errorMessage, blob };
+      const result = { success, error: errorMessage, blob, downloadResult };
       try {
         onAfterFinish(result);
       } catch (callbackError) {
         console.error('Kayıt sonrası arayüz güncellenemedi:', callbackError);
       }
     }
-    return { success, error: errorMessage, blob };
+    return { success, error: errorMessage, blob, downloadResult };
   }
 
   _downloadBlob(blob, filename) {
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return saveGeneratedFile(blob, filename);
   }
 
   _sleep(ms) {

@@ -6,17 +6,17 @@
           <span class="panel-title">MONOCHROME STUDIO CONTROLS</span>
         </div>
         <div class="panel-header-actions">
-          <button id="btn-toggle-hud-vis" class="panel-header-btn" title="Paneli Tamamen Kapat (H)">
+          <button id="btn-toggle-hud-vis" class="panel-header-btn" title="Paneli Tamamen Kapat (H)" aria-pressed="false" aria-controls="studio-panel">
             Tam Ekran [H]
           </button>
-          <button id="panel-collapse-trigger" class="panel-header-btn" title="Paneli Daralt">
+          <button id="panel-collapse-trigger" class="panel-header-btn" title="Paneli Daralt" aria-label="Paneli daralt" aria-expanded="true" aria-controls="panel-body-wrapper">
             <span id="panel-collapse-arrow">▾</span>
           </button>
         </div>
       </div>
 
       <!-- Panel İçeriği (Katlanabilir Gövde) -->
-      <div id="panel-body-wrapper" class="studio-panel-body">
+      <div id="panel-body-wrapper" class="studio-panel-body" aria-hidden="false">
         <!-- Sekme Düğmeleri (5 Sekme) -->
         <nav class="studio-tabs-nav">
           <button class="studio-tab-btn active" data-tab="tab-timeline" title="Zaman Çizelgesi & Reji">
@@ -58,6 +58,7 @@
             </label>
           </div>
           <div class="studio-info-text">Zamanlı sahne: bir karakteri seçin, başlangıç/süreyi ayarlayın ve Adım Kayıt Modu açıkken zemine tıklayın. Diğer karakter için hedef seçip + Takip Et, ardından hedef zamana + Gizle ekleyin. Zamanlı kayıt tıklamaları sahneyi önceden oynatmaz.</div>
+          <div class="studio-info-text" role="note">Yeni oturum 9 adımlı örnek rejiyle açılır. Kendi akışınızı oluşturmak için “Boş Akışa Geç” düğmesini kullanın; örnek adımlar dışa aktarıma da dahil edilir.</div>
           <!-- Oynatma ve Kayıt Kontrolleri -->
           <div class="studio-ctrl-row">
             <button id="btn-timeline-play" class="hud-btn primary flex-grow" title="Kuyruğu Baştan/Kaldığı Yerden Oynat">
@@ -78,8 +79,8 @@
             <button id="btn-toggle-record-mode" class="hud-btn flex-grow" title="Açıkken sahneye tıkladığınız noktalar doğrudan kuyruğa eklenir">
               ○ Adım Kayıt Modu (KAPALI)
             </button>
-            <button id="btn-clear-timeline" class="hud-btn subtle" title="Tüm adımları sil">
-              Temizle
+            <button id="btn-clear-timeline" class="hud-btn subtle" title="Örnek veya mevcut tüm adımları silerek boş bir akış başlatır">
+              Boş Akışa Geç
             </button>
           </div>
 
@@ -117,17 +118,17 @@
 
           <!-- JSON Dışa / İçe Aktarma -->
           <div class="studio-ctrl-row" style="margin-top: 10px;">
-            <button id="btn-export-timeline-json" class="hud-btn flex-grow" title="Zaman çizelgesini JSON olarak indir">
-              JSON İndir (Dışa Aktar)
+            <button id="btn-export-timeline-json" class="hud-btn flex-grow" title="Zaman çizelgesi ve 2D spritesheet görsellerini JSON olarak indir">
+              Reji + 2D Projesini İndir
             </button>
             <button id="btn-import-timeline-json" class="hud-btn flex-grow" title="Kayıtlı JSON dosyasını yükle">
               JSON Yükle (İçe Aktar)
             </button>
             <input type="file" id="file-picker-timeline-json" accept=".json" style="display: none;" />
           </div>
-          <p class="step-meta" style="white-space: normal; margin-top: 6px;">Proje JSON’u timeline ayarlarıyla birlikte sprite görsellerini dosyanın içine gömer. Dosya boyutu görsellerle artar; eski timeline JSON’ları sprite görsellerini içermez.</p>
+          <p class="step-meta" style="white-space: normal; margin-top: 6px;">Dışa aktarma reji ayarlarıyla birlikte 2D spritesheet görsellerini içerir. 3D karakter modelleri, harita dosyaları ve kamera/scene tercihleri dahil değildir.</p>
           <div id="autosave-status" class="autosave-status" role="status" aria-live="polite">Otomatik kayıt kontrol ediliyor…</div>
-          <p class="step-meta" style="white-space: normal; margin-top: 4px;">Otomatik kayıt cihazda IndexedDB kullanır (toplam 100 MB; timeline + 2D sprite dosyaları). 3D karakter modelleri, yüklenmiş harita dosyaları ve kamera/scene tercihleri şu an bu projeye dahil değildir. JSON dışa aktarma bunları da içermez.</p>
+          <p class="step-meta" style="white-space: normal; margin-top: 4px;">Otomatik kayıt cihazda IndexedDB kullanır (toplam 100 MB; timeline + 2D sprite dosyaları). Bu kapsam sınırı otomatik kayıt ve JSON dışa aktarma için geçerlidir.</p>
         </div>
 
         <!-- ==========================================
