@@ -46,6 +46,45 @@ test('2D sprite keeps its configured frame rate when no override is supplied', (
   manager.stopAnimation(actor.id);
 });
 
+test('scheduled timeline plays three 2D sprites concurrently at their start times and loops frames', async () => {
+  const manager = new SpriteAnimationManager(new THREE.Scene(), { width: 400, height: 300 });
+  const actors = ['QA_Sprite_A', 'QA_Sprite_B', 'QA_Sprite_C'].map((id) => ({ ...makeActor(), id, name: id }));
+  manager.actors.push(...actors);
+  const starts = [];
+  manager.onStateChange = ({ type, actor }) => {
+    if (type === 'playing') starts.push({ id: actor.id, elapsed: Date.now() });
+  };
+  const advanced = new Set();
+
+  const timeline = new TimelineManager({ spriteAnimationManager: manager });
+  timeline.setPlayMode('scheduled');
+  timeline.steps = actors.map((actor, index) => ({
+    id: `sprite-step-${index}`,
+    type: ACTION_TYPES.PLAY_SPRITE_ANIMATION,
+    actorId: actor.id,
+    startAt: index * 0.04,
+    duration: 0.16 - index * 0.02,
+    data: { fps: 60, loop: true },
+  }));
+
+  const ticker = setInterval(() => {
+    manager.update(0.02);
+    for (const actor of actors) if (actor.frame > 0) advanced.add(actor.id);
+  }, 5);
+  try {
+    assert.equal(await timeline.play(), true);
+  } finally {
+    clearInterval(ticker);
+  }
+
+  assert.deepEqual(starts.map(({ id }) => id), ['QA_Sprite_A', 'QA_Sprite_B', 'QA_Sprite_C']);
+  assert.ok(starts[1].elapsed - starts[0].elapsed >= 20, 'second sprite starts after the first scheduled offset');
+  assert.ok(starts[2].elapsed - starts[1].elapsed >= 20, 'third sprite starts after the second scheduled offset');
+  assert.deepEqual([...advanced].sort(), actors.map((actor) => actor.id).sort(), 'every sprite advanced through its frames');
+  assert.ok(actors.every((actor) => actor.frame >= 0 && actor.frame < actor.frameCount), 'looping keeps frames inside the 8-frame sheet');
+  assert.ok(actors.every((actor) => !actor.isPlaying), 'all timed sprite actions completed');
+});
+
 test('timeline JSON accepts 2D sprite actions and rejects missing actors or invalid frame rates', () => {
   const timeline = new TimelineManager({});
   timeline.importSequence({ steps: [{
