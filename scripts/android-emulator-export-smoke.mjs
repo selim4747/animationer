@@ -131,22 +131,33 @@ async function main() {
   const devtools = await connectDevTools(target.webSocketDebuggerUrl);
 
   try {
+    const uiDeadline = Date.now() + 120_000;
+    let uiState;
+    while (Date.now() < uiDeadline) {
+      uiState = await evaluate(devtools.command, `(() => ({
+        renderTab: !!document.querySelector('.studio-tab-btn[data-tab="tab-render"]'),
+        screenshotButton: !!document.querySelector('#btn-take-screenshot'),
+        canvas: !!document.querySelector('canvas'),
+        appTitle: document.title,
+        readyState: document.readyState,
+        bodyText: document.body?.innerText?.slice(0, 300) || '',
+      }))()`);
+      if (uiState.renderTab && uiState.screenshotButton && uiState.canvas) break;
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+    if (!uiState?.renderTab || !uiState?.screenshotButton || !uiState?.canvas) {
+      throw new Error(`App UI did not become ready for PNG export: ${JSON.stringify(uiState)}`);
+    }
+
     const pageState = await evaluate(devtools.command, `(() => {
-      const renderTab = document.querySelector('.studio-tab-btn[data-tab="tab-render"]');
-      const screenshotButton = document.querySelector('#btn-take-screenshot');
-      if (!renderTab || !screenshotButton) {
-        throw new Error('Render tab or PNG screenshot button is missing from the app UI.');
-      }
-      if (!document.querySelector('canvas')) {
-        throw new Error('The 3D scene canvas has not been rendered.');
-      }
-      renderTab.click();
-      screenshotButton.click();
+      document.querySelector('.studio-tab-btn[data-tab="tab-render"]').click();
+      document.querySelector('#btn-take-screenshot').click();
+      const canvas = document.querySelector('canvas');
       return {
         appTitle: document.title,
         platform: window.Capacitor?.getPlatform?.() || 'unknown',
-        canvasWidth: document.querySelector('canvas').width,
-        canvasHeight: document.querySelector('canvas').height,
+        canvasWidth: canvas.width,
+        canvasHeight: canvas.height,
       };
     })()`);
     console.log(`Clicked the in-app PNG export control: ${JSON.stringify(pageState)}`);
