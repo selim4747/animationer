@@ -18,5 +18,18 @@ export default defineConfig({
     assetsDir: 'assets',
     sourcemap: false,
     emptyOutDir: true,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: 'three',
+              test: /node_modules[\\/]three[\\/]/,
+              maxSize: 400 * 1024,
+            },
+          ],
+        },
+      },
+    },
   },
 });

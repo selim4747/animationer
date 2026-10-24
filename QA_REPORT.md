@@ -22,17 +22,22 @@
 
 ## Doğrulama
 
-- `npm test`: **49/49 geçti**.
-- `npm run build`: başarılı; Vite, minify sonrası 500 kB üzerindeki tek bundle için uyarı verdi.
+- `npm test`: **50/50 geçti** (Three spritesheet zamanlama regresyon testi dahil).
+- `npm run build`: başarılı; Three.js kod bölme etkinleştirildi, 500 kB üstü chunk uyarısı yok.
 - `npm run lint`: başarılı.
 - `git diff --check`: temiz.
 - Tarayıcıda: dört kamera preset düğmesi, Ön/Üst HUD durumu, CCTV aç/kapat ve inset boyutu; tekil engel ekleme/silme denendi.
-- Gerçek 390×844 portre ve 844×390 yatay viewport bu tarayıcı oturumunda ayarlanamadı; responsive CSS bu nedenle cihaz E2E kanıtı sayılmaz.
+- Gerçek cihaz testi yapılmadı; aşağıdaki follow-up testleri Chromium mobil emülasyonunda çalıştırıldı.
 
-## PR’da açıkça belirtilen mevcut sınırlar
+## Follow-up doğrulaması (24 Ekim 2026)
 
-1. Mobil portre/yatay gerçek cihaz veya emüle viewport testi henüz yok.
-2. Otomatik kayıt sonrası tam timeline videosunun uçtan uca oynatılabilirliği bu düzeltme dalında yeniden sınanmadı.
-3. Otomatik kayıt şu an timeline ve 2D sprite varlıklarını saklıyor; özel harita/engel, GLB model ve kamera/sahne tercihleri proje kaydı/dışa aktarma kapsamına dahil değil. UI’daki kapsam açıklaması korunmalı.
-4. Önceki `npm audit` kontrolü 3 orta önem seviyeli bağımlılık uyarısı göstermişti. Sürüm düşürme/uyumluluk kararı gerektirebileceğinden bağımlılıklar bu PR’da değiştirilmedi.
-5. Build uyarısı: ana JS bundle 500 kB sınırını aşıyor; kod bölme ayrı optimizasyon işi olarak kalıyor.
+- Chromium touch emülasyonunda **390×844 portre** ve **844×390 yatay** boyutlarında `innerWidth`, `visualViewport`, container ve WebGL canvas backing-store ölçüleri kontrol edildi; yön değişiminde eski ölçüde kalma sorunu giderildi.
+- UI’dan üç ayrı **4×2 (8 kare)** PNG spritesheet yüklendi. Zamanlı adımlar `QA_Sprite_A` (0.0s), `QA_Sprite_B` (0.25s), `QA_Sprite_C` (0.5s) olarak, her biri 0.8s süreyle oynatıldı; canlı arayüzde üç adımın da aktif olduğu gözlendi.
+- Arayüzdeki **“Rejiyi Oynat ve Kaydet (Otomatik)”** düğmesiyle WebM indirildi. `ffprobe` çıktısı **VP9, 390×844** gösterdi; `ffmpeg` tüm dosyayı hatasız çözdü.
+- Three.js modülleri Rolldown kod bölme ile **352.26 kB, 240.43 kB ve 65.05 kB** chunk’lara ayrıldı; build’in 500 kB uyarısı giderildi.
+- `@capacitor/cli` güvenlik düzeltmesi için **8.4.3** sürümüne sabitlendi (Capacitor core/Android 8.5.3 olarak kaldı); `npm audit` **0 bulgu** verdi.
+
+## Açık sınırlar
+
+1. Mobil doğrulama gerçek Android/iOS cihazında değil Chromium emülasyonunda yapıldı; fiziksel cihazdaki tarayıcı adres çubuğu/OS inset davranışı ayrıca denenmeli.
+2. Proje JSON ve IndexedDB kapsamı timeline + 2D sprite görselleriyle sınırlıdır. Harita, engeller, GLB modeller ve kamera/ışık tercihleri saklanmıyor; uygulamadaki uyarılar bu sınırı açıkça belirtmeye devam ediyor.

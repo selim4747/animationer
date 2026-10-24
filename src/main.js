@@ -511,22 +511,26 @@ class App {
   }
 
   _onWindowResize() {
-    const width = Math.max(1, Math.floor(this.container.clientWidth || window.visualViewport?.width || window.innerWidth));
-    const height = Math.max(1, Math.floor(this.container.clientHeight || window.visualViewport?.height || window.innerHeight));
-    this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
-    this.renderer.setSize(width, height);
-    this.spriteCamera.left = 0;
-    this.spriteCamera.right = width;
-    this.spriteCamera.top = height;
-    this.spriteCamera.bottom = 0;
-    this.spriteCamera.updateProjectionMatrix();
-    this.spriteAnimationManager.resize(width, height);
-    const rect = this.cctvPreviewElement?.getBoundingClientRect();
-    if (this.cctvCamera && rect?.width && rect?.height) {
-      this.cctvCamera.aspect = rect.width / rect.height;
-      this.cctvCamera.updateProjectionMatrix();
-    }
+    clearTimeout(this._resizeTimer);
+    this._resizeTimer = setTimeout(() => {
+      this._resizeTimer = null;
+      const width = Math.max(1, Math.floor(window.visualViewport?.width || this.container.clientWidth || window.innerWidth));
+      const height = Math.max(1, Math.floor(window.visualViewport?.height || this.container.clientHeight || window.innerHeight));
+      this.camera.aspect = width / height;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setSize(width, height);
+      this.spriteCamera.left = 0;
+      this.spriteCamera.right = width;
+      this.spriteCamera.top = height;
+      this.spriteCamera.bottom = 0;
+      this.spriteCamera.updateProjectionMatrix();
+      this.spriteAnimationManager.resize(width, height);
+      const rect = this.cctvPreviewElement?.getBoundingClientRect();
+      if (this.cctvCamera && rect?.width && rect?.height) {
+        this.cctvCamera.aspect = rect.width / rect.height;
+        this.cctvCamera.updateProjectionMatrix();
+      }
+    }, 50);
   }
 
   /**
