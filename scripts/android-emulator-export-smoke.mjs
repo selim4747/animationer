@@ -3,13 +3,32 @@ import { execFileSync } from 'node:child_process';
 const DEVTOOLS_URL = 'http://127.0.0.1:9222';
 const EXPORT_DIRECTORY = '/sdcard/Documents/Animationer';
 const APP_ID = 'com.monochrome.threejsstudio';
+const APK_PATH = 'android/app/build/outputs/apk/debug/app-debug.apk';
 
-function adb(args, options = {}) {
+function adbText(args) {
   return execFileSync('adb', args, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    ...options,
+    maxBuffer: 16 * 1024 * 1024,
   }).trim();
+}
+
+async function waitForWebViewAndForward(timeoutMs = 120_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const unixSockets = adbText(['shell', 'cat', '/proc/net/unix']);
+    const match = unixSockets.match(/@?(webview_devtools_remote_[^\s]+)/);
+    if (match) {
+      const socketName = match[1].replace(/^@/, '');
+      adbText(['forward', 'tcp:9222', `localabstract:${socketName}`]);
+      console.log(`Forwarded Android WebView debugging socket: ${socketName}`);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  const logs = adbText(['logcat', '-d', '-t', '250']);
+  console.error(logs.split('\n').slice(-80).join('\n'));
+  throw new Error('Android WebView debugging socket was not created.');
 }
 
 async function waitForPageTarget(timeoutMs = 120_000) {
@@ -89,7 +108,7 @@ async function evaluate(command, expression) {
 
 function findExportedPng() {
   try {
-    const output = adb([
+    const output = adbText([
       'shell', 'find', EXPORT_DIRECTORY, '-maxdepth', '1', '-type', 'f', '-name', 'diorama_snapshot_*.png',
     ]);
     return output.split('\n').filter(Boolean).at(-1) || null;
@@ -99,6 +118,14 @@ function findExportedPng() {
 }
 
 async function main() {
+  console.log('Installing the debug APK on the Android emulator.');
+  console.log(adbText(['install', '-r', APK_PATH]));
+  adbText(['shell', 'am', 'force-stop', APP_ID]);
+  const activity = adbText(['shell', 'am', 'start', '-W', '-n', `${APP_ID}/.MainActivity`]);
+  console.log(activity);
+  if (!activity.includes('Status: ok')) throw new Error('Android MainActivity did not start successfully.');
+
+  await waitForWebViewAndForward();
   const target = await waitForPageTarget();
   console.log(`Attached to Android WebView page: ${target.url || '(no URL)'}`);
   const devtools = await connectDevTools(target.webSocketDebuggerUrl);
