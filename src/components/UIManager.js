@@ -132,6 +132,7 @@ export class UIManager {
       btnClearMap: document.getElementById('btn-clear-map'),
       btnAddWallBox: document.getElementById('btn-add-wall-box'),
       btnClearWallBoxes: document.getElementById('btn-clear-wall-boxes'),
+      wallBoxList: document.getElementById('studio-wall-box-list'),
 
       // Sekme 3: KAMERALAR
       btnFreeOrbit: document.getElementById('btn-free-orbit'),
@@ -140,6 +141,9 @@ export class UIManager {
       btnToggleTour: document.getElementById('btn-toggle-tour'),
       labelTourBtn: document.getElementById('label-tour-btn'),
       cameraListContainer: document.getElementById('studio-camera-list'),
+      cameraPresetButtons: document.querySelectorAll('.camera-preset-btn'),
+      btnToggleCctvPreview: document.getElementById('btn-toggle-cctv-preview'),
+      cctvPreview: document.getElementById('cctv-preview'),
 
       // Sekme 4: KARAKTER & MERDİVEN
       sliderSpeed: document.getElementById('slider-character-speed'),
@@ -266,7 +270,7 @@ export class UIManager {
     if (d.btnTimelineStop) {
       d.btnTimelineStop.addEventListener('click', () => {
         this.timeline.stop();
-        this.showToast('Reji Durduruldu ve Başa Alındı ⏹');
+        this.showToast('Oynatma durduruldu; sahne mevcut konumunda bırakıldı.');
       });
     }
 
@@ -680,6 +684,7 @@ export class UIManager {
       d.btnAddWallBox.addEventListener('click', () => {
         const charPos = this.character.getPosition();
         const box = this.mapLoader.addWallBox(charPos.x + 1.8, charPos.z, 2.0, 1.8, 0.4);
+        this.updateWallBoxList();
         this.showToast(`Engel Kutusu Eklendi (#${box.id})`);
       });
     }
@@ -687,9 +692,12 @@ export class UIManager {
     if (d.btnClearWallBoxes) {
       d.btnClearWallBoxes.addEventListener('click', () => {
         this.mapLoader.clearWallBoxes();
+        this.updateWallBoxList();
         this.showToast('Tüm Engel Kutuları Silindi');
       });
     }
+
+    this.updateWallBoxList();
 
     // --- SEKME 3: KAMERALAR ---
     if (d.btnFreeOrbit) {
@@ -705,6 +713,24 @@ export class UIManager {
         this.showToast(`Yeni İstasyon Kaydedildi: ${st.name}`);
       });
     }
+
+    d.cameraPresetButtons?.forEach((button) => {
+      button.addEventListener('click', () => {
+        const target = this.characters.getPosition().clone();
+        target.y += 0.8;
+        if (this.cameraManager.transitionToPreset(button.dataset.cameraPreset, target)) {
+          this.showToast(`${button.textContent.trim()} kamera kadrajına geçildi`);
+        }
+      });
+    });
+
+    d.btnToggleCctvPreview?.addEventListener('click', () => {
+      const show = Boolean(d.cctvPreview?.hidden);
+      if (d.cctvPreview) d.cctvPreview.hidden = !show;
+      d.btnToggleCctvPreview.setAttribute('aria-pressed', String(show));
+      d.btnToggleCctvPreview.textContent = `CCTV Mini Görünümü: ${show ? 'Açık' : 'Kapalı'}`;
+      this.showToast(`Bağımsız CCTV mini görünümü ${show ? 'açıldı' : 'kapatıldı'}`);
+    });
 
     if (d.btnToggleFollow) {
       d.btnToggleFollow.addEventListener('click', () => {
@@ -1233,6 +1259,40 @@ export class UIManager {
         this.dom.labelTimelineStatus.textContent = `Reji: Hazır (${this.timeline.steps.length} Adım)`;
       }
     }
+  }
+
+  updateWallBoxList() {
+    const list = this.dom.wallBoxList;
+    if (!list) return;
+    list.replaceChildren();
+    const boxes = this.mapLoader?.collisionManager?.wallBoxes || [];
+    if (!boxes.length) {
+      const empty = document.createElement('div');
+      empty.className = 'studio-info-text';
+      empty.textContent = 'Henüz engel kutusu eklenmedi.';
+      list.appendChild(empty);
+      return;
+    }
+    boxes.forEach((box, index) => {
+      const row = document.createElement('div');
+      row.className = 'studio-wall-box-row';
+      const details = document.createElement('span');
+      const meta = box.userData || {};
+      details.textContent = `#${index + 1} · X ${box.position.x.toFixed(1)}, Z ${box.position.z.toFixed(1)} · ${meta.width}×${meta.depth}×${meta.height} m`;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'station-action-btn';
+      remove.title = `Engel #${index + 1} sil`;
+      remove.setAttribute('aria-label', `Engel #${index + 1} sil`);
+      remove.textContent = '✕';
+      remove.addEventListener('click', () => {
+        this.mapLoader.removeWallBox(box);
+        this.updateWallBoxList();
+        this.showToast(`Engel Kutusu #${index + 1} Silindi`);
+      });
+      row.append(details, remove);
+      list.appendChild(row);
+    });
   }
 
   /**

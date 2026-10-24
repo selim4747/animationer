@@ -39,6 +39,7 @@ export class CharacterRoster {
 
   addCharacter(name, position = null) {
     if (this.actors.length >= 20) throw new Error('En fazla 20 karakter eklenebilir.');
+    const spawn = position ? { ...position } : this._findFreeSpawn();
     const index = this.nextId++;
     const id = `character-${index}`;
     const character = new Character(this.scene, this.collisionManager, (state) => {
@@ -46,7 +47,6 @@ export class CharacterRoster {
     });
     character.rootGroup.name = id;
     character.bodyMesh.material.color.setHex(COLORS[(index - 1) % COLORS.length]);
-    const spawn = position || { x: (this.actors.length % 4) * 1.35, y: 0, z: 0 };
     character.teleportTo(spawn.x, spawn.y, spawn.z);
     const actor = { id, name: name || `Karakter ${index}`, character };
     this.actors.push(actor);
@@ -54,6 +54,37 @@ export class CharacterRoster {
     this._syncSelectedAppearance();
     this.onChange({ type: 'added', id, actors: this.list() });
     return actor;
+  }
+
+  _findFreeSpawn() {
+    const reference = this.selectedCharacter?.getPosition?.() || { x: 0, y: 0, z: 0 };
+    this.collisionManager?.updateObstacleBoxes?.();
+    const radius = 0.42;
+    const candidates = [];
+    for (let ring = 1; ring <= 8; ring++) {
+      const distance = 1.35 + (ring - 1) * 0.7;
+      const count = Math.max(8, ring * 8);
+      for (let index = 0; index < count; index++) {
+        const angle = index * Math.PI * 2 / count;
+        candidates.push({ x: reference.x + Math.cos(angle) * distance, y: reference.y, z: reference.z + Math.sin(angle) * distance });
+      }
+    }
+    const isFree = (point) => {
+      if (this.actors.some(({ character }) => {
+        if (!character.rootGroup.visible || Math.abs(character.getPosition().y - point.y) > character.characterHeight) return false;
+        return Math.hypot(character.getPosition().x - point.x, character.getPosition().z - point.z) < radius + character.collisionRadius;
+      })) return false;
+      return !(this.collisionManager?.registeredObstacles || []).some(({ object, box }) => {
+        if (!object || object.visible === false || !box) return false;
+        if (box.max.y < point.y + 0.1 || box.min.y > point.y + 1.6) return false;
+        const x = Math.max(box.min.x, Math.min(point.x, box.max.x));
+        const z = Math.max(box.min.z, Math.min(point.z, box.max.z));
+        return (point.x - x) ** 2 + (point.z - z) ** 2 < radius ** 2;
+      });
+    };
+    const spawn = candidates.find(isFree);
+    if (!spawn) throw new Error('Yakın çevrede boş karakter doğma noktası bulunamadı. Engelleri kaldırıp yeniden deneyin.');
+    return spawn;
   }
 
   async loadCharacterFile(file) {

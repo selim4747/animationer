@@ -18,6 +18,7 @@ import { SpriteAnimationManager } from './components/SpriteAnimationManager.js';
 import { WorldSpriteCharacterManager } from './components/WorldSpriteCharacterManager.js';
 import { IndexedProjectStore } from './components/ProjectStore.js';
 import { SceneBuilder } from './components/SceneBuilder.js';
+import { toRendererViewport } from './components/ViewportLayout.js';
 import studioPanelHtml from './ui/studio-panel.html?raw';
 class App {
   constructor() {
@@ -94,6 +95,10 @@ class App {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this.container.appendChild(this.renderer.domElement);
+    this.cctvPreviewElement = document.getElementById('cctv-preview');
+    this.cctvCamera = new THREE.PerspectiveCamera(52, 1.6, 0.1, 500);
+    this.cctvCamera.position.set(3.5, 4.2, 5.5);
+    this.cctvCamera.lookAt(0, 1, 0);
   }
 
   /**
@@ -236,6 +241,11 @@ class App {
    */
   _bindEvents() {
     window.addEventListener('resize', () => this._onWindowResize());
+    window.visualViewport?.addEventListener('resize', () => this._onWindowResize());
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this._onWindowResize());
+      this.resizeObserver.observe(this.container);
+    }
 
     // Canvas üzerinde dokunma / fare tıklaması ayrımı
     const dom = this.renderer.domElement;
@@ -495,20 +505,28 @@ class App {
 
   _updateMapHUD(status) {
     if (this.uiManager) {
-      this.uiManager.showToast(status.message);
+      this.uiManager.updateWallBoxList();
+      if (status?.message) this.uiManager.showToast(status.message);
     }
   }
 
   _onWindowResize() {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
+    const width = Math.max(1, Math.floor(this.container.clientWidth || window.visualViewport?.width || window.innerWidth));
+    const height = Math.max(1, Math.floor(this.container.clientHeight || window.visualViewport?.height || window.innerHeight));
+    this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setSize(width, height);
     this.spriteCamera.left = 0;
-    this.spriteCamera.right = window.innerWidth;
-    this.spriteCamera.top = window.innerHeight;
+    this.spriteCamera.right = width;
+    this.spriteCamera.top = height;
     this.spriteCamera.bottom = 0;
     this.spriteCamera.updateProjectionMatrix();
-    this.spriteAnimationManager.resize(window.innerWidth, window.innerHeight);
+    this.spriteAnimationManager.resize(width, height);
+    const rect = this.cctvPreviewElement?.getBoundingClientRect();
+    if (this.cctvCamera && rect?.width && rect?.height) {
+      this.cctvCamera.aspect = rect.width / rect.height;
+      this.cctvCamera.updateProjectionMatrix();
+    }
   }
 
   /**
@@ -536,6 +554,28 @@ class App {
     // 4. 3D sahne ve üzerine saydam 2D spritesheet katmanı
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
+    const preview = this.cctvPreviewElement;
+    if (preview && !preview.hidden) {
+      const canvasRect = this.renderer.domElement.getBoundingClientRect();
+      const elementRect = preview.getBoundingClientRect();
+      const viewport = toRendererViewport({
+        left: elementRect.left - canvasRect.left,
+        top: elementRect.top - canvasRect.top,
+        width: elementRect.width,
+        height: elementRect.height,
+      }, canvasRect.width, canvasRect.height);
+      if (viewport.width && viewport.height) {
+        this.cctvCamera.aspect = viewport.width / viewport.height;
+        this.cctvCamera.updateProjectionMatrix();
+        this.renderer.setScissorTest(true);
+        this.renderer.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
+        this.renderer.setScissor(viewport.x, viewport.y, viewport.width, viewport.height);
+        this.renderer.clear(true, true, true);
+        this.renderer.render(this.scene, this.cctvCamera);
+        this.renderer.setScissorTest(false);
+      }
+    }
+    this.renderer.setViewport(0, 0, this.renderer.domElement.clientWidth, this.renderer.domElement.clientHeight);
     this.renderer.clearDepth();
     this.renderer.render(this.spriteScene, this.spriteCamera);
   }

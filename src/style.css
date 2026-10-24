@@ -41,6 +41,10 @@ html, body {
   -webkit-overscroll-behavior: none;
 }
 
+@supports (height: 100dvh) {
+  html, body { height: 100dvh; }
+}
+
 /* 3D Canvas Mount */
 #canvas-container {
   position: absolute;
@@ -52,11 +56,60 @@ html, body {
   touch-action: none;
 }
 
+@supports (height: 100dvh) {
+  #canvas-container { height: 100dvh; }
+}
+
 #canvas-container canvas {
   width: 100% !important;
   height: 100% !important;
   display: block;
 }
+
+.cctv-preview {
+  position: fixed;
+  z-index: 20;
+  top: max(72px, calc(env(safe-area-inset-top, 0px) + 64px));
+  left: max(14px, env(safe-area-inset-left, 14px));
+  width: min(240px, 32vw);
+  aspect-ratio: 16 / 10;
+  border: 1px solid var(--mono-white);
+  background: rgba(0, 0, 0, 0.86);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.75);
+  pointer-events: none;
+}
+
+.cctv-preview[hidden] { display: none; }
+.cctv-preview-label {
+  position: absolute;
+  z-index: 1;
+  left: 5px;
+  top: 4px;
+  padding: 2px 4px;
+  background: rgba(0, 0, 0, 0.72);
+  color: var(--mono-white);
+  font: 8px monospace;
+  letter-spacing: 0.04em;
+}
+
+.camera-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 6px 0 8px;
+}
+
+.studio-wall-box-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--mono-border);
+  font: 10px monospace;
+}
+.studio-wall-box-row:last-child { border-bottom: 0; }
+.studio-wall-box-meta { color: var(--mono-gray); }
 
 /* Dokunmatik Yönlendirme İpucu */
 .hud-hint-pill {
@@ -1025,6 +1078,7 @@ input[type="range"]::-moz-range-thumb {
     max-height: calc(100vh - 100px);
     max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 100px);
   }
+  .cctv-preview { width: min(200px, 26vw); top: max(52px, calc(env(safe-area-inset-top, 0px) + 48px)); }
 }
 
 @media (max-width: 640px) and (orientation: portrait), (max-width: 640px) {
@@ -1095,6 +1149,11 @@ input[type="range"]::-moz-range-thumb {
     min-height: 44px;
     padding: 8px 2px;
     font-size: 9px;
+  }
+  .cctv-preview {
+    top: max(58px, calc(env(safe-area-inset-top, 0px) + 54px));
+    left: max(8px, env(safe-area-inset-left, 8px));
+    width: min(150px, 39vw);
   }
   .studio-tab-pane {
     min-height: 0;

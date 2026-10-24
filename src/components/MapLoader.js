@@ -366,6 +366,13 @@ export class MapLoader {
     return this.createWallBox(x, z, w, d, h);
   }
 
+  removeWallBox(box) {
+    if (!this.collisionManager?.wallBoxes?.includes(box)) return false;
+    this.collisionManager.removeWallBox(box);
+    this.onStatusChange({ type: 'wallBoxRemoved', count: this.collisionManager.wallBoxes.length });
+    return true;
+  }
+
   clearAllWallBoxes() {
     if (this.collisionManager) {
       this.collisionManager.clearWallBoxes();
