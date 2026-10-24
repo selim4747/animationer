@@ -66,10 +66,12 @@
             <button id="btn-timeline-pause" class="hud-btn" title="Oynatmayı Duraklat">
               ⏸ Duraklat
             </button>
-            <button id="btn-timeline-stop" class="hud-btn" title="Durdur ve Başa Sar">
-              ⏹ Başa Sar
+            <button id="btn-timeline-stop" class="hud-btn" title="Oynatmayı durdurur ve zaman çizelgesi işaretçisini başa alır; sahne durumunu geri yüklemez">
+              ⏹ Durdur
             </button>
           </div>
+
+          <div class="studio-info-text">Durdur, aktif hareketi keser ve zaman çizelgesi işaretçisini sıfırlar; kapı ve karakter sahnedeki mevcut konumlarında kalır.</div>
 
           <!-- Adım Kayıt Modu Toggle -->
           <div class="studio-ctrl-row" style="margin-top: 8px;">
@@ -211,6 +213,7 @@
               Engelleri Temizle
             </button>
           </div>
+          <div id="studio-wall-box-list" class="studio-camera-list-box" aria-live="polite"></div>
         </div>
 
         <!-- ==========================================
@@ -225,6 +228,14 @@
               + Açıyı Kaydet
             </button>
           </div>
+          <div class="studio-sub-header">HAZIR KADRAJLAR:</div>
+          <div class="camera-preset-grid" role="group" aria-label="Hazır kamera açıları">
+            <button type="button" class="hud-btn small-btn camera-preset-btn" data-camera-preset="front">Ön</button>
+            <button type="button" class="hud-btn small-btn camera-preset-btn" data-camera-preset="side">Yan</button>
+            <button type="button" class="hud-btn small-btn camera-preset-btn" data-camera-preset="top">Üst</button>
+            <button type="button" class="hud-btn small-btn camera-preset-btn" data-camera-preset="isometric">İzometrik</button>
+          </div>
+          <button id="btn-toggle-cctv-preview" type="button" class="hud-btn flex-grow" aria-pressed="false">CCTV Mini Görünümü: Kapalı</button>
 
           <div class="studio-ctrl-row" style="margin-top: 8px;">
             <button id="btn-toggle-follow" class="hud-btn primary flex-grow" title="Kamera karakteri otomatik takip etsin">

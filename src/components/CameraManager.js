@@ -30,6 +30,13 @@ export class CameraManager {
     // İstasyon Listesi
     this.stations = [];
     this.activeStationId = null;
+    this.activePresetId = null;
+    this.presets = [
+      { id: 'front', name: 'Ön', offset: new THREE.Vector3(0, 2.4, 8) },
+      { id: 'side', name: 'Yan', offset: new THREE.Vector3(8, 2.4, 0) },
+      { id: 'top', name: 'Üst', offset: new THREE.Vector3(0, 11, 0.01) },
+      { id: 'isometric', name: 'İzometrik', offset: new THREE.Vector3(8, 6, 8) },
+    ];
 
     // Lerp Yumuşak Geçiş Durumu
     this.isTransitioning = false;
@@ -93,6 +100,7 @@ export class CameraManager {
     this.isTransitioning = false;
     this.controls.enabled = true;
     this.activeStationId = null;
+    this.activePresetId = null;
 
     if (this.isTourActive) {
       this.stopTour();
@@ -121,6 +129,7 @@ export class CameraManager {
     if (!station) return;
 
     this.activeStationId = station.id;
+    this.activePresetId = null;
 
     this.startPos.copy(this.camera.position);
     this.startTarget.copy(this.controls.target);
@@ -137,6 +146,22 @@ export class CameraManager {
       stations: this.stations,
       activeId: station.id,
     });
+  }
+
+  transitionToPreset(presetId, target = new THREE.Vector3()) {
+    const preset = this.presets.find((item) => item.id === presetId);
+    if (!preset || !target) return false;
+    this.activeStationId = `preset-${preset.id}`;
+    this.activePresetId = preset.id;
+    this.startPos.copy(this.camera.position);
+    this.startTarget.copy(this.controls.target);
+    this.endPos.copy(target).add(preset.offset);
+    this.endTarget.copy(target);
+    this.transitionStartTime = performance.now();
+    this.isTransitioning = true;
+    this.controls.enabled = false;
+    this.onStateChange({ mode: 'locked', stationName: `${preset.name} Görünümü`, stations: this.stations, activeId: this.activeStationId });
+    return true;
   }
 
   /**
@@ -160,6 +185,7 @@ export class CameraManager {
     this.isTransitioning = false;
     this.controls.enabled = true;
     this.activeStationId = null;
+    this.activePresetId = null;
     const resolve = this.transitionResolve;
     this.transitionResolve = null;
     resolve?.();

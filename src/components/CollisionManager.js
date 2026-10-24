@@ -161,6 +161,12 @@ export class CollisionManager {
       this.wallBoxes.splice(idx, 1);
     }
     this.scene.remove(boxMesh);
+    boxMesh.traverse((child) => {
+      if (child === boxMesh) return;
+      child.geometry?.dispose?.();
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      materials.forEach((material) => material?.dispose?.());
+    });
     boxMesh.geometry?.dispose();
     if (boxMesh.material) boxMesh.material.dispose();
   }
