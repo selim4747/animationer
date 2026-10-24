@@ -482,7 +482,8 @@ export class Character {
           currentPos,
           rawStep,
           this.collisionRadius,
-          this.characterHeight
+          this.characterHeight,
+          this.rootGroup
         );
         resolvedStep = collisionResult.resolvedStep;
 

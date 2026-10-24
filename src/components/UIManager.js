@@ -19,11 +19,12 @@ export class UIManager {
    * @param {import('./RecorderManager.js').RecorderManager} [context.recorderManager]
    * @param {Object} context.sceneHelpers - gridHelper, dirLight, hemiLight referansları
    */
-  constructor({ timelineManager, character, characterManager, spriteAnimationManager, projectStore = null, onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, sceneHelpers }) {
+  constructor({ timelineManager, character, characterManager, spriteAnimationManager, worldSpriteCharacterManager = null, projectStore = null, onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, sceneHelpers }) {
     this.timeline = timelineManager;
     this.character = character;
     this.characters = characterManager || character;
     this.sprites = spriteAnimationManager;
+    this.worldSprites = worldSpriteCharacterManager;
     this.projectStore = projectStore;
     this.onControlModeChange = onControlModeChange;
     this.door = door;
@@ -53,6 +54,7 @@ export class UIManager {
     this.updateCameraList(this.cameraManager.stations, this.cameraManager.activeStationId);
     this.updateCharacterList(this.characters?.list?.() || []);
     this.updateSpriteList(this.sprites?.list?.() || [], this.sprites?.selectedId);
+    this.updateWorldSpriteUI();
   }
 
   setRecorder(recorderManager) {
@@ -171,6 +173,19 @@ export class UIManager {
       btnAddSpriteTimelineStep: document.getElementById('btn-add-sprite-timeline-step'),
       btnRemoveSprite: document.getElementById('btn-remove-sprite'),
       spriteListContainer: document.getElementById('studio-sprite-list'),
+      worldSpriteFilePicker: document.getElementById('file-picker-world-sprite'),
+      worldSpriteName: document.getElementById('world-sprite-name'),
+      worldSpriteColumns: document.getElementById('world-sprite-columns'),
+      worldSpriteRows: document.getElementById('world-sprite-rows'),
+      worldSpriteFps: document.getElementById('world-sprite-fps'),
+      btnSaveWorldSpriteTemplate: document.getElementById('btn-save-world-sprite-template'),
+      worldSpriteTemplateSelect: document.getElementById('world-sprite-template-select'),
+      btnSpawnWorldSprite: document.getElementById('btn-spawn-world-sprite'),
+      btnDeleteWorldSpriteTemplate: document.getElementById('btn-delete-world-sprite-template'),
+      worldSpriteActorSelect: document.getElementById('world-sprite-actor-select'),
+      btnWorldSpriteControl: document.getElementById('btn-world-sprite-control'),
+      btnRemoveWorldSprite: document.getElementById('btn-remove-world-sprite'),
+      worldSpriteListContainer: document.getElementById('studio-world-sprite-list'),
 
       // Sekme 5: DIŞA AKTAR / RENDER
       btnTakeScreenshot: document.getElementById('btn-take-screenshot'),
@@ -482,6 +497,66 @@ export class UIManager {
       if (!actor) return this.showToast('Silinecek 2D karakter yok.');
       this.sprites.remove(actor.id);
       this.showToast(`${actor.name} 2D sahneden silindi`);
+    });
+    d.btnSaveWorldSpriteTemplate?.addEventListener('click', () => d.worldSpriteFilePicker?.click());
+    d.worldSpriteFilePicker?.addEventListener('change', async (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      this.showToast('2D karakter kitaplığa kaydediliyor…');
+      try {
+        const template = await this.worldSprites.addTemplate(file, {
+          name: d.worldSpriteName?.value,
+          columns: Number(d.worldSpriteColumns?.value),
+          rows: Number(d.worldSpriteRows?.value),
+          fps: Number(d.worldSpriteFps?.value),
+        });
+        if (d.worldSpriteName) d.worldSpriteName.value = template.name;
+        this.showToast(`“${template.name}” karakteri kaydedildi; şimdi dünyaya ekleyebilirsiniz.`);
+      } catch (error) {
+        this.showToast(error.message || '2D karakter kitaplığa kaydedilemedi.');
+      } finally {
+        d.worldSpriteFilePicker.value = '';
+      }
+    });
+    d.worldSpriteTemplateSelect?.addEventListener('change', () => {
+      this.worldSprites?.selectTemplate(d.worldSpriteTemplateSelect.value);
+      this.updateWorldSpriteUI();
+    });
+    d.btnSpawnWorldSprite?.addEventListener('click', () => {
+      try {
+        const template = this.worldSprites?.templates.get(d.worldSpriteTemplateSelect?.value);
+        const actor = this.worldSprites?.spawn(d.worldSpriteTemplateSelect?.value);
+        this.showToast(`“${template?.name || actor?.name}” 3D dünyaya eklendi.`);
+      } catch (error) {
+        this.showToast(error.message || '2D karakter dünyaya eklenemedi.');
+      }
+    });
+    d.btnDeleteWorldSpriteTemplate?.addEventListener('click', async () => {
+      const template = this.worldSprites?.templates.get(d.worldSpriteTemplateSelect?.value);
+      if (!template || !window.confirm(`“${template.name}” karakterini kalıcı kitaplıktan silmek istiyor musunuz? Sahnede zaten oluşturulmuş kopyalar kalır.`)) return;
+      try {
+        await this.worldSprites.deleteTemplate(template.id);
+        this.showToast(`“${template.name}” kitaplıktan silindi.`);
+      } catch (error) {
+        this.showToast(error.message || 'Karakter kitaplıktan silinemedi.');
+      }
+    });
+    d.worldSpriteActorSelect?.addEventListener('change', () => {
+      this.worldSprites?.select(d.worldSpriteActorSelect.value);
+      this.updateWorldSpriteUI();
+    });
+    d.btnWorldSpriteControl?.addEventListener('click', () => {
+      const activating = !this.worldSprites?.activeControl;
+      if (activating) this.characters?.selectedCharacter?.stopMotion?.();
+      this.worldSprites?.setControlMode(activating);
+      this.updateWorldSpriteUI();
+      this.showToast(this.worldSprites?.activeControl ? '2D karakter hareket modu açık: zemine dokunarak yürütün.' : '2D karakter hareket modu kapalı.');
+    });
+    d.btnRemoveWorldSprite?.addEventListener('click', () => {
+      const actor = this.worldSprites?.getActor(d.worldSpriteActorSelect?.value);
+      if (!actor) return this.showToast('Sahnede seçili bir 2D dünya karakteri yok.');
+      this.worldSprites.remove(actor.id);
+      this.showToast(`“${actor.name}” sahneden kaldırıldı; kitaplıktaki kayıt korundu.`);
     });
     d.controlModeSelect?.addEventListener('change', () => {
       this.onControlModeChange(d.controlModeSelect.value);
@@ -972,6 +1047,59 @@ export class UIManager {
         row.append(name, meta);
         list.appendChild(row);
       });
+    }
+  }
+
+  updateWorldSpriteUI(
+    templates = this.worldSprites?.listTemplates?.() || [],
+    actors = this.worldSprites?.listActors?.() || [],
+    selectedId = this.worldSprites?.selectedId,
+    selectedTemplateId = this.worldSprites?.selectedTemplateId,
+    activeControl = this.worldSprites?.activeControl || false
+  ) {
+    const fill = (select, items, selectedValue, emptyText, labelFor) => {
+      if (!select) return;
+      select.replaceChildren();
+      if (!items.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = emptyText;
+        select.appendChild(option);
+      } else {
+        for (const item of items) {
+          const option = document.createElement('option');
+          option.value = item.id;
+          option.textContent = labelFor(item);
+          select.appendChild(option);
+        }
+        if (items.some((item) => item.id === selectedValue)) select.value = selectedValue;
+      }
+      select.disabled = items.length === 0;
+    };
+    fill(this.dom.worldSpriteTemplateSelect, templates, selectedTemplateId, 'Önce kitaplığa spritesheet ekleyin', (item) => `${item.name} (${item.columns}×${item.rows})`);
+    fill(this.dom.worldSpriteActorSelect, actors, selectedId, 'Henüz dünyaya karakter eklenmedi', (item) => item.name);
+    if (this.dom.btnSpawnWorldSprite) this.dom.btnSpawnWorldSprite.disabled = templates.length === 0;
+    if (this.dom.btnDeleteWorldSpriteTemplate) this.dom.btnDeleteWorldSpriteTemplate.disabled = templates.length === 0;
+    if (this.dom.btnRemoveWorldSprite) this.dom.btnRemoveWorldSprite.disabled = actors.length === 0;
+    if (this.dom.btnWorldSpriteControl) {
+      this.dom.btnWorldSpriteControl.textContent = activeControl ? '2D Hareket Modu: Açık' : '2D Hareket Modu: Kapalı';
+      this.dom.btnWorldSpriteControl.setAttribute('aria-pressed', String(Boolean(activeControl)));
+      this.dom.btnWorldSpriteControl.disabled = actors.length === 0;
+    }
+    const list = this.dom.worldSpriteListContainer;
+    if (list) {
+      list.replaceChildren();
+      for (const actor of actors) {
+        const row = document.createElement('div');
+        row.className = `sprite-list-item${actor.id === selectedId ? ' active' : ''}`;
+        const name = document.createElement('span');
+        name.textContent = actor.name;
+        const position = document.createElement('span');
+        position.className = 'sprite-list-meta';
+        position.textContent = `X ${actor.x.toFixed(1)} · Y ${actor.y.toFixed(1)} · Z ${actor.z.toFixed(1)}${actor.isMoving ? ' · yürüyor' : ''}`;
+        row.append(name, position);
+        list.appendChild(row);
+      }
     }
   }
 

@@ -2,7 +2,43 @@ export const PROJECT_SCHEMA_VERSION = 2;
 export const MAX_PROJECT_BYTES = 100 * 1024 * 1024;
 const DB_NAME = 'animationer-projects';
 const STORE_NAME = 'projects';
+const CHARACTER_LIBRARY_STORE = 'character-library';
 const ACTIVE_KEY = 'autosave';
+export const MAX_CHARACTER_TEMPLATE_BYTES = 50 * 1024 * 1024;
+export const MAX_CHARACTER_LIBRARY_BYTES = 250 * 1024 * 1024;
+
+export function validateCharacterTemplateRecord(input) {
+  if (!input || typeof input !== 'object' || typeof input.id !== 'string' || !input.id || input.id.length > 128) {
+    throw new Error('2D karakter kitaplığı kaydı geçersiz.');
+  }
+  const name = typeof input.name === 'string' ? input.name.trim().slice(0, 48) : '';
+  if (!name) throw new Error('Karakter için bir ad girin.');
+  if (!['image/png', 'image/webp', 'image/jpeg'].includes(input.mimeType || input.blob?.type)) {
+    throw new Error('Karakter spritesheet biçimi desteklenmiyor.');
+  }
+  if (!(typeof Blob !== 'undefined' && input.blob instanceof Blob) || !input.blob.size || input.blob.size > MAX_CHARACTER_TEMPLATE_BYTES) {
+    throw new Error('Karakter spritesheet dosyası boş veya 50 MB sınırını aşıyor.');
+  }
+  const columns = Number(input.columns);
+  const rows = Number(input.rows);
+  const fps = Number(input.fps);
+  if (!Number.isInteger(columns) || columns < 1 || columns > 64 || !Number.isInteger(rows) || rows < 1 || rows > 64 || columns * rows > 4096) {
+    throw new Error('Karakter spritesheet satır/sütun bilgisi geçersiz.');
+  }
+  if (!Number.isFinite(fps) || fps < 1 || fps > 60) throw new Error('Karakter animasyon FPS değeri geçersiz.');
+  return {
+    id: input.id,
+    name,
+    blob: input.blob,
+    mimeType: input.mimeType || input.blob.type,
+    fileName: String(input.fileName || `${name}.png`).slice(0, 160),
+    columns,
+    rows,
+    fps,
+    createdAt: input.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
 
 export function migrateProjectRecord(input) {
   if (!input || typeof input !== 'object') throw new Error('Kayıtlı proje bozuk.');
@@ -79,9 +115,10 @@ export class IndexedProjectStore {
   _open() {
     if (!this.indexedDB) return Promise.reject(new Error('Bu tarayıcı IndexedDB otomatik kaydını desteklemiyor.'));
     return new Promise((resolve, reject) => {
-      const request = this.indexedDB.open(DB_NAME, 1);
+      const request = this.indexedDB.open(DB_NAME, 2);
       request.onupgradeneeded = () => {
         if (!request.result.objectStoreNames.contains(STORE_NAME)) request.result.createObjectStore(STORE_NAME);
+        if (!request.result.objectStoreNames.contains(CHARACTER_LIBRARY_STORE)) request.result.createObjectStore(CHARACTER_LIBRARY_STORE);
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error || new Error('IndexedDB açılamadı.'));
@@ -124,6 +161,61 @@ export class IndexedProjectStore {
         tx.objectStore(STORE_NAME).delete(ACTIVE_KEY);
         tx.oncomplete = resolve;
         tx.onerror = () => reject(tx.error || new Error('Otomatik kayıt silinemedi.'));
+      });
+    } finally { db.close(); }
+  }
+
+  async listCharacterTemplates() {
+    const db = await this._open();
+    try {
+      return await new Promise((resolve, reject) => {
+        const request = db.transaction(CHARACTER_LIBRARY_STORE, 'readonly').objectStore(CHARACTER_LIBRARY_STORE).getAll();
+        request.onsuccess = () => resolve((request.result || []).map(validateCharacterTemplateRecord));
+        request.onerror = () => reject(request.error || new Error('2D karakter kitaplığı okunamadı.'));
+      });
+    } finally { db.close(); }
+  }
+
+  async saveCharacterTemplate(input) {
+    const template = validateCharacterTemplateRecord(input);
+    const db = await this._open();
+    try {
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(CHARACTER_LIBRARY_STORE, 'readwrite');
+        const store = tx.objectStore(CHARACTER_LIBRARY_STORE);
+        const existingRequest = store.getAll();
+        let validationError = null;
+        existingRequest.onsuccess = () => {
+          const total = (existingRequest.result || []).reduce((sum, item) => sum + (item.id === template.id ? 0 : item.blob?.size || 0), template.blob.size);
+          if (total > MAX_CHARACTER_LIBRARY_BYTES) {
+            validationError = new Error('2D karakter kitaplığı 250 MB sınırını aşıyor; önce bazı modelleri silin.');
+            tx.abort();
+            return;
+          }
+          store.put(template, template.id);
+        };
+        existingRequest.onerror = () => { validationError = existingRequest.error; tx.abort(); };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(validationError || tx.error || new Error('2D karakter kaydedilemedi.'));
+        tx.onabort = () => reject(validationError || tx.error || new Error('2D karakter kaydı geri alındı.'));
+      });
+    } catch (error) {
+      if (error?.name === 'QuotaExceededError') throw new Error('Cihaz depolama kotası dolu; 2D karakter kaydedilemedi.');
+      throw error;
+    } finally { db.close(); }
+    return template;
+  }
+
+  async deleteCharacterTemplate(id) {
+    if (typeof id !== 'string' || !id) return false;
+    const db = await this._open();
+    try {
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(CHARACTER_LIBRARY_STORE, 'readwrite');
+        tx.objectStore(CHARACTER_LIBRARY_STORE).delete(id);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => reject(tx.error || new Error('2D karakter kitaplığından silinemedi.'));
+        tx.onabort = () => reject(tx.error || new Error('2D karakter silme işlemi geri alındı.'));
       });
     } finally { db.close(); }
   }

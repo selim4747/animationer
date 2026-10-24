@@ -309,9 +309,10 @@ export class CollisionManager {
    * @param {THREE.Vector3} stepVector - İstenen hareket adımı
    * @param {number} radius - Karakter yarıçapı (varsayılan 0.35m)
    * @param {number} height - Karakter boyu (varsayılan 1.6m)
+   * @param {THREE.Object3D|null} ignoreObject - Hareket eden aktörün kendi collider'ı
    * @returns {{ resolvedStep: THREE.Vector3, isColliding: boolean }}
    */
-  resolveMovement(currentPos, stepVector, radius = 0.35, height = 1.6) {
+  resolveMovement(currentPos, stepVector, radius = 0.35, height = 1.6, ignoreObject = null) {
     if (this.registeredObstacles.length === 0 || stepVector.lengthSq() < 0.000001) {
       return { resolvedStep: stepVector.clone(), isColliding: false };
     }
@@ -326,7 +327,7 @@ export class CollisionManager {
     const nearbyObstacles = [];
     for (let i = 0; i < this.registeredObstacles.length; i++) {
       const entry = this.registeredObstacles[i];
-      if (!entry.object || entry.object.visible === false) continue;
+      if (!entry.object || entry.object === ignoreObject || entry.object.visible === false) continue;
 
       const dx = posX - entry.center.x;
       const dz = posZ - entry.center.z;

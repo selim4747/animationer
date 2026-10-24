@@ -15,6 +15,7 @@ import { TimelineManager, ACTION_TYPES } from './components/TimelineManager.js';
 import { RecorderManager } from './components/RecorderManager.js';
 import { UIManager } from './components/UIManager.js';
 import { SpriteAnimationManager } from './components/SpriteAnimationManager.js';
+import { WorldSpriteCharacterManager } from './components/WorldSpriteCharacterManager.js';
 import { IndexedProjectStore } from './components/ProjectStore.js';
 import { SceneBuilder } from './components/SceneBuilder.js';
 import studioPanelHtml from './ui/studio-panel.html?raw';
@@ -52,6 +53,7 @@ class App {
 
     this._initUI();
     this._bindEvents();
+    this.worldSpriteCharacterManager.loadLibrary().catch((error) => this.uiManager?.showToast(error.message || '2D karakter kitaplığı açılamadı.'));
 
     this._animate();
   }
@@ -160,6 +162,11 @@ class App {
       height: window.innerHeight,
       onStateChange: (state) => this.uiManager?.updateSpriteList(state.actors, state.selectedId),
     });
+    this.worldSpriteCharacterManager = new WorldSpriteCharacterManager(this.scene, this.collisionManager, {
+      characterRoster: this.character,
+      store: this.projectStore,
+      onStateChange: (state) => this.uiManager?.updateWorldSpriteUI(state.templates, state.actors, state.selectedId, state.selectedTemplateId, state.activeControl),
+    });
 
     // 4. Kamera Yöneticisi & CCTV İstasyonları
     this.cameraManager = new CameraManager(
@@ -211,6 +218,7 @@ class App {
       mapLoader: this.mapLoader,
       recorderManager: this.recorderManager,
       spriteAnimationManager: this.spriteAnimationManager,
+      worldSpriteCharacterManager: this.worldSpriteCharacterManager,
       projectStore: this.projectStore,
       characterManager: this.character,
       onControlModeChange: (mode) => this.setControlMode(mode),
@@ -420,6 +428,16 @@ class App {
       }
     }
 
+    const worldSpriteHit = this.raycaster.intersectObjects(this.worldSpriteCharacterManager.actors.map((actor) => actor.sprite), false)[0];
+    if (worldSpriteHit) {
+      const actor = this.worldSpriteCharacterManager.getActorForSprite(worldSpriteHit.object);
+      if (actor) {
+        this.worldSpriteCharacterManager.select(actor.id);
+        this.uiManager?.showToast(`2D dünya karakteri seçildi: ${actor.name}`);
+      }
+      return;
+    }
+
     // 2. Yürünebilir Zeminler / Merdivenler / Katlar Denetimi
     const walkableList = [
       this.groundShadowPlane,
@@ -432,8 +450,9 @@ class App {
     if (hits.length > 0) {
       const targetPoint = hits[0].point;
 
-      // Eğer Reji Kayıt Modu açıksa tıklanan koordinatı yeni bir yürüme adımına dönüştür!
-        if (this.timelineManager && this.timelineManager.isRecording) {
+      // Eğer 2D dünya karakteri seçiliyse bu dokunuş yalnızca o aktörü yürütür.
+      // Aksi durumda kayıt modu tıklanan 3D koordinatı zaman çizelgesine ekleyebilir.
+        if (!this.worldSpriteCharacterManager.activeControl && this.timelineManager && this.timelineManager.isRecording) {
           this.timelineManager.recordClickAsStep(ACTION_TYPES.MOVE_TO, {
             x: Number(targetPoint.x.toFixed(2)),
             y: Number(targetPoint.y.toFixed(2)),
@@ -442,7 +461,9 @@ class App {
         }
 
       // Karakteri hedef noktaya yönlendir
-      if (this.controlMode === 'tap' && !(this.timelineManager?.isRecording && this.timelineManager?.playMode === 'scheduled')) {
+      if (this.worldSpriteCharacterManager.activeControl) {
+        this.worldSpriteCharacterManager.moveSelectedTo(targetPoint);
+      } else if (this.controlMode === 'tap' && !(this.timelineManager?.isRecording && this.timelineManager?.playMode === 'scheduled')) {
         this.character.moveTo(targetPoint);
       }
     }
@@ -503,6 +524,7 @@ class App {
 
     // 1. Karakter Navigasyonu ve Prosedürel Animasyon
     this.character.update(delta);
+    this.worldSpriteCharacterManager.update(delta);
     this.spriteAnimationManager.update(delta);
 
     // 2. Menteşeli Kapı ve Kesit (Cutaway) Ön Duvarlar
