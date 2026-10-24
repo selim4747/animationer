@@ -94,18 +94,20 @@ jobs:
           disable-linux-hw-accel: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: |
-            set -euo pipefail
+            set -eu
             adb install -r android/app/build/outputs/apk/debug/app-debug.apk
             adb shell am force-stop com.monochrome.threejsstudio
-            adb shell monkey -p com.monochrome.threejsstudio 1
+            adb shell am start -W -n com.monochrome.threejsstudio/.MainActivity
 
             webview_socket=""
-            for attempt in $(seq 1 60); do
+            attempt=0
+            while [ "$attempt" -lt 60 ]; do
               webview_socket="$(adb shell cat /proc/net/unix | awk '$NF ~ /webview_devtools_remote_/ { path=$NF; sub(/^@/, "", path); print path; exit }' | tr -d '\r')"
-              if [[ -n "$webview_socket" ]]; then break; fi
+              if [ -n "$webview_socket" ]; then break; fi
+              attempt=$((attempt + 1))
               sleep 2
             done
-            if [[ -z "$webview_socket" ]]; then
+            if [ -z "$webview_socket" ]; then
               echo "Android WebView debugging socket was not created."
               adb logcat -d -t 300 | tail -100
               exit 1
