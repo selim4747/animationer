@@ -184,14 +184,16 @@ async function waitForVideoPreview(command, timeoutMs = 15_000) {
       return {
         hidden: document.querySelector('#recording-preview-panel')?.hidden,
         readyState: video?.readyState ?? 0,
-        duration: video?.duration ?? 0,
+        duration: Number.isFinite(video?.duration) ? video.duration : null,
+        durationIsInfinite: video?.duration === Infinity,
         width: video?.videoWidth ?? 0,
         height: video?.videoHeight ?? 0,
         error: video?.error?.message || null,
       };
     })()`);
     if (state.error) throw new Error(`Android video preview decode error: ${state.error}`);
-    if (state.hidden === false && state.readyState >= 2 && Number.isFinite(state.duration) && state.duration > 0) return state;
+    const hasUsableDuration = state.durationIsInfinite || (Number.isFinite(state.duration) && state.duration > 0);
+    if (state.hidden === false && state.readyState >= 2 && state.width > 0 && state.height > 0 && hasUsableDuration) return state;
     await sleep(300);
   }
   throw new Error(`Saved video preview did not become playable: ${JSON.stringify(state)}`);
@@ -388,7 +390,8 @@ async function main() {
       video.play().catch((error) => complete({ played: false, error: error.message }));
     }))()`);
     assert.equal(playback.played, true, `Saved recording could not play through in the preview: ${JSON.stringify(playback)}`);
-    console.log(`PASS: Manual Android video saved and played through the in-app preview (${videoPath}; ${video.length} bytes; ${preview.width}x${preview.height}; ${preview.duration.toFixed(2)}s).`);
+    const previewDuration = Number.isFinite(preview.duration) ? `${preview.duration.toFixed(2)}s` : 'stream duration unavailable';
+    console.log(`PASS: Manual Android video saved and played through the in-app preview (${videoPath}; ${video.length} bytes; ${preview.width}x${preview.height}; ${previewDuration}).`);
 
     console.log('ANDROID USER TEST SUMMARY: 6 tabs, collapse/expand, touch-restorable full-screen mode, timeline edit, project JSON, Android Share sheet, PNG and playable manual video export exercised.');
   } finally {
