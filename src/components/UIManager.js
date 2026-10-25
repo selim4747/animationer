@@ -8,6 +8,8 @@
 
 import { AutosaveCoordinator } from './AutosaveCoordinator.js';
 import { saveGeneratedFile, shareGeneratedFile } from '../utils/FileExportManager.js';
+import { calculateProjectBytes, migrateProjectRecord, PROJECT_SCHEMA_VERSION } from './ProjectStore.js';
+import { getDeviceMemoryGiB, getDevicePerformanceProfile } from '../utils/device-profile.js';
 
 const MAX_INLINE_PREVIEW_BYTES = 32 * 1024 * 1024;
 
@@ -18,6 +20,26 @@ function saveResultMessage(label, result) {
   if (result.method === 'browser') return `${label} indiriliyor: ${filename} · Tarayıcı indirilenleri`;
   const location = result.location || result.path || (result.method === 'capacitor' ? 'Documents/Animationer' : '');
   return `${label} kaydedildi: ${filename}${location ? ` · ${location}` : ''}`;
+}
+
+async function blobToBase64(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  return btoa(binary);
+}
+
+function base64ToBlob(data, type) {
+  if (typeof data !== 'string' || !data) throw new Error('Proje görsel verisi eksik.');
+  const binary = atob(data);
+  const chunks = [];
+  for (let offset = 0; offset < binary.length; offset += 0x8000) {
+    const end = Math.min(binary.length, offset + 0x8000);
+    const bytes = new Uint8Array(end - offset);
+    for (let index = offset; index < end; index++) bytes[index - offset] = binary.charCodeAt(index);
+    chunks.push(bytes);
+  }
+  return new Blob(chunks, { type: type || 'application/octet-stream' });
 }
 
 export class UIManager {
@@ -31,13 +53,14 @@ export class UIManager {
    * @param {import('./RecorderManager.js').RecorderManager} [context.recorderManager]
    * @param {Object} context.sceneHelpers - gridHelper, dirLight, hemiLight referansları
    */
-  constructor({ timelineManager, character, characterManager, spriteAnimationManager, worldSpriteCharacterManager = null, projectStore = null, onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, sceneHelpers }) {
+  constructor({ timelineManager, character, characterManager, spriteAnimationManager, worldSpriteCharacterManager = null, projectStore = null, worldSpriteReady = Promise.resolve(), onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, sceneHelpers }) {
     this.timeline = timelineManager;
     this.character = character;
     this.characters = characterManager || character;
     this.sprites = spriteAnimationManager;
     this.worldSprites = worldSpriteCharacterManager;
     this.projectStore = projectStore;
+    this.worldSpriteReady = worldSpriteReady;
     this.onControlModeChange = onControlModeChange;
     this.door = door;
     this.cameraManager = cameraManager;
@@ -56,11 +79,22 @@ export class UIManager {
     this.autosave = new AutosaveCoordinator({
       timeline: this.timeline,
       sprites: this.sprites,
+      mapLoader: this.mapLoader,
+      worldSprites: this.worldSprites,
       projectStore: this.projectStore,
+      worldSpriteReady: this.worldSpriteReady,
       onStatus: (msg) => { if (this.dom?.autosaveStatus) this.dom.autosaveStatus.textContent = msg; },
       onError: (msg) => this.showToast(msg),
     });
     this.autosave.connect();
+    if (this.dom.panelBody) {
+      this.dom.panelBody.inert = true;
+      this.dom.panelBody.setAttribute('aria-busy', 'true');
+      this.autosave.ready.finally(() => {
+        this.dom.panelBody.inert = false;
+        this.dom.panelBody.removeAttribute('aria-busy');
+      }).catch(() => {});
+    }
 
     // İlk durum senkronizasyonu
     this.updateTimelineUI();
@@ -386,12 +420,28 @@ export class UIManager {
         try {
           const sprites = await this.sprites.exportAssets();
           this.sprites.constructor.validateProjectAssets(sprites);
+          const timeline = JSON.parse(this.timeline.exportSequence());
+          const mapAsset = this.mapLoader?.exportStateForStorage?.() || null;
+          const worldState = await this.worldSprites?.exportProjectStateForStorage?.() || { templates: [], actors: [] };
+          const totalBytes = calculateProjectBytes(timeline, sprites, mapAsset, worldState.templates);
+          const exportLimit = getDevicePerformanceProfile(getDeviceMemoryGiB()).maxProjectAssetExportBytes;
+          if (totalBytes > exportLimit) throw new Error(`Bu cihazda proje JSON görsel varlık sınırı ${Math.floor(exportLimit / (1024 * 1024))} MiB.`);
+          let portableMap = null;
+          if (mapAsset) portableMap = { ...mapAsset, blob: undefined, data: await blobToBase64(mapAsset.blob) };
+          const portableTemplates = [];
+          for (const template of worldState.templates) {
+            const { blob, ...metadata } = template;
+            portableTemplates.push({ ...metadata, data: await blobToBase64(blob) });
+          }
           const payload = {
-            ...JSON.parse(this.timeline.exportSequence()),
-            format: 'animationer-project', schemaVersion: 2, projectVersion: 2,
+            ...timeline,
+            format: 'animationer-project', schemaVersion: PROJECT_SCHEMA_VERSION, projectVersion: PROJECT_SCHEMA_VERSION,
             updatedAt: new Date().toISOString(),
-            scope: { timeline: true, sprites2d: true, characterTransforms: false, mapAssets: false, cameraPreferences: false },
+            scope: { timeline: true, sprites2d: true, characterTransforms: false, mapAssets: Boolean(mapAsset), worldCharacters: true, cameraPreferences: false },
             sprites,
+            mapAsset: portableMap,
+            worldCharacterTemplates: portableTemplates,
+            worldCharacters: worldState.actors,
           };
           const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
           const result = await saveGeneratedFile(blob, 'animationer-project.json', {
@@ -421,23 +471,39 @@ export class UIManager {
             try {
               const payload = JSON.parse(evt.target.result);
               if (payload?.format === 'animationer-project') {
-                if (![1, 2].includes(payload.projectVersion || 1) || (payload.schemaVersion && payload.schemaVersion !== 2)) {
-                  throw new Error('Bu proje sürümü desteklenmiyor.');
-                }
-                const assets = payload.sprites || [];
+                if (![1, 2, 3].includes(payload.schemaVersion || payload.projectVersion || 1)) throw new Error('Bu proje sürümü desteklenmiyor.');
+                const migrated = migrateProjectRecord(payload);
+                const importBytes = calculateProjectBytes(migrated.timeline, migrated.sprites, migrated.mapAsset, migrated.worldCharacterTemplates);
+                const importLimit = getDevicePerformanceProfile(getDeviceMemoryGiB()).maxProjectAssetExportBytes;
+                if (importBytes > importLimit) throw new Error(`Bu proje cihazın ${Math.floor(importLimit / (1024 * 1024))} MiB görsel bellek sınırını aşıyor; daha küçük dosyalarla yeniden dışa aktarın.`);
+                const assets = [];
+                for (const asset of migrated.sprites) assets.push(asset.data
+                  ? { ...asset, blob: base64ToBlob(asset.data, asset.mimeType), data: undefined }
+                  : asset);
+                const worldCharacterTemplates = [];
+                for (const template of migrated.worldCharacterTemplates) worldCharacterTemplates.push(template.data
+                  ? { ...template, blob: base64ToBlob(template.data, template.mimeType), data: undefined }
+                  : template);
+                const mapAsset = migrated.mapAsset?.data
+                  ? { ...migrated.mapAsset, blob: base64ToBlob(migrated.mapAsset.data, migrated.mapAsset.mimeType), data: undefined }
+                  : migrated.mapAsset;
+                const normalized = migrateProjectRecord({ ...migrated, sprites: assets, worldCharacterTemplates, mapAsset });
                 const assetIds = this.sprites.constructor.validateProjectAssets(assets);
                 const candidateTimeline = new this.timeline.constructor({});
-                candidateTimeline.importSequence(payload);
+                candidateTimeline.importSequence(normalized.timeline);
                 const missing = candidateTimeline.steps.find((step) => step.type === 'PLAY_SPRITE_ANIMATION' && !assetIds.has(step.actorId));
                 if (missing) throw new Error(`'${missing.actorId}' sprite dosyası projede yok; mevcut sahne korundu.`);
 
-                // Görseller geçici sahnede tamamen yüklenip doğrulanmadan mevcut proje değiştirilmez.
+                // Each resource manager stages/decode-validates its input before replacing that resource.
+                await this.worldSprites?.importProjectState?.({ templates: normalized.worldCharacterTemplates, actors: normalized.worldCharacters }, { replaceTemplates: true });
                 await this.sprites.importAssets(assets);
+                await this.mapLoader?.restoreProjectState?.(mapAsset);
                 this.timeline.stop();
                 this.timeline.steps = candidateTimeline.steps;
                 this.timeline.playMode = candidateTimeline.playMode;
                 this.timeline._notify();
-                this.showToast('Proje, zaman çizelgesi ve görsel varlıklarla yüklendi');
+                this.autosave?.schedule();
+                this.showToast('Proje; 2D ortam, zaman çizelgesi ve karakterlerle yüklendi');
               } else { this.timeline.importSequence(payload); this.showToast('Eski biçim zaman çizelgesi yüklendi (görseller bu dosyada bulunmuyor)'); }
             } catch (err) {
               this.showToast(`Proje yüklenemedi; mevcut sahne korundu: ${err.message || 'geçersiz dosya'}`);
@@ -571,10 +637,10 @@ export class UIManager {
       this.worldSprites?.selectTemplate(d.worldSpriteTemplateSelect.value);
       this.updateWorldSpriteUI();
     });
-    d.btnSpawnWorldSprite?.addEventListener('click', () => {
+    d.btnSpawnWorldSprite?.addEventListener('click', async () => {
       try {
         const template = this.worldSprites?.templates.get(d.worldSpriteTemplateSelect?.value);
-        const actor = this.worldSprites?.spawn(d.worldSpriteTemplateSelect?.value);
+        const actor = await this.worldSprites?.spawn(d.worldSpriteTemplateSelect?.value);
         this.showToast(`“${template?.name || actor?.name}” 3D dünyaya eklendi.`);
       } catch (error) {
         this.showToast(error.message || '2D karakter dünyaya eklenemedi.');
@@ -582,7 +648,7 @@ export class UIManager {
     });
     d.btnDeleteWorldSpriteTemplate?.addEventListener('click', async () => {
       const template = this.worldSprites?.templates.get(d.worldSpriteTemplateSelect?.value);
-      if (!template || !window.confirm(`“${template.name}” karakterini kalıcı kitaplıktan silmek istiyor musunuz? Sahnede zaten oluşturulmuş kopyalar kalır.`)) return;
+      if (!template || !window.confirm(`“${template.name}” karakterini kalıcı kitaplıktan silmek istiyor musunuz? Bu kaynağı kullanan sahne karakterleri varsa önce onları kaldırmanız gerekir.`)) return;
       try {
         await this.worldSprites.deleteTemplate(template.id);
         this.showToast(`“${template.name}” kitaplıktan silindi.`);
@@ -619,10 +685,11 @@ export class UIManager {
     // --- SEKME 2: SAHNE / HARİTA ---
     if (d.btnTriggerFile && d.filePicker) {
       d.btnTriggerFile.addEventListener('click', () => d.filePicker.click());
-      d.filePicker.addEventListener('change', (e) => {
+      d.filePicker.addEventListener('change', async (e) => {
         const file = e.target.files && e.target.files[0];
         if (file) {
-          this.mapLoader.loadFile(file);
+          try { await this.mapLoader.loadFile(file); }
+          catch (error) { this.showToast(error.message || 'Harita yüklenemedi; önceki ortam korundu.'); }
           d.filePicker.value = '';
         }
       });

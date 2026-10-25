@@ -8,6 +8,10 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { validateTextureDimensions } from '../utils/device-profile.js';
+import { getDeviceMemoryGiB, getDevicePerformanceProfile } from '../utils/device-profile.js';
+
+const MAX_MAP_IMAGE_BYTES = 50 * 1024 * 1024;
 
 export class MapLoader {
   /**
@@ -15,15 +19,19 @@ export class MapLoader {
    * @param {CollisionManager} collisionManager - Çarpışma yöneticisi
    * @param {Function} onStatusChange - Bildirim geri çağırma işlevi
    */
-  constructor(scene, collisionManager = null, onStatusChange = () => {}) {
+  constructor(scene, collisionManager = null, onStatusChange = () => {}, onStateChange = () => {}) {
     this.scene = scene;
     this.collisionManager = collisionManager;
     this.onStatusChange = onStatusChange;
+    this.onStateChange = onStateChange;
 
     this.currentLoadedObject = null;
     this.currentObjectType = 'none'; // '3d' | '2d' | 'none'
     this.currentTexture = null;
     this.currentPlane = null;
+    this.currentSourceFile = null;
+    this.currentFileName = null;
+    this.stateRevision = 0;
 
     // Bu modelle yüklenen nesnelerin takibi
     this.registeredObstacles = [];
@@ -46,7 +54,7 @@ export class MapLoader {
   /**
    * Sahnede var olan haritayı/modeli, mobilya engellerini ve yürünebilir yüzeyleri temizler
    */
-  clear() {
+  clear({ notify = true } = {}) {
     if (this.collisionManager) {
       if (this.registeredObstacles.length > 0) {
         this.registeredObstacles.forEach((obj) => this.collisionManager.unregisterObstacle(obj));
@@ -58,15 +66,22 @@ export class MapLoader {
       }
     }
 
+    const disposedTextures = new Set();
     if (this.currentLoadedObject) {
       this.scene.remove(this.currentLoadedObject);
       this.currentLoadedObject.traverse((node) => {
         if (node.isMesh) {
           node.geometry?.dispose();
-          if (Array.isArray(node.material)) {
-            node.material.forEach((mat) => mat.dispose());
-          } else {
-            node.material?.dispose();
+          const materials = Array.isArray(node.material) ? node.material : [node.material];
+          for (const material of materials) {
+            if (!material) continue;
+            for (const value of Object.values(material)) {
+              if (value?.isTexture && !disposedTextures.has(value)) {
+                value.dispose();
+                disposedTextures.add(value);
+              }
+            }
+            material.dispose();
           }
         }
       });
@@ -74,13 +89,17 @@ export class MapLoader {
     }
 
     if (this.currentTexture) {
-      this.currentTexture.dispose();
+      if (!disposedTextures.has(this.currentTexture)) this.currentTexture.dispose();
       this.currentTexture = null;
     }
 
     this.currentPlane = null;
+    this.currentSourceFile = null;
+    this.currentFileName = null;
     this.currentObjectType = 'none';
+    this.stateRevision++;
     this.onStatusChange({ type: 'cleared', name: null });
+    if (notify) this.onStateChange({ type: 'map-cleared' });
   }
 
   /**
@@ -99,6 +118,7 @@ export class MapLoader {
     this.gltfLoader.load(
       url,
       (gltf) => {
+        URL.revokeObjectURL(url);
         const model = gltf.scene;
         this.currentLoadedObject = model;
         this.currentObjectType = '3d';
@@ -169,6 +189,7 @@ export class MapLoader {
       },
       undefined,
       (error) => {
+        URL.revokeObjectURL(url);
         console.error('GLTF Yükleme Hatası:', error);
         this.onStatusChange({ type: 'error', message: '3D Model yüklenemedi!' });
       }
@@ -180,68 +201,76 @@ export class MapLoader {
    * @param {string} url - Görsel ObjectURL veya bağlantısı
    * @param {string} fileName - Dosya adı
    */
-  loadImage(url, fileName = 'Gorsel.png') {
-    this.clear();
+  async loadImage(url, fileName = 'Gorsel.png', sourceFile = null) {
     this.onStatusChange({ type: 'loading', name: fileName });
+    let texture;
+    try {
+      texture = await this.textureLoader.loadAsync(url);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      const width = texture.image?.naturalWidth || texture.image?.width || 0;
+      const height = texture.image?.naturalHeight || texture.image?.height || 0;
+      validateTextureDimensions(width, height);
+      const aspect = width / height;
+      const geometry = new THREE.PlaneGeometry(this.currentScale, this.currentScale / aspect);
+      const material = new THREE.MeshStandardMaterial({
+        map: texture, transparent: true, alphaTest: 0.1, depthWrite: true,
+        side: THREE.DoubleSide, roughness: 0.5, metalness: 0.05, opacity: this.currentOpacity,
+      });
+      const plane = new THREE.Mesh(geometry, material);
+      plane.receiveShadow = true;
+      plane.castShadow = false;
+      plane.name = 'floor_plane_2d';
+      plane.frustumCulled = true;
 
-    this.textureLoader.load(
-      url,
-      (texture) => {
-        texture.colorSpace = THREE.SRGBColorSpace;
-        this.currentTexture = texture;
-        this.currentObjectType = '2d';
-
-        const width = texture.image?.width || 1200;
-        const height = texture.image?.height || 800;
-        this.imageAspectRatio = width / height;
-
-        const planeW = this.baseWidth;
-        const planeH = this.baseWidth / this.imageAspectRatio;
-
-        const geometry = new THREE.PlaneGeometry(planeW, planeH);
-
-        const material = new THREE.MeshStandardMaterial({
-          map: texture,
-          transparent: true,
-          alphaTest: 0.1,
-          depthWrite: true,
-          side: THREE.DoubleSide,
-          roughness: 0.5,
-          metalness: 0.05,
-          opacity: this.currentOpacity,
-        });
-
-        this.currentPlane = new THREE.Mesh(geometry, material);
-        this.currentPlane.receiveShadow = true;
-        this.currentPlane.castShadow = false;
-        this.currentPlane.name = 'floor_plane_2d';
-        this.currentPlane.frustumCulled = true;
-
-        this.currentLoadedObject = this.currentPlane;
-        this.scene.add(this.currentPlane);
-
-        // CollisionManager'a yürünebilir zemin olarak ekle
-        if (this.collisionManager) {
-          this.collisionManager.registerWalkableSurface(this.currentPlane);
-          this.registeredWalkableSurfaces.push(this.currentPlane);
-        }
-
-        this.setOrientation(this.isGroundOrientation);
-
-        this.onStatusChange({
-          type: 'loaded',
-          category: '2d',
-          name: fileName,
-          object: this.currentPlane,
-          aspectRatio: this.imageAspectRatio,
-        });
-      },
-      undefined,
-      (error) => {
-        console.error('Görsel Yükleme Hatası:', error);
-        this.onStatusChange({ type: 'error', message: 'Görsel yüklenemedi!' });
+      // Keep the prior environment visible unless the replacement has decoded and validated.
+      this.clear({ notify: false });
+      this.currentTexture = texture;
+      this.currentObjectType = '2d';
+      this.currentSourceFile = sourceFile ? sourceFile.slice(0, sourceFile.size, sourceFile.type) : null;
+      this.currentFileName = fileName;
+      this.imageAspectRatio = aspect;
+      this.currentPlane = plane;
+      this.currentLoadedObject = plane;
+      this.scene.add(plane);
+      if (this.collisionManager) {
+        this.collisionManager.registerWalkableSurface(plane);
+        this.registeredWalkableSurfaces.push(plane);
       }
-    );
+      this.setOrientation(this.isGroundOrientation);
+      this.onStatusChange({ type: 'loaded', category: '2d', name: fileName, object: plane, aspectRatio: aspect });
+      this.onStateChange({ type: 'map-loaded' });
+      return plane;
+    } catch (error) {
+      texture?.dispose();
+      this.onStatusChange({ type: 'error', message: error.message || 'Görsel yüklenemedi!' });
+      throw error;
+    }
+  }
+
+  exportStateForStorage() {
+    if (this.currentObjectType !== '2d' || !this.currentSourceFile) return null;
+    return {
+      kind: 'image',
+      fileName: this.currentFileName || this.currentSourceFile.name || 'environment.png',
+      mimeType: this.currentSourceFile.type,
+      blob: this.currentSourceFile.slice(0, this.currentSourceFile.size, this.currentSourceFile.type),
+      scale: this.currentScale,
+      opacity: this.currentOpacity,
+      groundOrientation: this.isGroundOrientation,
+    };
+  }
+
+  async restoreProjectState(mapAsset) {
+    if (!mapAsset) { this.clear(); return null; }
+    if (!(mapAsset.blob instanceof Blob)) throw new Error('Kayıtlı 2D ortam görseli okunamıyor.');
+    const url = URL.createObjectURL(mapAsset.blob);
+    try {
+      await this.loadImage(url, mapAsset.fileName, mapAsset.blob);
+      this.setScale(mapAsset.scale);
+      this.setOpacity(mapAsset.opacity);
+      this.setOrientation(mapAsset.groundOrientation);
+      return true;
+    } finally { URL.revokeObjectURL(url); }
   }
 
   setOrientation(isGround) {
@@ -265,10 +294,13 @@ export class MapLoader {
       this.currentPlane.rotation.z = 0;
       this.currentPlane.position.set(0, height / 2, 0);
     }
+    this.stateRevision++;
+    this.onStateChange({ type: 'map-settings-changed' });
   }
 
   setScale(scale) {
-    this.currentScale = scale;
+    if (!Number.isFinite(Number(scale)) || Number(scale) <= 0) return;
+    this.currentScale = Number(scale);
     if (this.currentPlane) {
       this.setOrientation(this.isGroundOrientation);
     }
@@ -279,11 +311,14 @@ export class MapLoader {
   }
 
   setOpacity(opacity) {
-    this.currentOpacity = opacity;
+    if (!Number.isFinite(Number(opacity))) return;
+    this.currentOpacity = Math.max(0, Math.min(1, Number(opacity)));
     if (this.currentPlane && this.currentPlane.material) {
-      this.currentPlane.material.opacity = opacity;
-      this.currentPlane.material.transparent = opacity < 1.0 || true;
+      this.currentPlane.material.opacity = this.currentOpacity;
+      this.currentPlane.material.transparent = this.currentOpacity < 1.0 || true;
     }
+    this.stateRevision++;
+    this.onStateChange({ type: 'map-settings-changed' });
   }
 
   setImageOpacity(opacity) {
@@ -295,25 +330,34 @@ export class MapLoader {
     this.setOrientation(isGround);
   }
 
-  handleFile(file) {
+  async handleFile(file) {
     if (!file) return;
     const name = file.name.toLowerCase();
+    const isImage = /\.(png|jpe?g|webp)$/i.test(name);
+    if (isImage && (!file.size || file.size > Math.min(MAX_MAP_IMAGE_BYTES, getDevicePerformanceProfile(getDeviceMemoryGiB()).maxProjectAssetExportBytes))) {
+      const limit = Math.floor(Math.min(MAX_MAP_IMAGE_BYTES, getDevicePerformanceProfile(getDeviceMemoryGiB()).maxProjectAssetExportBytes) / (1024 * 1024));
+      throw new Error(`2D ortam görseli bu cihazda en fazla ${limit} MiB olabilir.`);
+    }
     const url = URL.createObjectURL(file);
 
     if (name.endsWith('.glb') || name.endsWith('.gltf')) {
       this.loadGLTF(url, file.name);
+      return true;
     } else if (
       name.endsWith('.png') ||
       name.endsWith('.jpg') ||
       name.endsWith('.jpeg') ||
       name.endsWith('.webp')
     ) {
-      this.loadImage(url, file.name);
+      try { return await this.loadImage(url, file.name, file); }
+      finally { URL.revokeObjectURL(url); }
     } else {
+      URL.revokeObjectURL(url);
       this.onStatusChange({
         type: 'error',
         message: 'Desteklenmeyen dosya türü! (.glb, .gltf, .png, .jpg, .webp)',
       });
+      throw new Error('Desteklenmeyen dosya türü! (.glb, .gltf, .png, .jpg, .webp)');
     }
   }
 
@@ -448,8 +492,10 @@ export class MapLoader {
     ctx.strokeRect(80, 80, 1440, 840);
 
     canvas.toBlob((blob) => {
+      if (!blob) return;
       const url = URL.createObjectURL(blob);
-      this.loadImage(url, 'Demo_Kat_Plani.png');
+      this.loadImage(url, 'Demo_Kat_Plani.png', new File([blob], 'Demo_Kat_Plani.png', { type: 'image/png' }))
+        .finally(() => URL.revokeObjectURL(url));
 
       if (this.collisionManager) {
         this.clearAllWallBoxes();

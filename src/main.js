@@ -53,9 +53,12 @@ class App {
       panelRoot.outerHTML = studioPanelHtml;
     }
 
+    this.worldSpriteLibraryReady = this.worldSpriteCharacterManager.loadLibrary().catch((error) => {
+      this.uiManager?.showToast(error.message || '2D karakter kitaplığı açılamadı.');
+      return null;
+    });
     this._initUI();
     this._bindEvents();
-    this.worldSpriteCharacterManager.loadLibrary().catch((error) => this.uiManager?.showToast(error.message || '2D karakter kitaplığı açılamadı.'));
 
     this._animate();
   }
@@ -171,7 +174,10 @@ class App {
     this.worldSpriteCharacterManager = new WorldSpriteCharacterManager(this.scene, this.collisionManager, {
       characterRoster: this.character,
       store: this.projectStore,
-      onStateChange: (state) => this.uiManager?.updateWorldSpriteUI(state.templates, state.actors, state.selectedId, state.selectedTemplateId, state.activeControl),
+      onStateChange: (state) => {
+        this.uiManager?.updateWorldSpriteUI(state.templates, state.actors, state.selectedId, state.selectedTemplateId, state.activeControl);
+        if (state.errors?.length) this.uiManager?.showToast(`${state.errors.length} bozuk 2D karakter kaydı atlandı; diğer kayıtlar kullanılabilir.`);
+      },
     });
 
     // 4. Kamera Yöneticisi & CCTV İstasyonları
@@ -226,6 +232,7 @@ class App {
       spriteAnimationManager: this.spriteAnimationManager,
       worldSpriteCharacterManager: this.worldSpriteCharacterManager,
       projectStore: this.projectStore,
+      worldSpriteReady: this.worldSpriteLibraryReady,
       characterManager: this.character,
       onControlModeChange: (mode) => this.setControlMode(mode),
       sceneHelpers: {
@@ -306,13 +313,14 @@ class App {
       }
     });
 
-    window.addEventListener('drop', (e) => {
+    window.addEventListener('drop', async (e) => {
       e.preventDefault();
       if (overlay) overlay.classList.remove('active');
 
       if (e.dataTransfer && e.dataTransfer.files.length > 0) {
         const file = e.dataTransfer.files[0];
-        this.mapLoader.loadFile(file);
+        try { await this.mapLoader.loadFile(file); }
+        catch (error) { this.uiManager?.showToast(error.message || 'Harita yüklenemedi; önceki ortam korundu.'); }
       }
     });
   }

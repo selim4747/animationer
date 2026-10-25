@@ -46,6 +46,19 @@ test('2D sprite keeps its configured frame rate when no override is supplied', (
   manager.stopAnimation(actor.id);
 });
 
+test('2D sprite rejects oversized decoded textures and releases the rejected texture', async () => {
+  const manager = new SpriteAnimationManager(new THREE.Scene(), { width: 400, height: 300 });
+  const file = new Blob(['sheet'], { type: 'image/png' });
+  Object.defineProperty(file, 'name', { value: 'large.png' });
+  const texture = new THREE.Texture({ width: 8192, height: 4096 });
+  let disposed = false;
+  texture.dispose = () => { disposed = true; };
+  manager._loadTexture = async () => texture;
+  await assert.rejects(manager.addSpriteSheet(file), /çözünürlüğü.*sınırını/i);
+  assert.equal(disposed, true);
+  assert.equal(manager.actors.length, 0);
+});
+
 test('scheduled timeline plays three 2D sprites concurrently at their start times and loops frames', async () => {
   const manager = new SpriteAnimationManager(new THREE.Scene(), { width: 400, height: 300 });
   const actors = ['QA_Sprite_A', 'QA_Sprite_B', 'QA_Sprite_C'].map((id) => ({ ...makeActor(), id, name: id }));

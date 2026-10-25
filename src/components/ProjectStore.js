@@ -1,4 +1,6 @@
-export const PROJECT_SCHEMA_VERSION = 2;
+import { getDeviceMemoryGiB, getDevicePerformanceProfile } from '../utils/device-profile.js';
+
+export const PROJECT_SCHEMA_VERSION = 3;
 export const MAX_PROJECT_BYTES = 100 * 1024 * 1024;
 const DB_NAME = 'animationer-projects';
 const STORE_NAME = 'projects';
@@ -43,6 +45,17 @@ export function validateCharacterTemplateRecord(input) {
 export function migrateProjectRecord(input) {
   if (!input || typeof input !== 'object') throw new Error('Kayıtlı proje bozuk.');
   if (input.schemaVersion === PROJECT_SCHEMA_VERSION) return validateProjectRecord(input);
+  if (input.schemaVersion === 2 || input.projectVersion === 2) {
+    return validateProjectRecord({
+      ...input,
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      projectVersion: PROJECT_SCHEMA_VERSION,
+      mapAsset: null,
+      worldCharacterTemplates: [],
+      worldCharacters: [],
+      scope: { ...input.scope, mapAssets: false, worldCharacters: false },
+    });
+  }
   if (input.schemaVersion === 1 || input.projectVersion === 1) {
     // v1 portable JSON stores timeline properties at the root and sprites as base64.
     const legacyTimeline = input.timeline || input;
@@ -50,7 +63,7 @@ export function migrateProjectRecord(input) {
       schemaVersion: PROJECT_SCHEMA_VERSION,
       format: 'animationer-project',
       updatedAt: input.updatedAt || input.timestamp || new Date().toISOString(),
-      scope: { timeline: true, sprites2d: true, characterTransforms: false, mapAssets: false, cameraPreferences: false },
+      scope: { timeline: true, sprites2d: true, characterTransforms: false, mapAssets: false, worldCharacters: false, cameraPreferences: false },
       timeline: {
         version: legacyTimeline.version || '1.0.0',
         timestamp: legacyTimeline.timestamp || input.timestamp || new Date().toISOString(),
@@ -58,20 +71,25 @@ export function migrateProjectRecord(input) {
         steps: Array.isArray(legacyTimeline.steps) ? legacyTimeline.steps : [],
       },
       sprites: Array.isArray(input.sprites) ? input.sprites.map((asset) => ({ ...asset })) : [],
+      mapAsset: null,
+      worldCharacterTemplates: [],
+      worldCharacters: [],
       viewport: null,
     });
   }
   throw new Error(`Desteklenmeyen proje schema sürümü: ${input.schemaVersion ?? input.projectVersion ?? 'belirsiz'}`);
 }
 
-export function calculateProjectBytes(timeline, sprites = []) {
+function assetSize(asset) {
+  return typeof asset?.blob?.size === 'number'
+    ? asset.blob.size
+    : (typeof asset?.data === 'string' ? Math.floor(asset.data.length * 3 / 4) : 0);
+}
+
+export function calculateProjectBytes(timeline, sprites = [], mapAsset = null, worldCharacterTemplates = []) {
   let total = new TextEncoder().encode(JSON.stringify(timeline)).byteLength;
-  for (const asset of sprites) {
-    const size = typeof asset?.blob?.size === 'number'
-      ? asset.blob.size
-      : (typeof asset?.data === 'string' ? Math.floor(asset.data.length * 3 / 4) : 0);
-    total += size;
-  }
+  for (const asset of [...sprites, ...worldCharacterTemplates]) total += assetSize(asset);
+  if (mapAsset) total += assetSize(mapAsset);
   return total;
 }
 
@@ -82,8 +100,30 @@ export function validateProjectRecord(input) {
   if (!input.timeline || !Array.isArray(input.timeline.steps) || !Array.isArray(input.sprites)) {
     throw new Error('Proje timeline veya sprite verisi eksik.');
   }
+  const mapAsset = input.mapAsset ?? null;
+  const worldCharacterTemplates = input.worldCharacterTemplates ?? [];
+  const worldCharacters = input.worldCharacters ?? [];
+  if (!Array.isArray(worldCharacterTemplates) || worldCharacterTemplates.length > 50) throw new Error('2D karakter kaynak listesi geçersiz.');
+  if (!Array.isArray(worldCharacters) || worldCharacters.length > 50) throw new Error('Sahnedeki 2D karakter listesi geçersiz.');
+  if (mapAsset && (mapAsset.kind !== 'image' || !assetSize(mapAsset) || !mapAsset.fileName || !Number.isFinite(mapAsset.scale) || !Number.isFinite(mapAsset.opacity) || mapAsset.opacity < 0 || mapAsset.opacity > 1 || typeof mapAsset.groundOrientation !== 'boolean')) {
+    throw new Error('2D ortam kaydı geçersiz veya görseli eksik.');
+  }
+  const templateIds = new Set();
+  for (const template of worldCharacterTemplates) {
+    if (!template || typeof template.id !== 'string' || !template.id || templateIds.has(template.id) || !assetSize(template)) throw new Error('2D karakter kitaplığı kaynağı geçersiz veya yineleniyor.');
+    templateIds.add(template.id);
+    if (!template.name || !Number.isInteger(Number(template.columns)) || !Number.isInteger(Number(template.rows)) || !Number.isFinite(Number(template.fps))) throw new Error('2D karakter kitaplığı bilgileri geçersiz.');
+  }
+  const actorIds = new Set();
+  for (const actor of worldCharacters) {
+    if (!actor || typeof actor.id !== 'string' || !actor.id || actorIds.has(actor.id) || !templateIds.has(actor.templateId)
+      || ![actor.x, actor.y, actor.z].every((value) => Number.isFinite(Number(value)))) {
+      throw new Error('Sahnedeki 2D karakter kaydı geçersiz veya kaynak spritesheet eksik.');
+    }
+    actorIds.add(actor.id);
+  }
   if (input.sprites.length > 100) throw new Error('Projede en fazla 100 sprite olabilir.');
-  const totalBytes = calculateProjectBytes(input.timeline, input.sprites);
+  const totalBytes = calculateProjectBytes(input.timeline, input.sprites, mapAsset, worldCharacterTemplates);
   for (const asset of input.sprites) {
     if (!asset || typeof asset.id !== 'string' || !asset.id) throw new Error('Proje sprite kimliği geçersiz.');
     const hasBlob = typeof Blob !== 'undefined' && asset.blob instanceof Blob;
@@ -91,17 +131,23 @@ export function validateProjectRecord(input) {
     if (!size) throw new Error(`'${asset.id}' sprite dosyası eksik.`);
   }
   if (totalBytes > MAX_PROJECT_BYTES) throw new Error('Toplam proje boyutu 100 MB sınırını aşıyor.');
-  return { ...input, scope: { ...input.scope }, timeline: { ...input.timeline }, sprites: [...input.sprites] };
+  return { ...input, scope: { ...input.scope }, timeline: { ...input.timeline }, sprites: [...input.sprites], mapAsset, worldCharacterTemplates: [...worldCharacterTemplates], worldCharacters: [...worldCharacters] };
 }
 
-export function createAutosaveRecord({ timeline, sprites, viewport }) {
+export function createAutosaveRecord({ timeline, sprites, viewport, mapAsset = null, worldCharacterTemplates = [], worldCharacters = [] }) {
+  const assetBudget = getDevicePerformanceProfile(getDeviceMemoryGiB()).maxProjectAssetExportBytes;
+  const assetBytes = [...sprites, ...worldCharacterTemplates].reduce((total, asset) => total + assetSize(asset), mapAsset ? assetSize(mapAsset) : 0);
+  if (assetBytes > assetBudget) throw new Error(`Bu cihazda otomatik kayıt görsel varlık sınırı ${Math.floor(assetBudget / (1024 * 1024))} MiB; daha küçük görseller kullanın.`);
   return validateProjectRecord({
     schemaVersion: PROJECT_SCHEMA_VERSION,
     format: 'animationer-project',
     updatedAt: new Date().toISOString(),
-    scope: { timeline: true, sprites2d: true, characterTransforms: false, mapAssets: false, cameraPreferences: false },
+    scope: { timeline: true, sprites2d: true, characterTransforms: false, mapAssets: Boolean(mapAsset), worldCharacters: true, cameraPreferences: false },
     timeline,
     sprites,
+    mapAsset,
+    worldCharacterTemplates,
+    worldCharacters,
     viewport: viewport && Number.isFinite(viewport.width) && Number.isFinite(viewport.height)
       ? { width: Math.max(1, Math.round(viewport.width)), height: Math.max(1, Math.round(viewport.height)) }
       : null,
@@ -165,34 +211,104 @@ export class IndexedProjectStore {
     } finally { db.close(); }
   }
 
-  async listCharacterTemplates() {
+  async listCharacterTemplates({ onInvalid = () => {} } = {}) {
     const db = await this._open();
     try {
       return await new Promise((resolve, reject) => {
         const request = db.transaction(CHARACTER_LIBRARY_STORE, 'readonly').objectStore(CHARACTER_LIBRARY_STORE).getAll();
-        request.onsuccess = () => resolve((request.result || []).map(validateCharacterTemplateRecord));
+        request.onsuccess = () => {
+          const valid = [];
+          for (const item of request.result || []) {
+            try { valid.push(validateCharacterTemplateRecord(item)); }
+            catch (error) { onInvalid(item, error); }
+          }
+          resolve(valid);
+        };
         request.onerror = () => reject(request.error || new Error('2D karakter kitaplığı okunamadı.'));
       });
     } finally { db.close(); }
   }
 
-  async saveCharacterTemplate(input) {
+  async listCharacterTemplateMetadata({ onInvalid = () => {} } = {}) {
+    const db = await this._open();
+    try {
+      const store = db.transaction(CHARACTER_LIBRARY_STORE, 'readonly').objectStore(CHARACTER_LIBRARY_STORE);
+      if (typeof store.openCursor !== 'function') {
+        const records = await new Promise((resolve, reject) => {
+          const request = store.getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error || new Error('2D karakter kitaplığı okunamadı.'));
+        });
+        return records.flatMap((item) => {
+          try {
+            const valid = validateCharacterTemplateRecord(item);
+            const { blob, ...metadata } = valid;
+            metadata.blobSize = blob.size;
+            return [metadata];
+          } catch (error) { onInvalid(item, error); return []; }
+        });
+      }
+      return await new Promise((resolve, reject) => {
+        const results = [];
+        const request = store.openCursor();
+        request.onerror = () => reject(request.error || new Error('2D karakter kitaplığı okunamadı.'));
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) { resolve(results); return; }
+          try {
+            const valid = validateCharacterTemplateRecord(cursor.value);
+            const { blob, ...metadata } = valid;
+            metadata.blobSize = blob.size;
+            results.push(metadata);
+          } catch (error) { onInvalid(cursor.value, error); }
+          cursor.continue();
+        };
+      });
+    } finally { db.close(); }
+  }
+
+  async getCharacterTemplate(id) {
+    const db = await this._open();
+    try {
+      const record = await new Promise((resolve, reject) => {
+        const request = db.transaction(CHARACTER_LIBRARY_STORE, 'readonly').objectStore(CHARACTER_LIBRARY_STORE).get(id);
+        request.onsuccess = () => resolve(request.result ?? null);
+        request.onerror = () => reject(request.error || new Error('2D karakter kaynağı okunamadı.'));
+      });
+      return record ? validateCharacterTemplateRecord(record) : null;
+    } finally { db.close(); }
+  }
+
+  async saveCharacterTemplate(input, { maxLibraryBytes = MAX_CHARACTER_LIBRARY_BYTES } = {}) {
     const template = validateCharacterTemplateRecord(input);
+    const effectiveLimit = Math.min(MAX_CHARACTER_LIBRARY_BYTES, Number(maxLibraryBytes) || MAX_CHARACTER_LIBRARY_BYTES);
     const db = await this._open();
     try {
       await new Promise((resolve, reject) => {
         const tx = db.transaction(CHARACTER_LIBRARY_STORE, 'readwrite');
         const store = tx.objectStore(CHARACTER_LIBRARY_STORE);
-        const existingRequest = store.getAll();
+        const existingRequest = typeof store.openCursor === 'function' ? store.openCursor() : store.getAll();
         let validationError = null;
-        existingRequest.onsuccess = () => {
-          const total = (existingRequest.result || []).reduce((sum, item) => sum + (item.id === template.id ? 0 : item.blob?.size || 0), template.blob.size);
-          if (total > MAX_CHARACTER_LIBRARY_BYTES) {
-            validationError = new Error('2D karakter kitaplığı 250 MB sınırını aşıyor; önce bazı modelleri silin.');
+        let total = template.blob.size;
+        const validateAndPut = () => {
+          if (total > effectiveLimit) {
+            validationError = new Error(`2D karakter kitaplığı bu cihazın ${Math.max(1, Math.round(effectiveLimit / (1024 * 1024)))} MB sınırını aşıyor; önce bazı modelleri silin.`);
             tx.abort();
             return;
           }
           store.put(template, template.id);
+        };
+        existingRequest.onsuccess = () => {
+          if (typeof store.openCursor === 'function') {
+            const cursor = existingRequest.result;
+            if (cursor) {
+              if (cursor.primaryKey !== template.id) total += cursor.value.blob?.size || 0;
+              cursor.continue();
+            } else validateAndPut();
+          } else {
+            total = (existingRequest.result || []).reduce((sum, item) => sum + (item.id === template.id ? 0 : item.blob?.size || 0), total);
+            validateAndPut();
+          }
         };
         existingRequest.onerror = () => { validationError = existingRequest.error; tx.abort(); };
         tx.oncomplete = () => resolve();
