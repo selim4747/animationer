@@ -31,6 +31,34 @@ test('routes exported files through the Windows Electron save dialog bridge', as
   }
 });
 
+test('streams large Windows blobs through bounded chunks and reports monotonic progress', async () => {
+  const originalWindow = globalThis.window;
+  const chunks = [];
+  const progress = [];
+  globalThis.window = {
+    dioramaDesktop: {
+      async beginGeneratedFile(request) { assert.equal(request.size, 3 * 1024 * 1024 + 5); return { sessionId: 'stream-1', filename: 'clip.webm' }; },
+      async writeGeneratedFileChunk(id, bytes) { assert.equal(id, 'stream-1'); chunks.push(new Uint8Array(bytes)); return { written: chunks.reduce((sum, chunk) => sum + chunk.length, 0) }; },
+      async finishGeneratedFile() { return { saved: true, filename: 'clip.webm', path: 'C:\\clip.webm' }; },
+      async abortGeneratedFile() { throw new Error('Unexpected abort'); },
+      async saveGeneratedFile() { throw new Error('Chunked API should be selected'); },
+    },
+  };
+  try {
+    const bytes = Buffer.alloc((3 * 1024 * 1024) + 5, 0x5a);
+    const result = await saveGeneratedFile(new Blob([bytes]), 'clip.webm', { onProgress: (event) => progress.push(event) });
+    assert.equal(result.saved, true);
+    assert.equal(result.method, 'electron');
+    assert.deepEqual(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))), bytes);
+    assert(chunks.every((chunk) => chunk.byteLength <= 3 * 1024 * 1024));
+    assert.equal(progress.at(-1).percent, 100);
+    assert(progress.every((event, index) => index === 0 || event.bytesWritten >= progress[index - 1].bytesWritten));
+  } finally {
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+  }
+});
+
 test('writes binary exports to the Capacitor Documents folder after permission is granted', async () => {
   const calls = [];
   const filesystem = {
@@ -68,6 +96,27 @@ test('writes large native files in bounded base64 chunks', async () => {
   assert.equal(progress[0].percent, 0);
   assert.equal(progress.at(-1).percent, 100);
   assert(progress.every((event, index) => index === 0 || event.bytesWritten >= progress[index - 1].bytesWritten));
+});
+
+test('uses smaller native write chunks on low-memory Android devices', async () => {
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { deviceMemory: 2, userAgent: 'Android' } });
+  const calls = [];
+  const filesystem = {
+    async checkPermissions() { return { publicStorage: 'granted' }; },
+    async writeFile(options) { calls.push(options); },
+    async appendFile(options) { calls.push(options); },
+  };
+  try {
+    const bytes = Buffer.alloc((1024 * 1024) + 7, 0x31);
+    await saveToCapacitorDocuments(new Blob([bytes]), 'low-memory.webm', filesystem, 'DOCUMENTS');
+    assert.equal(calls.length, 2);
+    assert(calls.every((call) => Buffer.from(call.data, 'base64').byteLength <= 1024 * 1024));
+    assert.deepEqual(Buffer.concat(calls.map((call) => Buffer.from(call.data, 'base64'))), bytes);
+  } finally {
+    if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
+    else delete globalThis.navigator;
+  }
 });
 
 test('does not write to device storage when permission is denied', async () => {

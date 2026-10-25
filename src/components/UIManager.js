@@ -66,6 +66,14 @@ export class UIManager {
     this.updateCharacterList(this.characters?.list?.() || []);
     this.updateSpriteList(this.sprites?.list?.() || [], this.sprites?.selectedId);
     this.updateWorldSpriteUI();
+    this.updateRecorderUI({
+      maxRecordingBytes: this.recorder?.maxRecordingBytes,
+      maxDurationSeconds: this.recorder?.maxDurationSeconds,
+      maxFrameRate: this.recorder?.maxFrameRate,
+      frameRate: this.recorder?.frameRate,
+      width: this.recorder?.canvas?.width,
+      height: this.recorder?.canvas?.height,
+    });
   }
 
   setRecorder(recorderManager) {
@@ -219,6 +227,7 @@ export class UIManager {
       recordingPreviewPanel: document.getElementById('recording-preview-panel'),
       recordingVideoPreview: document.getElementById('recording-video-preview'),
       btnDismissVideoPreview: document.getElementById('btn-dismiss-video-preview'),
+      recordingHeading: document.getElementById('render-recording-heading'),
 
       // Toast & Modallar
       toast: document.getElementById('toast'),
@@ -980,6 +989,9 @@ export class UIManager {
     maxRecordingBytes = 128 * 1024 * 1024,
     maxDurationSeconds = 180,
     frameRate = this.recorder?.frameRate || 30,
+    maxFrameRate = this.recorder?.maxFrameRate || 60,
+    width = this.recorder?.canvas?.width,
+    height = this.recorder?.canvas?.height,
     progress,
     stopReason,
   }) {
@@ -1014,7 +1026,12 @@ export class UIManager {
     if (d.btnQuality720p) d.btnQuality720p.disabled = isBusy;
     if (d.btnQuality1080p) d.btnQuality1080p.disabled = isBusy;
     if (d.btnFrameRate30) d.btnFrameRate30.disabled = isBusy;
-    if (d.btnFrameRate60) d.btnFrameRate60.disabled = isBusy;
+    if (d.btnFrameRate60) {
+      d.btnFrameRate60.disabled = isBusy || maxFrameRate < 60;
+      d.btnFrameRate60.title = maxFrameRate < 60
+        ? 'Bu cihazın düşük bellek profili nedeniyle 60 FPS devre dışı; 30 FPS kullanılıyor.'
+        : 'Daha akıcı hareket; daha fazla işlemci ve pil kullanımı';
+    }
 
     if (d.renderRecordingBanner) {
       d.renderRecordingBanner.style.display = isBusy ? 'flex' : 'none';
@@ -1028,7 +1045,10 @@ export class UIManager {
     if (d.recordingStatus) {
       const sizeMb = (sizeBytes / (1024 * 1024)).toFixed(1);
       const maxSizeMb = (maxRecordingBytes / (1024 * 1024)).toFixed(0);
-      if (isRecording) d.recordingStatus.textContent = `Video kaydı sürüyor · ${formattedDuration || '00:00'} · ${frameRate} FPS · ${sizeMb}/${maxSizeMb} MiB. En çok ${Math.ceil(maxDurationSeconds / 60)} dakika; sınırda otomatik durur.`;
+      if (d.recordingHeading) d.recordingHeading.textContent = `VİDEO KAYDI (AZAMİ ${Math.ceil(maxDurationSeconds / 60)} DAKİKA / ${maxSizeMb} MiB; CİHAZ PROFİLİNE GÖRE)`;
+      const outputSize = Number.isFinite(width) && Number.isFinite(height) ? ` · ${width}×${height}px` : '';
+      const fpsLimitNote = maxFrameRate < 60 ? ' · düşük bellek profili' : '';
+      if (isRecording) d.recordingStatus.textContent = `Video kaydı sürüyor · ${formattedDuration || '00:00'} · ${frameRate} FPS${outputSize}${fpsLimitNote} · ${sizeMb}/${maxSizeMb} MiB. En çok ${Math.ceil(maxDurationSeconds / 60)} dakika; sınırda otomatik durur.`;
       else if (isFinalizing && progress?.stage === 'waiting-for-destination') d.recordingStatus.textContent = 'Dosya kaydetme penceresinde konum seçin; kayıt bellekte tutuluyor.';
       else if (isFinalizing && progress) d.recordingStatus.textContent = `Video hazırlanıyor ve kaydediliyor · ${progress.percent}% (${(progress.bytesWritten / (1024 * 1024)).toFixed(1)}/${(progress.totalBytes / (1024 * 1024)).toFixed(1)} MiB).`;
       else if (isFinalizing) d.recordingStatus.textContent = 'Kayıt durduruldu. Video hazırlanıyor ve dosyaya yazılıyor; lütfen bekleyin.';

@@ -1,6 +1,8 @@
 import * as THREE from 'three';
+import { getDeviceMemoryGiB, getDevicePerformanceProfile } from '../utils/device-profile.js';
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
+export const MAX_PROJECT_ASSET_EXPORT_BYTES = 50 * 1024 * 1024;
 
 /** Screen-space 2D sprites rendered on a transparent Three.js overlay scene. */
 export class SpriteAnimationManager {
@@ -107,13 +109,24 @@ export class SpriteAnimationManager {
     return null;
   }
   async exportAssets() {
-    return Promise.all(this.actors.map(async (actor) => {
+    const exportLimit = Math.min(
+      MAX_PROJECT_ASSET_EXPORT_BYTES,
+      getDevicePerformanceProfile(getDeviceMemoryGiB()).maxProjectAssetExportBytes,
+    );
+    const totalBytes = this.actors.reduce((total, actor) => total + (actor.sourceFile?.size || 0), 0);
+    if (totalBytes > exportLimit) {
+      throw new Error(`Bu cihazda proje JSON dışa aktarımı için spritesheet toplam sınırı ${Math.floor(exportLimit / (1024 * 1024))} MiB. Daha az veya daha küçük görsel seçin.`);
+    }
+
+    const exported = [];
+    for (const actor of this.actors) {
       if (!actor.sourceFile) throw new Error(`"${actor.name}" spritesheet kaynağı yok; taşınabilir proje kaydedilemedi.`);
       const bytes = new Uint8Array(await actor.sourceFile.arrayBuffer());
       let binary = '';
       for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-      return { id: actor.id, name: actor.name, columns: actor.columns, rows: actor.rows, fps: actor.fps, x: actor.x, y: actor.y, displayHeight: actor.displayHeight, mimeType: actor.sourceFile.type, fileName: actor.sourceFile.name, data: btoa(binary) };
-    }));
+      exported.push({ id: actor.id, name: actor.name, columns: actor.columns, rows: actor.rows, fps: actor.fps, x: actor.x, y: actor.y, displayHeight: actor.displayHeight, mimeType: actor.sourceFile.type, fileName: actor.sourceFile.name, data: btoa(binary) });
+    }
+    return exported;
   }
   async exportAssetsForStorage() {
     return this.actors.map((actor) => {

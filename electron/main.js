@@ -8,6 +8,7 @@ import { app, BrowserWindow, Menu, dialog, ipcMain } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { saveGeneratedFileFromRenderer } from './save-generated-file.js';
+import { ElectronChunkedSaveSessions } from './save-generated-file-stream.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,6 +19,7 @@ app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 let mainWindow = null;
+const chunkedSaveSessions = new ElectronChunkedSaveSessions();
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -38,6 +40,8 @@ function createWindow() {
       backgroundThrottling: false, // Arka plandayken 60 FPS koru
       },
   });
+  const rendererContents = mainWindow.webContents;
+  rendererContents.once('destroyed', () => { void chunkedSaveSessions.abortForSender(rendererContents); });
 
   // Varsayılan menü çubuğunu gizle
   Menu.setApplicationMenu(null);
@@ -71,6 +75,25 @@ function createWindow() {
 
 ipcMain.handle('files:save-generated', (event, file) =>
   saveGeneratedFileFromRenderer(event, file, mainWindow, { dialogApi: dialog }));
+ipcMain.handle('files:save-generated-begin', (event, file) =>
+  chunkedSaveSessions.begin(event, file, mainWindow, dialog));
+ipcMain.handle('files:save-generated-write', (event, sessionId, data) =>
+  chunkedSaveSessions.write(event, sessionId, data, mainWindow));
+ipcMain.handle('files:save-generated-finish', (event, sessionId) =>
+  chunkedSaveSessions.finish(event, sessionId, mainWindow));
+ipcMain.handle('files:save-generated-abort', (event, sessionId) =>
+  chunkedSaveSessions.abort(event, sessionId, mainWindow));
+
+let cleaningChunkedSaves = false;
+app.on('before-quit', (event) => {
+  if (cleaningChunkedSaves || chunkedSaveSessions.sessions.size === 0) return;
+  event.preventDefault();
+  cleaningChunkedSaves = true;
+  void chunkedSaveSessions.abortAll().finally(() => {
+    cleaningChunkedSaves = false;
+    app.quit();
+  });
+});
 
 // Tekil Uygulama Örneği Kilidi (Single Instance Lock)
 const gotTheLock = app.requestSingleInstanceLock();

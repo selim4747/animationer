@@ -1,4 +1,37 @@
+import { getDeviceMemoryGiB } from './device-profile.js';
+
 const NATIVE_CHUNK_SIZE = 3 * 1024 * 1024;
+const LOW_MEMORY_NATIVE_CHUNK_SIZE = 1024 * 1024;
+
+function getNativeChunkSize() {
+  const memory = getDeviceMemoryGiB();
+  return Number.isFinite(memory) && memory <= 2 ? LOW_MEMORY_NATIVE_CHUNK_SIZE : NATIVE_CHUNK_SIZE;
+}
+
+async function saveWithElectronChunks(blob, filename, desktop, onProgress) {
+  reportProgress(onProgress, 'waiting-for-destination', 0, blob.size);
+  const session = await desktop.beginGeneratedFile({ filename, mimeType: blob.type || 'application/octet-stream', size: blob.size });
+  if (session?.canceled) return { saved: false, canceled: true, method: 'electron', filename };
+  if (!session?.sessionId) throw new Error('Windows dosya kaydetme oturumu başlatılamadı.');
+
+  let bytesWritten = 0;
+  try {
+    reportProgress(onProgress, 'saving', 0, blob.size);
+    for (let offset = 0; offset < blob.size; offset += NATIVE_CHUNK_SIZE) {
+      const bytes = new Uint8Array(await blob.slice(offset, offset + NATIVE_CHUNK_SIZE).arrayBuffer());
+      const result = await desktop.writeGeneratedFileChunk(session.sessionId, bytes);
+      bytesWritten = result?.written ?? Math.min(offset + bytes.byteLength, blob.size);
+      reportProgress(onProgress, 'saving', bytesWritten, blob.size);
+    }
+    const result = await desktop.finishGeneratedFile(session.sessionId);
+    if (!result?.saved) throw new Error('Windows dosyası tamamlanamadı.');
+    reportProgress(onProgress, 'saved', blob.size, blob.size);
+    return { ...result, saved: true, method: 'electron', filename: result.filename || session.filename || filename };
+  } catch (error) {
+    try { await desktop.abortGeneratedFile(session.sessionId); } catch { /* Preserve the original write error. */ }
+    throw error;
+  }
+}
 
 function sanitizeFilename(filename) {
   return filename.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
@@ -36,10 +69,11 @@ export async function saveToCapacitorDocuments(blob, filename, filesystem, direc
   const safeFilename = sanitizeFilename(filename);
   const path = `Animationer/${safeFilename}`;
   let fileCreated = false;
+  const chunkSize = getNativeChunkSize();
   try {
     reportProgress(onProgress, 'saving', 0, blob.size);
-    for (let offset = 0; offset < blob.size; offset += NATIVE_CHUNK_SIZE) {
-      const chunk = new Uint8Array(await blob.slice(offset, offset + NATIVE_CHUNK_SIZE).arrayBuffer());
+    for (let offset = 0; offset < blob.size; offset += chunkSize) {
+      const chunk = new Uint8Array(await blob.slice(offset, offset + chunkSize).arrayBuffer());
       const data = bytesToBase64(chunk);
       if (offset === 0) {
         await filesystem.writeFile({ path, data, directory, recursive: true });
@@ -123,6 +157,12 @@ export async function saveGeneratedFile(blob, filename, { onProgress } = {}) {
   const safeFilename = sanitizeFilename(filename);
 
   if (typeof window !== 'undefined' && window.dioramaDesktop?.saveGeneratedFile) {
+    if (typeof window.dioramaDesktop.beginGeneratedFile === 'function'
+      && typeof window.dioramaDesktop.writeGeneratedFileChunk === 'function'
+      && typeof window.dioramaDesktop.finishGeneratedFile === 'function'
+      && typeof window.dioramaDesktop.abortGeneratedFile === 'function') {
+      return saveWithElectronChunks(blob, safeFilename, window.dioramaDesktop, onProgress);
+    }
     reportProgress(onProgress, 'waiting-for-destination', 0, blob.size);
     const response = await window.dioramaDesktop.saveGeneratedFile({
       filename: safeFilename,

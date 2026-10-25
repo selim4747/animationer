@@ -73,6 +73,28 @@ test('captures at the selected frame rate and cleans up after a successful save'
   assert(states.some((state) => state.filename?.match(/^diorama_scene_.*\.webm$/)));
 }));
 
+test('applies the low-memory device recording profile and prevents selecting 60 FPS', async () => withFakeMediaRecorder(async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { deviceMemory: 2, userAgent: 'Android' },
+  });
+  try {
+    const { canvas, frameRates } = makeCanvas();
+    const manager = new RecorderManager(canvas);
+    assert.equal(manager.maxRecordingBytes, 32 * 1024 * 1024);
+    assert.equal(manager.maxFrameRate, 30);
+    assert.equal(manager.setFrameRate(60), 30);
+    manager._downloadBlob = async (_blob, filename) => ({ saved: true, filename });
+    assert.equal(manager.startRecording(), true);
+    assert.deepEqual(frameRates, [30]);
+    await manager.stopRecording();
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'navigator', original);
+    else delete globalThis.navigator;
+  }
+}));
+
 test('stops automatically when the configured byte limit is reached', async () => withFakeMediaRecorder(async () => {
   const { canvas } = makeCanvas();
   const states = [];

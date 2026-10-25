@@ -14,6 +14,7 @@ import { CameraManager } from './components/CameraManager.js';
 import { TimelineManager, ACTION_TYPES } from './components/TimelineManager.js';
 import { RecorderManager } from './components/RecorderManager.js';
 import { UIManager } from './components/UIManager.js';
+import { getDeviceMemoryGiB, getRendererPixelRatio } from './utils/device-profile.js';
 import { SpriteAnimationManager } from './components/SpriteAnimationManager.js';
 import { WorldSpriteCharacterManager } from './components/WorldSpriteCharacterManager.js';
 import { IndexedProjectStore } from './components/ProjectStore.js';
@@ -85,7 +86,7 @@ class App {
       alpha: false,
       preserveDrawingBuffer: true,
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(getRendererPixelRatio(window.devicePixelRatio, getDeviceMemoryGiB()));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.autoClear = false;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
