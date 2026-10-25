@@ -9,6 +9,8 @@
 import { AutosaveCoordinator } from './AutosaveCoordinator.js';
 import { saveGeneratedFile, shareGeneratedFile } from '../utils/FileExportManager.js';
 
+const MAX_INLINE_PREVIEW_BYTES = 32 * 1024 * 1024;
+
 function saveResultMessage(label, result) {
   if (result?.canceled) return `${label} kaydetme işlemi iptal edildi.`;
   if (!result?.saved) return result?.error || `${label} cihaza kaydedilemedi.`;
@@ -909,6 +911,7 @@ export class UIManager {
 
         this.recorder.recordTimelineSequence(this.timeline, {
           onBeforeStart: () => {
+            this._dismissRecordingPreview();
             // Kayıt esnasında arayüz görünmesin (Sinematik mod)
             if (!this.isPanelHidden) {
               this.togglePanelVisibility();
@@ -1061,7 +1064,14 @@ export class UIManager {
           : savedMessage;
       } else d.recordingStatus.textContent = 'Kayıt hazır. Kaydettiğiniz video tamamlanınca burada önizleyebilirsiniz.';
     }
-    if (blob instanceof Blob && blob.size > 0) this._showRecordingPreview(blob);
+    if (blob instanceof Blob && blob.size > 0) {
+      const previewLimit = Math.min(MAX_INLINE_PREVIEW_BYTES, maxRecordingBytes / 2);
+      if (blob.size <= previewLimit) this._showRecordingPreview(blob);
+      else {
+        this._dismissRecordingPreview();
+        if (d.recordingStatus) d.recordingStatus.textContent += ' Büyük dosyanın önizlemesi belleği korumak için açılmadı; kaydedilen videoyu dosyalar uygulamasından oynatabilirsiniz.';
+      }
+    }
     if (filename && !isBusy) this._showSavedFileToast('Video', downloadResult || { saved: true, filename }, blob);
     if (canceled) this.showToast('Video dosyasını kaydetme işlemi iptal edildi.');
     if (error) this.showToast(`Kayıt hatası: ${error}`);
@@ -1084,11 +1094,13 @@ export class UIManager {
       return;
     }
 
+    const shareBlob = result?.method === 'capacitor' && result.uri ? null : blob;
+
     this.showToast(message, {
       actionLabel: 'Paylaş',
       action: async () => {
         try {
-          await shareGeneratedFile(blob, result);
+          await shareGeneratedFile(shareBlob, result);
           this.showToast(`${result.filename || label} için paylaşım seçenekleri açıldı.`);
         } catch (error) {
           this.showToast(error.name === 'AbortError' ? 'Dosya paylaşımı iptal edildi.' : `Dosya paylaşılamadı: ${error.message}`);

@@ -239,10 +239,12 @@ export class RecorderManager {
     }
 
     let blob = null;
+    const recordedBytes = this.recordedBytes;
     try {
       const mimeType = recorder.mimeType || this._getSupportedMimeType() || 'video/webm';
       blob = new Blob(this.recordedChunks, { type: mimeType });
       if (blob.size === 0) throw new Error('Video dosyası oluşturulamadı.');
+      this.recordedChunks = [];
       this.lastRecordingBlob = this.activeTimelineManager ? blob : null;
       this.lastStopReason = this.stopReason;
       const filename = createRecordingFilename(mimeType);
@@ -258,6 +260,7 @@ export class RecorderManager {
         canceled: downloadResult.canceled || false,
         error: downloadResult.saved || downloadResult.canceled ? undefined : 'Dosya cihaza kaydedilemedi.',
         blob,
+        sizeBytes: recordedBytes,
         stopReason: this.stopReason,
         frameRate: this.frameRate,
       });

@@ -55,7 +55,10 @@ test('captures at the selected frame rate and cleans up after a successful save'
   const manager = new RecorderManager(canvas, { onStateChange: (state) => states.push(state) });
   assert.equal(manager.frameRate, 30);
   manager.setFrameRate(60);
-  manager._downloadBlob = async (_blob, filename) => ({ saved: true, method: 'test', filename });
+  manager._downloadBlob = async (_blob, filename) => {
+    assert.equal(manager.recordedChunks.length, 0, 'Recorder chunk references should be released before saving.');
+    return { saved: true, method: 'test', filename };
+  };
 
   assert.equal(manager.startRecording(), true);
   assert.deepEqual(frameRates, [60]);
