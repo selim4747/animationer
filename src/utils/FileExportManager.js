@@ -13,7 +13,17 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
-export async function saveToCapacitorDocuments(blob, filename, filesystem, directory) {
+function reportProgress(onProgress, stage, bytesWritten, totalBytes) {
+  if (typeof onProgress !== 'function') return;
+  const percent = totalBytes > 0 ? Math.min(100, Math.round((bytesWritten / totalBytes) * 100)) : 100;
+  try {
+    onProgress({ stage, bytesWritten, totalBytes, percent });
+  } catch {
+    // UI progress observers are optional and must not interrupt file persistence.
+  }
+}
+
+export async function saveToCapacitorDocuments(blob, filename, filesystem, directory, onProgress) {
   if (blob.size === 0) throw new Error('Kaydedilecek dosya boş.');
   const permission = await filesystem.checkPermissions();
   if (permission.publicStorage !== 'granted') {
@@ -27,6 +37,7 @@ export async function saveToCapacitorDocuments(blob, filename, filesystem, direc
   const path = `Animationer/${safeFilename}`;
   let fileCreated = false;
   try {
+    reportProgress(onProgress, 'saving', 0, blob.size);
     for (let offset = 0; offset < blob.size; offset += NATIVE_CHUNK_SIZE) {
       const chunk = new Uint8Array(await blob.slice(offset, offset + NATIVE_CHUNK_SIZE).arrayBuffer());
       const data = bytesToBase64(chunk);
@@ -36,6 +47,7 @@ export async function saveToCapacitorDocuments(blob, filename, filesystem, direc
       } else {
         await filesystem.appendFile({ path, data, directory });
       }
+      reportProgress(onProgress, 'saving', Math.min(offset + chunk.byteLength, blob.size), blob.size);
     }
   } catch (error) {
     if (fileCreated && typeof filesystem.deleteFile === 'function') {
@@ -60,7 +72,7 @@ export async function saveToCapacitorDocuments(blob, filename, filesystem, direc
   };
 }
 
-function saveInBrowser(blob, filename) {
+function saveInBrowser(blob, filename, onProgress) {
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = objectUrl;
@@ -70,6 +82,7 @@ function saveInBrowser(blob, filename) {
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+  reportProgress(onProgress, 'saved', blob.size, blob.size);
   return { saved: true, method: 'browser', filename, location: 'Tarayıcı indirilenleri' };
 }
 
@@ -103,13 +116,14 @@ export async function shareGeneratedFile(blob, result) {
   throw new Error('Bu platformda dosya paylaşımı desteklenmiyor.');
 }
 
-export async function saveGeneratedFile(blob, filename) {
+export async function saveGeneratedFile(blob, filename, { onProgress } = {}) {
   if (!(blob instanceof Blob)) throw new TypeError('Dışa aktarılacak geçerli bir dosya bulunamadı.');
   if (!filename || typeof filename !== 'string') throw new TypeError('Dosya adı belirtilmedi.');
   if (blob.size === 0) throw new Error('Kaydedilecek dosya boş.');
   const safeFilename = sanitizeFilename(filename);
 
   if (typeof window !== 'undefined' && window.dioramaDesktop?.saveGeneratedFile) {
+    reportProgress(onProgress, 'waiting-for-destination', 0, blob.size);
     const response = await window.dioramaDesktop.saveGeneratedFile({
       filename: safeFilename,
       mimeType: blob.type || 'application/octet-stream',
@@ -117,6 +131,7 @@ export async function saveGeneratedFile(blob, filename) {
     });
     if (response?.canceled) return { saved: false, canceled: true, method: 'electron', filename: safeFilename };
     if (!response?.saved) throw new Error(response?.error || 'Dosya Windows uygulamasına kaydedilemedi.');
+    reportProgress(onProgress, 'saved', blob.size, blob.size);
     return { ...response, saved: true, method: 'electron', filename: response.filename || safeFilename };
   }
 
@@ -126,8 +141,8 @@ export async function saveGeneratedFile(blob, filename) {
       throw new Error('Dosya kaydetme bileşeni bu mobil uygulama sürümünde bulunamadı.');
     }
     const { Filesystem, Directory } = await import('@capacitor/filesystem');
-    return saveToCapacitorDocuments(blob, safeFilename, Filesystem, Directory.Documents);
+    return saveToCapacitorDocuments(blob, safeFilename, Filesystem, Directory.Documents, onProgress);
   }
 
-  return saveInBrowser(blob, safeFilename);
+  return saveInBrowser(blob, safeFilename, onProgress);
 }

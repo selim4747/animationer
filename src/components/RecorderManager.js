@@ -1,30 +1,60 @@
-/**
- * RecorderManager.js
- * Canvas video kaydı ve PNG ekran görüntüsü dışa aktarma yöneticisi.
- * Video profilleri çözünürlüğü değil, MediaRecorder için istenen bitrate'i belirler.
- */
 import { saveGeneratedFile } from '../utils/FileExportManager.js';
 
+export const MAX_RECORDING_DURATION_SECONDS = 180;
+export const MAX_RECORDING_BYTES = 128 * 1024 * 1024;
+
+function createUniqueSuffix() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID().slice(0, 8);
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function createRecordingFilename(mimeType = 'video/webm', date = new Date()) {
+  const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
+  const timestamp = date.toISOString().replace(/[:.]/g, '-');
+  return `diorama_scene_${timestamp}_${createUniqueSuffix()}.${extension}`;
+}
+
 export class RecorderManager {
-  constructor(canvas, { onStateChange = () => {} } = {}) {
+  constructor(canvas, {
+    onStateChange = () => {},
+    maxDurationSeconds = MAX_RECORDING_DURATION_SECONDS,
+    maxRecordingBytes = MAX_RECORDING_BYTES,
+  } = {}) {
     this.canvas = canvas;
     this.onStateChange = onStateChange;
+    this.maxDurationSeconds = maxDurationSeconds;
+    this.maxRecordingBytes = maxRecordingBytes;
     this.isRecording = false;
     this.isFinalizing = false;
     this.mediaRecorder = null;
     this.recordedChunks = [];
+    this.recordedBytes = 0;
     this.recordStartTime = 0;
     this.recordDurationSeconds = 0;
     this.timerInterval = null;
     this.lastDownloadResult = null;
     this.quality = 'high';
     this.bitrate = 8500000;
+    this.frameRate = 30;
     this.stream = null;
+    this.stopReason = null;
+    this.lastStopReason = null;
+    this.lastRecordingBlob = null;
+    this.activeTimelineManager = null;
+    this._stopPromise = null;
+    this._stopPromiseResolve = null;
+    this._recorderFailed = false;
+    this._stopHandled = false;
   }
 
   setQuality(quality) {
     this.quality = quality === 'standard' ? 'standard' : 'high';
     this.bitrate = this.quality === 'standard' ? 4000000 : 8500000;
+  }
+
+  setFrameRate(frameRate) {
+    this.frameRate = Number(frameRate) === 60 ? 60 : 30;
+    return this.frameRate;
   }
 
   _getSupportedMimeType() {
@@ -50,49 +80,139 @@ export class RecorderManager {
     }
 
     try {
-      this.stream = this.canvas.captureStream(60);
+      this.stream = this.canvas.captureStream(this.frameRate);
       const mimeType = this._getSupportedMimeType();
       const options = { videoBitsPerSecond: this.bitrate };
       if (mimeType) options.mimeType = mimeType;
       this.mediaRecorder = new MediaRecorder(this.stream, options);
       this.recordedChunks = [];
+      this.recordedBytes = 0;
+      this._lastReportedBytes = 0;
+      this._lastSizeReportAt = 0;
       this.lastDownloadResult = null;
+      this.stopReason = null;
+      this.lastStopReason = null;
+      this.lastRecordingBlob = null;
       this.isFinalizing = false;
-      this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) this.recordedChunks.push(event.data);
+      this._recorderFailed = false;
+      this._stopHandled = false;
+      const recorder = this.mediaRecorder;
+
+      recorder.ondataavailable = (event) => {
+        if (!event.data || event.data.size === 0 || this._recorderFailed) return;
+        this.recordedChunks.push(event.data);
+        this.recordedBytes += event.data.size;
+        if (this.isRecording && this.recordedBytes >= this.maxRecordingBytes) {
+          this.stopRecording('size-limit');
+          return;
+        }
+        const now = performance.now();
+        if (this.isRecording && (this.recordedBytes - this._lastReportedBytes >= 1024 * 1024 || now - this._lastSizeReportAt >= 1000)) {
+          this._lastReportedBytes = this.recordedBytes;
+          this._lastSizeReportAt = now;
+          this.onStateChange({
+            isRecording: true,
+            isFinalizing: false,
+            duration: this.recordDurationSeconds,
+            formattedDuration: this.getFormattedDuration(),
+            sizeBytes: this.recordedBytes,
+            maxRecordingBytes: this.maxRecordingBytes,
+            frameRate: this.frameRate,
+          });
+        }
       };
-      this.mediaRecorder.start(250);
+      recorder.onerror = (event) => {
+        const message = event?.error?.message || event?.message || 'Video kaydı sırasında hata oluştu.';
+        this._handleRecorderError(message, recorder);
+      };
+      recorder.onstop = () => { this._handleRecorderStop(recorder); };
+      recorder.start(250);
       this.isRecording = true;
       this.recordStartTime = performance.now();
       this.recordDurationSeconds = 0;
+      this._lastReportedDuration = 0;
+      this._lastSizeReportAt = this.recordStartTime;
       clearInterval(this.timerInterval);
       this.timerInterval = setInterval(() => {
-        this.recordDurationSeconds = Math.floor((performance.now() - this.recordStartTime) / 1000);
-        this.onStateChange({
-          isRecording: true,
-          duration: this.recordDurationSeconds,
-          formattedDuration: this.getFormattedDuration(),
-        });
-      }, 500);
-      this.onStateChange({ isRecording: true, isFinalizing: false, duration: 0, formattedDuration: '00:00' });
+        const elapsed = Math.floor((performance.now() - this.recordStartTime) / 1000);
+        this.recordDurationSeconds = Math.min(elapsed, this.maxDurationSeconds);
+        if (this.recordDurationSeconds !== this._lastReportedDuration) {
+          this._lastReportedDuration = this.recordDurationSeconds;
+          this.onStateChange({
+            isRecording: true,
+            isFinalizing: false,
+            duration: this.recordDurationSeconds,
+            formattedDuration: this.getFormattedDuration(),
+            sizeBytes: this.recordedBytes,
+            maxRecordingBytes: this.maxRecordingBytes,
+            maxDurationSeconds: this.maxDurationSeconds,
+            frameRate: this.frameRate,
+          });
+        }
+        if (elapsed >= this.maxDurationSeconds) this.stopRecording('duration-limit');
+      }, 1000);
+      this.onStateChange({
+        isRecording: true,
+        isFinalizing: false,
+        duration: 0,
+        formattedDuration: '00:00',
+        sizeBytes: 0,
+        maxRecordingBytes: this.maxRecordingBytes,
+        maxDurationSeconds: this.maxDurationSeconds,
+        frameRate: this.frameRate,
+      });
       return true;
     } catch (error) {
       console.error('Video kaydı başlatılamadı:', error);
       this._cleanupStream();
       this.mediaRecorder = null;
+      this.recordedChunks = [];
+      this.recordedBytes = 0;
       this.isRecording = false;
-      this.onStateChange({ isRecording: false, error: error.message || 'Video kaydı başlatılamadı.' });
+      this.isFinalizing = false;
+      this.onStateChange({ isRecording: false, isFinalizing: false, error: error.message || 'Video kaydı başlatılamadı.' });
       return false;
     }
   }
 
-  stopRecording() {
-    return new Promise((resolve) => {
-      if (!this.isRecording || !this.mediaRecorder) {
-        resolve(null);
-        return;
-      }
-      clearInterval(this.timerInterval);
+  stopRecording(reason = 'manual') {
+    if (!this.isRecording || !this.mediaRecorder) return Promise.resolve(null);
+    if (this._stopPromise) return this._stopPromise;
+
+    clearInterval(this.timerInterval);
+    this.isRecording = false;
+    this.isFinalizing = true;
+    this.stopReason = reason;
+    if ((reason === 'duration-limit' || reason === 'size-limit') && this.activeTimelineManager?.isPlaying) {
+      this.activeTimelineManager.stop();
+    }
+    const recorder = this.mediaRecorder;
+    this._stopPromise = new Promise((resolve) => { this._stopPromiseResolve = resolve; });
+    this.onStateChange({
+      isRecording: false,
+      isFinalizing: true,
+      duration: this.recordDurationSeconds,
+      formattedDuration: this.getFormattedDuration(),
+      sizeBytes: this.recordedBytes,
+      maxRecordingBytes: this.maxRecordingBytes,
+      maxDurationSeconds: this.maxDurationSeconds,
+      frameRate: this.frameRate,
+      stopReason: reason,
+    });
+
+    try {
+      recorder.stop();
+    } catch (error) {
+      this._handleRecorderError(error.message || 'Video kaydı durdurulamadı.', recorder);
+    }
+    return this._stopPromise || Promise.resolve(null);
+  }
+
+  async _handleRecorderStop(recorder) {
+    if (this._stopHandled || this._recorderFailed || this.mediaRecorder !== recorder) return;
+    this._stopHandled = true;
+    clearInterval(this.timerInterval);
+    if (!this.isFinalizing) {
       this.isRecording = false;
       this.isFinalizing = true;
       this.onStateChange({
@@ -100,66 +220,81 @@ export class RecorderManager {
         isFinalizing: true,
         duration: this.recordDurationSeconds,
         formattedDuration: this.getFormattedDuration(),
+        sizeBytes: this.recordedBytes,
+        maxRecordingBytes: this.maxRecordingBytes,
+        frameRate: this.frameRate,
       });
-      const recorder = this.mediaRecorder;
-      recorder.onstop = async () => {
-        const mimeType = recorder.mimeType || this._getSupportedMimeType() || 'video/webm';
-        const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
-        const blob = new Blob(this.recordedChunks, { type: mimeType });
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const filename = `diorama_scene_${timestamp}.${extension}`;
-        try {
-          const downloadResult = await this._downloadBlob(blob, filename);
-          this.lastDownloadResult = downloadResult;
-          this.isFinalizing = false;
-          this.onStateChange({
-            isRecording: false,
-            isFinalizing: false,
-            duration: this.recordDurationSeconds,
-            formattedDuration: '00:00',
-            filename: downloadResult.saved ? filename : undefined,
-            downloadResult,
-            canceled: downloadResult.canceled || false,
-            error: downloadResult.saved || downloadResult.canceled ? undefined : 'Dosya cihaza kaydedilemedi.',
-            blob,
-          });
-          resolve(blob);
-        } catch (error) {
-          this.lastDownloadResult = { saved: false, error: error.message || 'Dosya cihaza kaydedilemedi.' };
-          this.isFinalizing = false;
-          this.onStateChange({ isRecording: false, isFinalizing: false, error: this.lastDownloadResult.error });
-          resolve(null);
-        } finally {
-          this._cleanupStream();
-          this.mediaRecorder = null;
-          this.recordedChunks = [];
-        }
-      };
-      recorder.onerror = (event) => {
-        clearInterval(this.timerInterval);
-        this._cleanupStream();
-        this.mediaRecorder = null;
-        this.isFinalizing = false;
-        this.onStateChange({ isRecording: false, isFinalizing: false, error: event.error?.message || 'Video kaydı sırasında hata oluştu.' });
-        resolve(null);
-      };
-      try {
-        recorder.stop();
-      } catch (error) {
-        this._cleanupStream();
-        this.mediaRecorder = null;
-        this.isFinalizing = false;
-        this.onStateChange({ isRecording: false, isFinalizing: false, error: error.message || 'Video kaydı durdurulamadı.' });
-        resolve(null);
-      }
-    });
+    }
+
+    let blob = null;
+    try {
+      const mimeType = recorder.mimeType || this._getSupportedMimeType() || 'video/webm';
+      blob = new Blob(this.recordedChunks, { type: mimeType });
+      if (blob.size === 0) throw new Error('Video dosyası oluşturulamadı.');
+      this.lastRecordingBlob = this.activeTimelineManager ? blob : null;
+      this.lastStopReason = this.stopReason;
+      const filename = createRecordingFilename(mimeType);
+      const downloadResult = await this._downloadBlob(blob, filename);
+      this.lastDownloadResult = downloadResult;
+      this.onStateChange({
+        isRecording: false,
+        isFinalizing: false,
+        duration: this.recordDurationSeconds,
+        formattedDuration: '00:00',
+        filename: downloadResult.saved ? filename : undefined,
+        downloadResult,
+        canceled: downloadResult.canceled || false,
+        error: downloadResult.saved || downloadResult.canceled ? undefined : 'Dosya cihaza kaydedilemedi.',
+        blob,
+        stopReason: this.stopReason,
+        frameRate: this.frameRate,
+      });
+      this._resolveStop(blob);
+    } catch (error) {
+      this.lastDownloadResult = { saved: false, error: error.message || 'Dosya cihaza kaydedilemedi.' };
+      this.onStateChange({ isRecording: false, isFinalizing: false, error: this.lastDownloadResult.error, stopReason: this.stopReason });
+      this._resolveStop(null);
+    } finally {
+      this._cleanupStream();
+      this.mediaRecorder = null;
+      this.recordedChunks = [];
+      this.recordedBytes = 0;
+      this.isRecording = false;
+      this.isFinalizing = false;
+      this.stopReason = null;
+    }
+  }
+
+  _handleRecorderError(message, recorder) {
+    if (this._recorderFailed || this._stopHandled || (recorder && this.mediaRecorder !== recorder)) return;
+    this._recorderFailed = true;
+    clearInterval(this.timerInterval);
+    this.isRecording = false;
+    this.isFinalizing = false;
+    this.lastDownloadResult = { saved: false, error: message };
+    this._cleanupStream();
+    this.mediaRecorder = null;
+    this.recordedChunks = [];
+    this.recordedBytes = 0;
+    this.onStateChange({ isRecording: false, isFinalizing: false, error: message, stopReason: this.stopReason });
+    this.stopReason = null;
+    this._resolveStop(null);
+  }
+
+  _resolveStop(value) {
+    const resolve = this._stopPromiseResolve;
+    this._stopPromiseResolve = null;
+    this._stopPromise = null;
+    resolve?.(value);
   }
 
   _cleanupStream() {
     clearInterval(this.timerInterval);
     this.timerInterval = null;
     if (this.stream) {
-      this.stream.getTracks().forEach((track) => track.stop());
+      for (const track of this.stream.getTracks()) {
+        try { track.stop(); } catch { /* Continue releasing the remaining tracks. */ }
+      }
       this.stream = null;
     }
   }
@@ -170,14 +305,14 @@ export class RecorderManager {
     return `${mins}:${secs}`;
   }
 
-  async takeScreenshot(customName) {
+  async takeScreenshot(customName, onProgress) {
     if (!this.canvas) return { saved: false, error: 'Sahne görüntüsü bulunamadı.' };
     try {
       const blob = await new Promise((resolve) => this.canvas.toBlob(resolve, 'image/png'));
       if (!blob) throw new Error('PNG görüntüsü oluşturulamadı.');
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 23);
       const filename = customName || `diorama_snapshot_${timestamp}.png`;
-      return { ...(await saveGeneratedFile(blob, filename)), filename, blob };
+      return { ...(await saveGeneratedFile(blob, filename, { onProgress })), filename, blob };
     } catch (error) {
       console.error('Ekran görüntüsü kaydedilemedi:', error);
       return { saved: false, error: error.message || 'Ekran görüntüsü kaydedilemedi.' };
@@ -185,7 +320,7 @@ export class RecorderManager {
   }
 
   async recordTimelineSequence(timelineManager, { onBeforeStart = () => {}, onAfterFinish = () => {} } = {}) {
-    if (!timelineManager || this.isRecording) {
+    if (!timelineManager || this.isRecording || this.isFinalizing) {
       return { success: false, error: 'Kayıt başlatılamadı.' };
     }
     if (!Array.isArray(timelineManager.steps) || timelineManager.steps.length === 0) {
@@ -202,10 +337,19 @@ export class RecorderManager {
       onBeforeStart();
       timelineManager.stop();
       await this._sleep(300);
+      this.activeTimelineManager = timelineManager;
       if (!this.startRecording()) throw new Error('Bu ortamda video kaydı başlatılamadı.');
       await this._sleep(250);
       const played = await timelineManager.play();
-      if (played === false) throw new Error('Reji oynatımı tamamlanmadı; video kısmi olabilir.');
+      if (played === false) {
+        const finalizedBlob = this._stopPromise ? await this._stopPromise : null;
+        if (this.lastStopReason === 'duration-limit' || this.lastStopReason === 'size-limit') {
+          blob = finalizedBlob || this.lastRecordingBlob;
+          downloadResult = this.lastDownloadResult;
+          throw new Error('Kayıt süresi veya dosya boyutu sınırına ulaşıldı; reji erken durdu ve oluşturulan video kısmi olabilir.');
+        }
+        throw new Error('Reji oynatımı tamamlanmadı; video kısmi olabilir.');
+      }
       await this._sleep(600);
       blob = await this.stopRecording();
       if (!blob || blob.size === 0) {
@@ -220,6 +364,8 @@ export class RecorderManager {
       errorMessage = error.message || 'Reji videosu kaydedilemedi.';
     } finally {
       if (this.isRecording) await this.stopRecording();
+      this.activeTimelineManager = null;
+      this.lastRecordingBlob = null;
       const result = { success, error: errorMessage, blob, downloadResult };
       try {
         onAfterFinish(result);
@@ -231,7 +377,17 @@ export class RecorderManager {
   }
 
   _downloadBlob(blob, filename) {
-    return saveGeneratedFile(blob, filename);
+    return saveGeneratedFile(blob, filename, {
+      onProgress: (progress) => this.onStateChange({
+        isRecording: false,
+        isFinalizing: true,
+        duration: this.recordDurationSeconds,
+        formattedDuration: this.getFormattedDuration(),
+        progress,
+        filename,
+        frameRate: this.frameRate,
+      }),
+    });
   }
 
   _sleep(ms) {

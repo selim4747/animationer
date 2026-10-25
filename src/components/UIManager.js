@@ -207,6 +207,9 @@ export class UIManager {
       btnTakeScreenshot: document.getElementById('btn-take-screenshot'),
       btnQuality720p: document.getElementById('btn-quality-720p'),
       btnQuality1080p: document.getElementById('btn-quality-1080p'),
+      btnFrameRate30: document.getElementById('btn-fps-30'),
+      btnFrameRate60: document.getElementById('btn-fps-60'),
+      labelRenderFps: document.getElementById('label-render-fps'),
       labelRenderRes: document.getElementById('label-render-res'),
       btnToggleVideoRecord: document.getElementById('btn-toggle-video-record'),
       btnRecordSequence: document.getElementById('btn-record-sequence'),
@@ -220,6 +223,7 @@ export class UIManager {
       // Toast & Modallar
       toast: document.getElementById('toast'),
       toastMessage: document.getElementById('toast-message'),
+      toastProgress: document.getElementById('toast-progress'),
       toastAction: document.getElementById('toast-action'),
       modalHelp: document.getElementById('modal-help'),
       btnOpenHelp: document.getElementById('btn-open-help'),
@@ -366,6 +370,8 @@ export class UIManager {
     // JSON İçe / Dışa Aktarma
     if (d.btnExportJSON) {
       d.btnExportJSON.addEventListener('click', async () => {
+        d.btnExportJSON.disabled = true;
+        this.showToast('Proje JSON’u hazırlanıyor…', { duration: 0 });
         try {
           const sprites = await this.sprites.exportAssets();
           this.sprites.constructor.validateProjectAssets(sprites);
@@ -377,9 +383,15 @@ export class UIManager {
             sprites,
           };
           const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-          const result = await saveGeneratedFile(blob, 'animationer-project.json');
+          const result = await saveGeneratedFile(blob, 'animationer-project.json', {
+            onProgress: (progress) => this._reportFileProgress('Proje JSON’u', progress),
+          });
           this._showSavedFileToast('Reji + 2D proje JSON’u', result, blob);
-        } catch (error) { this.showToast(`Proje kaydedilemedi: ${error.message}`); }
+        } catch (error) {
+          this.showToast(`Proje kaydedilemedi: ${error.message}`);
+        } finally {
+          d.btnExportJSON.disabled = false;
+        }
       });
     }
 
@@ -826,9 +838,16 @@ export class UIManager {
     // --- SEKME 5: DIŞA AKTAR / RENDER ---
     if (d.btnTakeScreenshot) {
       d.btnTakeScreenshot.addEventListener('click', async () => {
-        if (this.recorder) {
-          const result = await this.recorder.takeScreenshot();
+        if (!this.recorder || d.btnTakeScreenshot.disabled) return;
+        d.btnTakeScreenshot.disabled = true;
+        this.showToast('PNG görüntüsü hazırlanıyor…', { duration: 0 });
+        try {
+          const result = await this.recorder.takeScreenshot(undefined, (progress) => this._reportFileProgress('PNG görüntüsü', progress));
           this._showSavedFileToast('PNG ekran görüntüsü', result, result.blob);
+        } catch (error) {
+          this.showToast(`PNG kaydedilemedi: ${error.message}`);
+        } finally {
+          d.btnTakeScreenshot.disabled = false;
         }
       });
     }
@@ -851,6 +870,9 @@ export class UIManager {
       });
     }
 
+    d.btnFrameRate30?.addEventListener('click', () => this._setRecorderFrameRate(30));
+    d.btnFrameRate60?.addEventListener('click', () => this._setRecorderFrameRate(60));
+
     if (d.btnToggleVideoRecord) {
       d.btnToggleVideoRecord.addEventListener('click', async () => {
         if (!this.recorder) return;
@@ -862,7 +884,7 @@ export class UIManager {
           this._dismissRecordingPreview();
           const ok = this.recorder.startRecording();
           if (ok) {
-            this.showToast('Video kaydı başladı. Süre üst göstergede; bitirmek için Kaydı Durdur’a dokunun.');
+            this.showToast(`Video kaydı başladı (${this.recorder.frameRate} FPS). Süre üst göstergede; bitirmek için Kaydı Durdur’a dokunun.`);
           } else {
             this.showToast('HATA: Video kaydı başlatılamadı!');
           }
@@ -932,7 +954,35 @@ export class UIManager {
   /**
    * RecorderManager durum değişikliklerini arayüze yansıtır
    */
-  updateRecorderUI({ isRecording, isFinalizing = false, duration, formattedDuration, filename, error, canceled, downloadResult, blob }) {
+  _setRecorderFrameRate(frameRate) {
+    if (!this.recorder || this.recorder.isRecording || this.recorder.isFinalizing) return;
+    const selected = this.recorder.setFrameRate(frameRate);
+    const d = this.dom;
+    d.btnFrameRate30?.classList.toggle('active', selected === 30);
+    d.btnFrameRate30?.setAttribute('aria-pressed', String(selected === 30));
+    d.btnFrameRate60?.classList.toggle('active', selected === 60);
+    d.btnFrameRate60?.setAttribute('aria-pressed', String(selected === 60));
+    if (d.labelRenderFps) d.labelRenderFps.textContent = selected === 30 ? '30 FPS · Daha verimli' : '60 FPS · Daha akıcı';
+    this.showToast(`Video kare hızı: ${selected} FPS`);
+  }
+
+  updateRecorderUI({
+    isRecording = false,
+    isFinalizing = false,
+    duration,
+    formattedDuration,
+    filename,
+    error,
+    canceled,
+    downloadResult,
+    blob,
+    sizeBytes = 0,
+    maxRecordingBytes = 128 * 1024 * 1024,
+    maxDurationSeconds = 180,
+    frameRate = this.recorder?.frameRate || 30,
+    progress,
+    stopReason,
+  }) {
     const d = this.dom;
     const isBusy = isRecording || isFinalizing;
 
@@ -963,6 +1013,8 @@ export class UIManager {
     if (d.btnRecordSequence) d.btnRecordSequence.disabled = isBusy;
     if (d.btnQuality720p) d.btnQuality720p.disabled = isBusy;
     if (d.btnQuality1080p) d.btnQuality1080p.disabled = isBusy;
+    if (d.btnFrameRate30) d.btnFrameRate30.disabled = isBusy;
+    if (d.btnFrameRate60) d.btnFrameRate60.disabled = isBusy;
 
     if (d.renderRecordingBanner) {
       d.renderRecordingBanner.style.display = isBusy ? 'flex' : 'none';
@@ -974,12 +1026,20 @@ export class UIManager {
     }
 
     if (d.recordingStatus) {
-      if (isRecording) d.recordingStatus.textContent = `Video kaydı sürüyor · ${formattedDuration || '00:00'}. Durdurmak için kayıt düğmesine dokunun.`;
+      const sizeMb = (sizeBytes / (1024 * 1024)).toFixed(1);
+      const maxSizeMb = (maxRecordingBytes / (1024 * 1024)).toFixed(0);
+      if (isRecording) d.recordingStatus.textContent = `Video kaydı sürüyor · ${formattedDuration || '00:00'} · ${frameRate} FPS · ${sizeMb}/${maxSizeMb} MiB. En çok ${Math.ceil(maxDurationSeconds / 60)} dakika; sınırda otomatik durur.`;
+      else if (isFinalizing && progress?.stage === 'waiting-for-destination') d.recordingStatus.textContent = 'Dosya kaydetme penceresinde konum seçin; kayıt bellekte tutuluyor.';
+      else if (isFinalizing && progress) d.recordingStatus.textContent = `Video hazırlanıyor ve kaydediliyor · ${progress.percent}% (${(progress.bytesWritten / (1024 * 1024)).toFixed(1)}/${(progress.totalBytes / (1024 * 1024)).toFixed(1)} MiB).`;
       else if (isFinalizing) d.recordingStatus.textContent = 'Kayıt durduruldu. Video hazırlanıyor ve dosyaya yazılıyor; lütfen bekleyin.';
       else if (error) d.recordingStatus.textContent = `Kayıt başarısız: ${error}`;
       else if (canceled) d.recordingStatus.textContent = 'Dosyayı kaydetme iptal edildi; oluşturulan video önizleme alanında kullanılabilir.';
-      else if (filename) d.recordingStatus.textContent = saveResultMessage('Video', downloadResult || { saved: true, filename });
-      else d.recordingStatus.textContent = 'Kayıt hazır. Kaydettiğiniz video tamamlanınca burada önizleyebilirsiniz.';
+      else if (filename) {
+        const savedMessage = saveResultMessage('Video', downloadResult || { saved: true, filename });
+        d.recordingStatus.textContent = stopReason === 'duration-limit' || stopReason === 'size-limit'
+          ? `${savedMessage} Kayıt güvenlik sınırına ulaştığı için otomatik durduruldu.`
+          : savedMessage;
+      } else d.recordingStatus.textContent = 'Kayıt hazır. Kaydettiğiniz video tamamlanınca burada önizleyebilirsiniz.';
     }
     if (blob instanceof Blob && blob.size > 0) this._showRecordingPreview(blob);
     if (filename && !isBusy) this._showSavedFileToast('Video', downloadResult || { saved: true, filename }, blob);
@@ -1015,6 +1075,21 @@ export class UIManager {
         }
       },
     });
+  }
+
+  _reportFileProgress(label, progress) {
+    if (!progress) return;
+    if (progress.stage === 'waiting-for-destination') {
+      this.showToast(`${label}: Dosya kaydetme penceresinde konum seçin.`, { duration: 0 });
+      return;
+    }
+    const written = (progress.bytesWritten / (1024 * 1024)).toFixed(1);
+    const total = (progress.totalBytes / (1024 * 1024)).toFixed(1);
+    this.showToast(`${label} kaydediliyor · ${progress.percent}% (${written}/${total} MiB)`, { duration: 0 });
+    if (this.dom.toastProgress) {
+      this.dom.toastProgress.hidden = false;
+      this.dom.toastProgress.value = progress.percent;
+    }
   }
 
   _showRecordingPreview(blob) {
@@ -1482,12 +1557,16 @@ export class UIManager {
    * Monokrom Toast Bildirimi Gösterir
    * @param {string} msg
    */
-  showToast(msg, { actionLabel, action } = {}) {
+  showToast(msg, { actionLabel, action, duration = 4500 } = {}) {
     const toast = this.dom.toast;
     if (!toast) return;
 
     if (this.dom.toastMessage) this.dom.toastMessage.textContent = msg;
     else toast.textContent = msg;
+    if (this.dom.toastProgress) {
+      this.dom.toastProgress.hidden = true;
+      this.dom.toastProgress.value = 0;
+    }
     if (this.dom.toastAction) {
       this.dom.toastAction.hidden = typeof action !== 'function';
       this.dom.toastAction.textContent = actionLabel || '';
@@ -1506,8 +1585,10 @@ export class UIManager {
     toast.classList.add('show');
 
     clearTimeout(this.toastTimer);
-    this.toastTimer = setTimeout(() => {
-      toast.classList.remove('show');
-    }, typeof action === 'function' ? 9000 : 4500);
+    if (duration > 0) {
+      this.toastTimer = setTimeout(() => {
+        toast.classList.remove('show');
+      }, duration);
+    }
   }
 }

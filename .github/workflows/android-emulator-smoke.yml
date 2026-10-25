@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   android-emulator-smoke:
-    name: Android API 35 PNG export smoke test
+    name: Android API 35 mobile user-flow test
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -82,7 +82,7 @@ jobs:
           cd android
           ./gradlew assembleDebug --no-daemon
 
-      - name: Install, launch, and verify native PNG export on Android
+      - name: Install, launch, and verify touch UI and native exports on Android
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
