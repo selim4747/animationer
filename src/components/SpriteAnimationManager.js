@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { getDeviceMemoryGiB, getDevicePerformanceProfile } from '../utils/device-profile.js';
+import { validateTextureDimensions } from '../utils/device-profile.js';
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
 export const MAX_PROJECT_ASSET_EXPORT_BYTES = 50 * 1024 * 1024;
@@ -33,9 +34,7 @@ export class SpriteAnimationManager {
     const objectUrl = URL.createObjectURL(file);
     let texture;
     try {
-      texture = await new Promise((resolve, reject) => {
-        new THREE.TextureLoader().load(objectUrl, resolve, undefined, reject);
-      });
+      texture = await this._loadTexture(objectUrl);
     } catch (error) {
       URL.revokeObjectURL(objectUrl);
       throw new Error(`Spritesheet okunamadı: ${error.message || 'görsel formatı hatalı'}`);
@@ -44,6 +43,8 @@ export class SpriteAnimationManager {
 
     const imageWidth = texture.image?.naturalWidth || texture.image?.width || 0;
     const imageHeight = texture.image?.naturalHeight || texture.image?.height || 0;
+    try { validateTextureDimensions(imageWidth, imageHeight); }
+    catch (error) { texture.dispose(); throw error; }
     if (!imageWidth || !imageHeight || imageWidth % columns || imageHeight % rows) {
       texture.dispose();
       throw new Error('Görsel boyutları seçilen satır ve sütunlara tam bölünmeli.');
@@ -98,6 +99,12 @@ export class SpriteAnimationManager {
     this.selectedId = actor.id;
     this._notify('added', actor);
     return actor;
+  }
+
+  _loadTexture(url) {
+    return new Promise((resolve, reject) => {
+      new THREE.TextureLoader().load(url, resolve, undefined, reject);
+    });
   }
 
   hitTest(x, y) {

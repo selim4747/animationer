@@ -73,17 +73,27 @@ const v2 = (updatedAt = '2026-01-01T00:00:00.000Z') => ({
   viewport: { width: 320, height: 568 },
 });
 
-test('migrates legacy portable project v1 to explicit v2 storage schema', () => {
+test('migrates legacy portable project v1 to explicit v3 storage schema', () => {
   const migrated = migrateProjectRecord({
     format: 'animationer-project', projectVersion: 1, version: '1.0.0', playMode: 'scheduled',
     timestamp: '2025-01-01T00:00:00.000Z', steps: [{ type: 'WAIT', data: { duration: 1 } }],
     sprites: [{ id: 'sprite-1', data: 'AQID', name: 'Sheet' }],
   });
-  assert.equal(migrated.schemaVersion, 2);
+  assert.equal(migrated.schemaVersion, 3);
   assert.equal(migrated.timeline.playMode, 'scheduled');
   assert.equal(migrated.timeline.steps.length, 1);
   assert.equal(migrated.scope.mapAssets, false);
   assert.equal(migrated.sprites[0].data, 'AQID');
+  assert.deepEqual(migrated.worldCharacters, []);
+  assert.equal(migrated.mapAsset, null);
+});
+
+test('migrates v2 autosaves without losing timeline and sprite data', () => {
+  const migrated = migrateProjectRecord({ ...v2(), schemaVersion: 2, scope: { timeline: true, sprites2d: true }, projectVersion: 2 });
+  assert.equal(migrated.schemaVersion, 3);
+  assert.equal(migrated.sprites.length, 1);
+  assert.deepEqual(migrated.worldCharacterTemplates, []);
+  assert.deepEqual(migrated.worldCharacters, []);
 });
 
 test('rejects corrupt and unsupported project versions without changing the input', () => {
@@ -100,6 +110,21 @@ test('records viewport metadata and rejects projects beyond the 100 MB limit', (
   Object.defineProperty(oversizedBlob, 'size', { value: MAX_PROJECT_BYTES + 1 });
   assert.throws(() => validateProjectRecord({ ...saved, sprites: [{ id: 'large', blob: oversizedBlob }] }), /100 MB/i);
   assert.ok(calculateProjectBytes({ steps: [] }, [{ blob: { size: MAX_PROJECT_BYTES } }]) > MAX_PROJECT_BYTES);
+});
+
+test('v3 autosaves validate and account for a 2D environment and placed characters', () => {
+  const sheet = new Blob(['character'], { type: 'image/png' });
+  const map = new Blob(['map'], { type: 'image/png' });
+  const record = createAutosaveRecord({
+    timeline: { steps: [] }, sprites: [], viewport: null,
+    mapAsset: { kind: 'image', fileName: 'floor.png', blob: map, scale: 16, opacity: 0.8, groundOrientation: true },
+    worldCharacterTemplates: [{ id: 'hero', name: 'Hero', blob: sheet, mimeType: 'image/png', fileName: 'hero.png', columns: 1, rows: 1, fps: 12 }],
+    worldCharacters: [{ id: 'world2d-1', name: 'Hero 1', templateId: 'hero', x: 1, y: 0, z: -2 }],
+  });
+  assert.equal(record.scope.mapAssets, true);
+  assert.equal(record.scope.worldCharacters, true);
+  assert.equal(calculateProjectBytes(record.timeline, record.sprites, record.mapAsset, record.worldCharacterTemplates), map.size + sheet.size + new TextEncoder().encode(JSON.stringify(record.timeline)).byteLength);
+  assert.throws(() => validateProjectRecord({ ...record, worldCharacters: [{ ...record.worldCharacters[0], templateId: 'missing' }] }), /kaynak spritesheet eksik/i);
 });
 
 test('IndexedDB autosave rolls back a quota failure and preserves the last valid record', async () => {
@@ -129,6 +154,18 @@ test('named 2D character templates persist in a separate library and can be dele
   assert.deepEqual(await store.listCharacterTemplates(), []);
 });
 
+test('metadata-only library listing omits Blob payloads and skips one corrupt record', async () => {
+  const db = new MemoryIndexedDB();
+  const store = new IndexedProjectStore(db);
+  await store.saveCharacterTemplate({ id: 'good', name: 'Good', blob: new Blob(['png'], { type: 'image/png' }), mimeType: 'image/png', fileName: 'good.png', columns: 1, rows: 1, fps: 12 });
+  db.stores.get('character-library').set('bad', { id: 'bad', name: '', blob: new Blob(['bad']) });
+  const skipped = [];
+  const records = await store.listCharacterTemplateMetadata({ onInvalid: (record) => skipped.push(record.id) });
+  assert.deepEqual(records.map(({ id }) => id), ['good']);
+  assert.equal('blob' in records[0], false);
+  assert.deepEqual(skipped, ['bad']);
+});
+
 test('2D character template and library limits are enforced before saving', async () => {
   const makeBlob = (size) => {
     const blob = new Blob(['x'], { type: 'image/png' });
@@ -143,5 +180,7 @@ test('2D character template and library limits are enforced before saving', asyn
   }
   assert.equal(5 * MAX_CHARACTER_TEMPLATE_BYTES, MAX_CHARACTER_LIBRARY_BYTES);
   await assert.rejects(() => store.saveCharacterTemplate({ id: 'template-overflow', name: 'Overflow', blob: makeBlob(1), mimeType: 'image/png', columns: 1, rows: 1, fps: 12 }), /250 MB/i);
+  const phoneStore = new IndexedProjectStore(new MemoryIndexedDB());
+  await assert.rejects(() => phoneStore.saveCharacterTemplate({ id: 'phone-overflow', name: 'Phone', blob: makeBlob(2), mimeType: 'image/png', columns: 1, rows: 1, fps: 12 }, { maxLibraryBytes: 1 }), /1 MB/i);
   assert.equal((await store.listCharacterTemplates()).length, 5);
 });
