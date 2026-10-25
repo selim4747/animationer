@@ -588,10 +588,10 @@ export class TimelineManager {
   /**
    * JSON dosyasını kullanıcı cihazına indirir
    */
-  async downloadSequenceJSON(filename = 'monochrome-timeline.json') {
+  async downloadSequenceJSON(filename = 'monochrome-timeline.json', options = {}) {
     const jsonStr = this.exportSequence();
     const blob = new Blob([jsonStr], { type: 'application/json' });
-    return saveGeneratedFile(blob, filename);
+    return saveGeneratedFile(blob, filename, options);
   }
 
   /**

@@ -417,7 +417,18 @@
           </div>
 
           <!-- Video Kayıt Kontrolleri -->
-          <div class="studio-sub-header" style="margin-top: 14px;">VİDEO KAYDI (HEDEF: 60 FPS):</div>
+          <div class="studio-sub-header" style="margin-top: 14px;">VİDEO KAYDI (AZAMİ 3 DAKİKA / 128 MiB):</div>
+
+          <div class="studio-slider-group" style="margin-bottom: 8px;">
+            <div class="slider-row-label">
+              <span>Kare Hızı:</span>
+              <span id="label-render-fps">30 FPS · Daha verimli</span>
+            </div>
+            <div class="studio-ctrl-row">
+              <button id="btn-fps-30" class="hud-btn flex-grow active" type="button" aria-pressed="true" title="Daha düşük işlemci ve pil kullanımı için önerilen seçenek">30 FPS · Verimli</button>
+              <button id="btn-fps-60" class="hud-btn flex-grow" type="button" aria-pressed="false" title="Daha akıcı hareket; daha fazla işlemci ve pil kullanımı">60 FPS · Akıcı</button>
+            </div>
+          </div>
 
           <!-- Bitrate profili; çözünürlük canvas boyutuna bağlıdır -->
           <div class="studio-slider-group" style="margin-bottom: 8px;">
@@ -464,7 +475,7 @@
           </section>
 
           <div class="studio-info-text" style="margin-top: 12px;">
-            * <strong>Rejiyi Oynat ve Kaydet:</strong> Panel otomatik gizlenir ve sahne oynatımı WebM/MP4 olarak kaydedilir. Kayıt tamamlanınca videoyu bu panelde oynatıp kontrol edebilirsiniz. 60 FPS hedefi ve bitrate cihazın kayıt desteğine bağlıdır; video çözünürlüğü mevcut sahne canvas ölçüsünü kullanır.
+            * <strong>Rejiyi Oynat ve Kaydet:</strong> Panel otomatik gizlenir ve sahne oynatımı WebM/MP4 olarak kaydedilir. Kayıt 3 dakika veya 128 MiB sınırından hangisine önce ulaşırsa otomatik durur. Video çözünürlüğü mevcut sahne canvas ölçüsünü kullanır; seçilen FPS ve bitrate cihazın kayıt desteği ile pil/işlemci yükünü etkiler.
           </div>
         </div>
       </div>

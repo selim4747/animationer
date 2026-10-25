@@ -123,13 +123,20 @@ async function tapSelector(command, selector) {
     target.scrollIntoView({ block: 'center' });
     const rect = target.getBoundingClientRect();
     const style = getComputedStyle(target);
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    const receivesTouch = hit === target || target.contains(hit);
     return {
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2,
+      x,
+      y,
       visible: rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.pointerEvents !== 'none',
+      receivesTouch,
+      coveredBy: receivesTouch ? null : [hit?.tagName || 'none', hit?.id || '', typeof hit?.className === 'string' ? hit.className : ''].join('#'),
     };
   })()`);
   assert(element?.visible, `Touch target is not visible: ${selector}`);
+  assert(element.receivesTouch, `Touch target is covered by ${element.coveredBy}: ${selector}`);
   const point = { x: Math.round(element.x), y: Math.round(element.y), id: 0, radiusX: 1, radiusY: 1, force: 1 };
   await command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
   await command('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
@@ -152,6 +159,42 @@ async function waitForExportedFile(pattern, timeoutMs = 60_000) {
   }
   const toast = await evaluate(globalThis.__devtoolsCommand, `document.querySelector('#toast')?.textContent || ''`);
   throw new Error(`No ${pattern} file appeared under ${EXPORT_DIRECTORY}. App toast: ${toast || '(empty)'}`);
+}
+
+async function waitForAndroidShareSheet(timeoutMs = 12_000) {
+  const deadline = Date.now() + timeoutMs;
+  let activityDump = '';
+  while (Date.now() < deadline) {
+    activityDump = adbText(['shell', 'dumpsys', 'activity', 'activities']);
+    const resumed = activityDump.split('\n')
+      .filter((line) => /mResumedActivity|topResumedActivity|mFocusedActivity/i.test(line))
+      .join('\n');
+    if (/ChooserActivity|ResolverActivity|com\.android\.intentresolver/i.test(resumed)) return resumed;
+    await sleep(500);
+  }
+  return activityDump;
+}
+
+async function waitForVideoPreview(command, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  let state;
+  while (Date.now() < deadline) {
+    state = await evaluate(command, `(() => {
+      const video = document.querySelector('#recording-video-preview');
+      return {
+        hidden: document.querySelector('#recording-preview-panel')?.hidden,
+        readyState: video?.readyState ?? 0,
+        duration: video?.duration ?? 0,
+        width: video?.videoWidth ?? 0,
+        height: video?.videoHeight ?? 0,
+        error: video?.error?.message || null,
+      };
+    })()`);
+    if (state.error) throw new Error(`Android video preview decode error: ${state.error}`);
+    if (state.hidden === false && state.readyState >= 2 && Number.isFinite(state.duration) && state.duration > 0) return state;
+    await sleep(300);
+  }
+  throw new Error(`Saved video preview did not become playable: ${JSON.stringify(state)}`);
 }
 
 async function main() {
@@ -222,34 +265,35 @@ async function main() {
     assert.deepEqual(expanded, { expanded: 'true', hidden: 'false', inert: false, collapsed: false });
     console.log('PASS: Panel collapsed and expanded by touch; accessibility and inert state stayed synchronized.');
 
-    // Hiding the whole panel is reversible by keyboard, but may not be reachable by touch on a phone.
+    // Hiding the panel must leave the floating restore action visible and reachable by touch.
     await tapSelector(devtools.command, '#btn-toggle-hud-vis');
     const hiddenPanel = await evaluate(devtools.command, `(() => {
       const panel = document.querySelector('#studio-panel');
       const button = document.querySelector('#btn-toggle-hud-vis');
-      const rect = button.getBoundingClientRect();
-      const style = getComputedStyle(button);
+      const restore = document.querySelector('#btn-restore-studio-panel');
+      const rect = restore.getBoundingClientRect();
+      const style = getComputedStyle(restore);
       const inViewport = rect.right > 0 && rect.left < innerWidth && rect.bottom > 0 && rect.top < innerHeight;
       return {
         hidden: panel.classList.contains('hidden-cinematic'),
         pressed: button.getAttribute('aria-pressed'),
-        touchReachable: inViewport && style.visibility !== 'hidden' && style.display !== 'none' && style.pointerEvents !== 'none',
+        restoreVisible: !restore.hidden,
+        touchReachable: inViewport && rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.pointerEvents !== 'none',
         rect: { top: Math.round(rect.top), bottom: Math.round(rect.bottom), viewportHeight: innerHeight },
       };
     })()`);
     assert.equal(hiddenPanel.hidden, true, 'Full-screen control did not hide the panel.');
     assert.equal(hiddenPanel.pressed, 'true');
-    if (!hiddenPanel.touchReachable) {
-      console.log(`ISSUE: Hidden panel toggle is outside the touch viewport (${JSON.stringify(hiddenPanel.rect)}); restoring with the H keyboard shortcut.`);
-    }
-    await devtools.command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'h', code: 'KeyH', windowsVirtualKeyCode: 72, nativeVirtualKeyCode: 72 });
-    await devtools.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'h', code: 'KeyH', windowsVirtualKeyCode: 72, nativeVirtualKeyCode: 72 });
+    assert.equal(hiddenPanel.restoreVisible, true, 'Floating panel restore action was hidden.');
+    assert.equal(hiddenPanel.touchReachable, true, `Floating restore action is outside the touch viewport: ${JSON.stringify(hiddenPanel.rect)}`);
+    await tapSelector(devtools.command, '#btn-restore-studio-panel');
     const restoredPanel = await evaluate(devtools.command, `(() => ({
       hidden: document.querySelector('#studio-panel').classList.contains('hidden-cinematic'),
       pressed: document.querySelector('#btn-toggle-hud-vis').getAttribute('aria-pressed'),
+      restoreHidden: document.querySelector('#btn-restore-studio-panel').hidden,
     }))()`);
-    assert.deepEqual(restoredPanel, { hidden: false, pressed: 'false' });
-    console.log('PASS: Full-screen mode toggled; H shortcut restored the panel.');
+    assert.deepEqual(restoredPanel, { hidden: false, pressed: 'false', restoreHidden: true });
+    console.log('PASS: Full-screen mode toggled and the floating restore button reopened the controls by touch.');
 
     // Add a safe sample action, then export and validate the actual device JSON file.
     await tapSelector(devtools.command, '.studio-tab-btn[data-tab="tab-timeline"]');
@@ -271,6 +315,15 @@ async function main() {
     assert(Array.isArray(project.steps));
     assert.equal(project.steps.length, stepCountAfter);
     console.log(`PASS: Timeline accepted a new step and saved valid project JSON (${jsonPath}; ${project.steps.length} steps).`);
+
+    const shareActionVisible = await evaluate(devtools.command, `!document.querySelector('#toast-action')?.hidden`);
+    assert.equal(shareActionVisible, true, 'Saved Android project did not expose its Share action.');
+    await tapSelector(devtools.command, '#toast-action');
+    const shareActivityDump = await waitForAndroidShareSheet();
+    assert(/ChooserActivity|ResolverActivity|com\.android\.intentresolver/i.test(shareActivityDump), 'Android system Share sheet did not open.');
+    console.log('PASS: Saved project Share action opened the Android system Share sheet.');
+    adbText(['shell', 'input', 'keyevent', '4']);
+    await sleep(500);
 
     // Save a PNG from the real Render UI and validate bytes and dimensions.
     await tapSelector(devtools.command, '.studio-tab-btn[data-tab="tab-render"]');
@@ -312,9 +365,32 @@ async function main() {
     } else {
       throw new Error(`Unexpected video extension: ${videoPath}`);
     }
-    console.log(`PASS: Manual Android video recorded and saved (${videoPath}; ${video.length} bytes).`);
+    const preview = await waitForVideoPreview(devtools.command);
+    assert(preview.width > 0 && preview.height > 0, `Video preview reported invalid dimensions: ${JSON.stringify(preview)}`);
+    const playback = await evaluate(devtools.command, `(() => new Promise((resolve) => {
+      const video = document.querySelector('#recording-video-preview');
+      let finished = false;
+      const complete = (result) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timeout);
+        video.removeEventListener('ended', onEnded);
+        video.removeEventListener('error', onError);
+        resolve(result);
+      };
+      const onEnded = () => complete({ played: true, duration: video.duration });
+      const onError = () => complete({ played: false, error: video.error?.message || 'decode failed' });
+      const timeout = setTimeout(() => complete({ played: false, error: 'playback timeout' }), 12_000);
+      video.muted = true;
+      video.playbackRate = 4;
+      video.addEventListener('ended', onEnded, { once: true });
+      video.addEventListener('error', onError, { once: true });
+      video.play().catch((error) => complete({ played: false, error: error.message }));
+    }))()`);
+    assert.equal(playback.played, true, `Saved recording could not play through in the preview: ${JSON.stringify(playback)}`);
+    console.log(`PASS: Manual Android video saved and played through the in-app preview (${videoPath}; ${video.length} bytes; ${preview.width}x${preview.height}; ${preview.duration.toFixed(2)}s).`);
 
-    console.log('ANDROID USER TEST SUMMARY: 6 tabs, collapse/expand, full-screen toggle, timeline edit, project JSON, PNG and manual video export exercised.');
+    console.log('ANDROID USER TEST SUMMARY: 6 tabs, collapse/expand, touch-restorable full-screen mode, timeline edit, project JSON, Android Share sheet, PNG and playable manual video export exercised.');
   } finally {
     delete globalThis.__devtoolsCommand;
     devtools.socket.close();
