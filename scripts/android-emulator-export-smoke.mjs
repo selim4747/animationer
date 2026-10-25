@@ -175,6 +175,19 @@ async function waitForAndroidShareSheet(timeoutMs = 12_000) {
   return activityDump;
 }
 
+async function waitForShareAction(command, timeoutMs = 12_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const visible = await evaluate(command, `(() => {
+      const button = document.querySelector('#toast-action');
+      return Boolean(button && !button.hidden && button.textContent.trim());
+    })()`);
+    if (visible) return true;
+    await sleep(250);
+  }
+  return false;
+}
+
 async function waitForVideoPreview(command, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
   let state;
@@ -318,8 +331,8 @@ async function main() {
     assert.equal(project.steps.length, stepCountAfter);
     console.log(`PASS: Timeline accepted a new step and saved valid project JSON (${jsonPath}; ${project.steps.length} steps).`);
 
-    const shareActionVisible = await evaluate(devtools.command, `!document.querySelector('#toast-action')?.hidden`);
-    assert.equal(shareActionVisible, true, 'Saved Android project did not expose its Share action.');
+    const shareActionVisible = await waitForShareAction(devtools.command);
+    assert.equal(shareActionVisible, true, 'Saved Android project did not expose its Share action after the native save finished.');
     await tapSelector(devtools.command, '#toast-action');
     const shareActivityDump = await waitForAndroidShareSheet();
     assert(/ChooserActivity|ResolverActivity|com\.android\.intentresolver/i.test(shareActivityDump), 'Android system Share sheet did not open.');
