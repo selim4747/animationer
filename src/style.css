@@ -283,6 +283,12 @@ html, body {
   transform: translateY(1px);
 }
 
+.hud-btn:disabled {
+  opacity: 0.58;
+  cursor: wait;
+  transform: none;
+}
+
 .hud-btn.primary {
   background: var(--mono-white);
   color: var(--mono-black);
@@ -367,6 +373,27 @@ html, body {
   opacity: 0;
   pointer-events: none;
 }
+
+.panel-restore-btn {
+  position: fixed;
+  right: max(12px, env(safe-area-inset-right, 12px));
+  bottom: max(12px, env(safe-area-inset-bottom, 12px));
+  z-index: 60;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--mono-white);
+  border-radius: 5px;
+  background: var(--mono-white);
+  color: var(--mono-black);
+  font: 700 11px monospace;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.75);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.panel-restore-btn:hover { background: var(--mono-light); }
+.panel-restore-btn[hidden] { display: none; }
+.panel-restore-btn:focus-visible, .hud-toast-action:focus-visible { outline: 2px solid var(--mono-white); outline-offset: 3px; }
 
 /* Panel Başlığı */
 .studio-panel-header {
@@ -487,6 +514,30 @@ html, body {
   font-weight: 700;
   letter-spacing: 0.5px;
   box-shadow: 0 0 14px rgba(255, 255, 255, 0.4);
+}
+
+.recording-status {
+  margin-top: 8px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.recording-preview-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--mono-border-light);
+  border-radius: 5px;
+  background: var(--mono-dark-900);
+}
+
+.recording-preview-panel[hidden] { display: none; }
+.recording-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; font: 700 11px monospace; }
+.recording-preview-video { display: block; width: 100%; max-height: min(36vh, 280px); background: #000; object-fit: contain; }
+@supports (height: 100dvh) {
+  .recording-preview-video { max-height: min(36dvh, 280px); }
 }
 
 .banner-pulse-dot {
@@ -949,13 +1000,18 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .hud-toast {
-  position: absolute;
-  bottom: 20px;
+  position: fixed;
+  bottom: max(68px, calc(env(safe-area-inset-bottom, 0px) + 68px));
   left: 50%;
   transform: translateX(-50%) translateY(30px);
   background: var(--mono-white);
   color: var(--mono-black);
-  padding: 7px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: min(720px, calc(100vw - 24px));
+  padding: 9px 12px;
   border-radius: 4px;
   font-size: 11px;
   font-family: monospace;
@@ -963,15 +1019,21 @@ input[type="range"]::-moz-range-thumb {
   opacity: 0;
   pointer-events: none;
   transition: transform 0.2s ease, opacity 0.2s ease;
-  z-index: 90;
-  white-space: nowrap;
+  z-index: 95;
+  white-space: normal;
   box-shadow: 0 4px 20px rgba(255, 255, 255, 0.25);
 }
 
 .hud-toast.show {
   transform: translateX(-50%) translateY(0);
   opacity: 1;
+  pointer-events: auto;
 }
+
+#toast-message { min-width: 0; overflow-wrap: anywhere; line-height: 1.4; }
+.hud-toast-action { flex: 0 0 auto; min-height: 34px; padding: 6px 10px; border: 1px solid var(--mono-black); border-radius: 4px; background: var(--mono-black); color: var(--mono-white); font: 700 10px monospace; cursor: pointer; }
+.hud-toast-action:disabled { opacity: 0.6; cursor: wait; }
+.hud-toast-action[hidden] { display: none; }
 
 /* Sürükle Bırak Katmanı (Drag Overlay) */
 .drag-overlay {

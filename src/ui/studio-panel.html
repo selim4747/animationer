@@ -451,8 +451,20 @@
             <span id="label-banner-timer">CANVAS KAYDEDİLİYOR: 00:00</span>
           </div>
 
+          <div id="render-recording-status" class="studio-info-text recording-status" role="status" aria-live="polite">
+            Kayıt hazır. Kaydettiğiniz video tamamlanınca burada önizleyebilirsiniz.
+          </div>
+
+          <section id="recording-preview-panel" class="recording-preview-panel" aria-label="Son video kaydı önizlemesi" hidden>
+            <div class="recording-preview-heading">
+              <span>SON KAYDIN ÖNİZLEMESİ</span>
+              <button id="btn-dismiss-video-preview" class="hud-btn small-btn" type="button">Kapat</button>
+            </div>
+            <video id="recording-video-preview" class="recording-preview-video" controls playsinline preload="metadata" aria-label="Kaydedilen videoyu oynat"></video>
+          </section>
+
           <div class="studio-info-text" style="margin-top: 12px;">
-            * <strong>Rejiyi Oynat ve Kaydet:</strong> Panel otomatik gizlenir ve sahne oynatımı WebM/MP4 olarak kaydedilir. 60 FPS hedefi ve bitrate cihazın kayıt desteğine bağlıdır; video çözünürlüğü mevcut sahne canvas ölçüsünü kullanır.
+            * <strong>Rejiyi Oynat ve Kaydet:</strong> Panel otomatik gizlenir ve sahne oynatımı WebM/MP4 olarak kaydedilir. Kayıt tamamlanınca videoyu bu panelde oynatıp kontrol edebilirsiniz. 60 FPS hedefi ve bitrate cihazın kayıt desteğine bağlıdır; video çözünürlüğü mevcut sahne canvas ölçüsünü kullanır.
           </div>
         </div>
       </div>

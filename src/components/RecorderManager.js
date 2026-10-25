@@ -10,6 +10,7 @@ export class RecorderManager {
     this.canvas = canvas;
     this.onStateChange = onStateChange;
     this.isRecording = false;
+    this.isFinalizing = false;
     this.mediaRecorder = null;
     this.recordedChunks = [];
     this.recordStartTime = 0;
@@ -40,9 +41,11 @@ export class RecorderManager {
   }
 
   startRecording() {
-    if (this.isRecording) return false;
+    if (this.isRecording || this.isFinalizing) return false;
     if (!this.canvas || typeof this.canvas.captureStream !== 'function' || typeof MediaRecorder === 'undefined') {
-      console.error('Video kaydı bu ortamda desteklenmiyor.');
+      const error = 'Bu ortamda video kaydı desteklenmiyor.';
+      console.error(error);
+      this.onStateChange({ isRecording: false, isFinalizing: false, error });
       return false;
     }
 
@@ -54,6 +57,7 @@ export class RecorderManager {
       this.mediaRecorder = new MediaRecorder(this.stream, options);
       this.recordedChunks = [];
       this.lastDownloadResult = null;
+      this.isFinalizing = false;
       this.mediaRecorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) this.recordedChunks.push(event.data);
       };
@@ -70,7 +74,7 @@ export class RecorderManager {
           formattedDuration: this.getFormattedDuration(),
         });
       }, 500);
-      this.onStateChange({ isRecording: true, duration: 0, formattedDuration: '00:00' });
+      this.onStateChange({ isRecording: true, isFinalizing: false, duration: 0, formattedDuration: '00:00' });
       return true;
     } catch (error) {
       console.error('Video kaydı başlatılamadı:', error);
@@ -90,6 +94,13 @@ export class RecorderManager {
       }
       clearInterval(this.timerInterval);
       this.isRecording = false;
+      this.isFinalizing = true;
+      this.onStateChange({
+        isRecording: false,
+        isFinalizing: true,
+        duration: this.recordDurationSeconds,
+        formattedDuration: this.getFormattedDuration(),
+      });
       const recorder = this.mediaRecorder;
       recorder.onstop = async () => {
         const mimeType = recorder.mimeType || this._getSupportedMimeType() || 'video/webm';
@@ -100,30 +111,36 @@ export class RecorderManager {
         try {
           const downloadResult = await this._downloadBlob(blob, filename);
           this.lastDownloadResult = downloadResult;
+          this.isFinalizing = false;
           this.onStateChange({
             isRecording: false,
+            isFinalizing: false,
             duration: this.recordDurationSeconds,
             formattedDuration: '00:00',
             filename: downloadResult.saved ? filename : undefined,
             downloadResult,
             canceled: downloadResult.canceled || false,
             error: downloadResult.saved || downloadResult.canceled ? undefined : 'Dosya cihaza kaydedilemedi.',
+            blob,
           });
           resolve(blob);
         } catch (error) {
           this.lastDownloadResult = { saved: false, error: error.message || 'Dosya cihaza kaydedilemedi.' };
-          this.onStateChange({ isRecording: false, error: this.lastDownloadResult.error });
+          this.isFinalizing = false;
+          this.onStateChange({ isRecording: false, isFinalizing: false, error: this.lastDownloadResult.error });
           resolve(null);
         } finally {
           this._cleanupStream();
           this.mediaRecorder = null;
+          this.recordedChunks = [];
         }
       };
       recorder.onerror = (event) => {
         clearInterval(this.timerInterval);
         this._cleanupStream();
         this.mediaRecorder = null;
-        this.onStateChange({ isRecording: false, error: event.error?.message || 'Video kaydı sırasında hata oluştu.' });
+        this.isFinalizing = false;
+        this.onStateChange({ isRecording: false, isFinalizing: false, error: event.error?.message || 'Video kaydı sırasında hata oluştu.' });
         resolve(null);
       };
       try {
@@ -131,7 +148,8 @@ export class RecorderManager {
       } catch (error) {
         this._cleanupStream();
         this.mediaRecorder = null;
-        this.onStateChange({ isRecording: false, error: error.message || 'Video kaydı durdurulamadı.' });
+        this.isFinalizing = false;
+        this.onStateChange({ isRecording: false, isFinalizing: false, error: error.message || 'Video kaydı durdurulamadı.' });
         resolve(null);
       }
     });
@@ -159,7 +177,7 @@ export class RecorderManager {
       if (!blob) throw new Error('PNG görüntüsü oluşturulamadı.');
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 23);
       const filename = customName || `diorama_snapshot_${timestamp}.png`;
-      return { ...(await saveGeneratedFile(blob, filename)), filename };
+      return { ...(await saveGeneratedFile(blob, filename)), filename, blob };
     } catch (error) {
       console.error('Ekran görüntüsü kaydedilemedi:', error);
       return { saved: false, error: error.message || 'Ekran görüntüsü kaydedilemedi.' };

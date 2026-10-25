@@ -7,14 +7,15 @@
  */
 
 import { AutosaveCoordinator } from './AutosaveCoordinator.js';
-import { saveGeneratedFile } from '../utils/FileExportManager.js';
+import { saveGeneratedFile, shareGeneratedFile } from '../utils/FileExportManager.js';
 
 function saveResultMessage(label, result) {
   if (result?.canceled) return `${label} kaydetme işlemi iptal edildi.`;
   if (!result?.saved) return result?.error || `${label} cihaza kaydedilemedi.`;
-  if (result.method === 'browser') return `${label} indirme işlemi başlatıldı; tarayıcının İndirilenler bölümünü kontrol edin.`;
-  if (result.method === 'capacitor') return `${label} Belgeler/Animationer klasörüne kaydedildi.`;
-  return `${label} kaydedildi${result.filename ? `: ${result.filename}` : '.'}`;
+  const filename = result.filename || 'dosya';
+  if (result.method === 'browser') return `${label} indiriliyor: ${filename} · Tarayıcı indirilenleri`;
+  const location = result.location || result.path || (result.method === 'capacitor' ? 'Documents/Animationer' : '');
+  return `${label} kaydedildi: ${filename}${location ? ` · ${location}` : ''}`;
 }
 
 export class UIManager {
@@ -45,6 +46,7 @@ export class UIManager {
     this.isPanelHidden = false; // 'H' tuşu ve sinematik mod
     this.isCollapsed = false; // Mobilde paneli küçültme
     this.activeTab = 'tab-timeline'; // Başlangıçta Reji/Timeline açık olsun
+    this.recordingPreviewUrl = null;
 
     this._cacheDOM();
     this._bindEvents();
@@ -75,6 +77,7 @@ export class UIManager {
       // Ana Panel & Başlık
       studioPanel: document.getElementById('studio-panel'),
       btnToggleVisibility: document.getElementById('btn-toggle-hud-vis'),
+      btnRestorePanel: document.getElementById('btn-restore-studio-panel'),
       btnCollapseHeader: document.getElementById('panel-collapse-trigger'),
       panelCollapseArrow: document.getElementById('panel-collapse-arrow'),
       panelBody: document.getElementById('panel-body-wrapper'),
@@ -209,9 +212,15 @@ export class UIManager {
       btnRecordSequence: document.getElementById('btn-record-sequence'),
       renderRecordingBanner: document.getElementById('render-recording-banner'),
       labelBannerTimer: document.getElementById('label-banner-timer'),
+      recordingStatus: document.getElementById('render-recording-status'),
+      recordingPreviewPanel: document.getElementById('recording-preview-panel'),
+      recordingVideoPreview: document.getElementById('recording-video-preview'),
+      btnDismissVideoPreview: document.getElementById('btn-dismiss-video-preview'),
 
       // Toast & Modallar
       toast: document.getElementById('toast'),
+      toastMessage: document.getElementById('toast-message'),
+      toastAction: document.getElementById('toast-action'),
       modalHelp: document.getElementById('modal-help'),
       btnOpenHelp: document.getElementById('btn-open-help'),
       btnCloseHelp: document.getElementById('btn-close-help'),
@@ -241,6 +250,10 @@ export class UIManager {
       d.btnToggleVisibility.addEventListener('click', () => {
         this.togglePanelVisibility();
       });
+    }
+
+    if (d.btnRestorePanel) {
+      d.btnRestorePanel.addEventListener('click', () => this.togglePanelVisibility());
     }
 
     if (d.btnCinematic) {
@@ -365,7 +378,7 @@ export class UIManager {
           };
           const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
           const result = await saveGeneratedFile(blob, 'animationer-project.json');
-          this.showToast(saveResultMessage('Reji + 2D proje JSON’u', result));
+          this._showSavedFileToast('Reji + 2D proje JSON’u', result, blob);
         } catch (error) { this.showToast(`Proje kaydedilemedi: ${error.message}`); }
       });
     }
@@ -815,7 +828,7 @@ export class UIManager {
       d.btnTakeScreenshot.addEventListener('click', async () => {
         if (this.recorder) {
           const result = await this.recorder.takeScreenshot();
-          this.showToast(saveResultMessage('PNG ekran görüntüsü', result));
+          this._showSavedFileToast('PNG ekran görüntüsü', result, result.blob);
         }
       });
     }
@@ -839,15 +852,17 @@ export class UIManager {
     }
 
     if (d.btnToggleVideoRecord) {
-      d.btnToggleVideoRecord.addEventListener('click', () => {
+      d.btnToggleVideoRecord.addEventListener('click', async () => {
         if (!this.recorder) return;
+        if (this.recorder.isFinalizing) return;
         if (this.recorder.isRecording) {
-          this.recorder.stopRecording();
-          this.showToast('Video kaydı durduruluyor ve indiriliyor...');
+          this.showToast('Kayıt durduruldu; video hazırlanıyor ve kaydediliyor…');
+          await this.recorder.stopRecording();
         } else {
+          this._dismissRecordingPreview();
           const ok = this.recorder.startRecording();
           if (ok) {
-            this.showToast('Video kaydı başlatıldı (hedef: 60 FPS)');
+            this.showToast('Video kaydı başladı. Süre üst göstergede; bitirmek için Kaydı Durdur’a dokunun.');
           } else {
             this.showToast('HATA: Video kaydı başlatılamadı!');
           }
@@ -857,7 +872,7 @@ export class UIManager {
 
     if (d.btnRecordSequence) {
       d.btnRecordSequence.addEventListener('click', () => {
-        if (!this.recorder || this.recorder.isRecording) return;
+        if (!this.recorder || this.recorder.isRecording || this.recorder.isFinalizing) return;
 
         this.showToast('🎬 Reji Kaydı Başlatılıyor (Sinematik Tam Ekran)...');
 
@@ -868,16 +883,28 @@ export class UIManager {
               this.togglePanelVisibility();
             }
           },
-          onAfterFinish: ({ success, error, downloadResult } = {}) => {
+          onAfterFinish: ({ success, error } = {}) => {
             // Kayıt bitince paneli geri getir
             if (this.isPanelHidden) {
               this.togglePanelVisibility();
             }
-            this.showToast(success
-              ? saveResultMessage('Reji videosu', downloadResult || { saved: true })
-              : `Reji videosu kaydedilemedi: ${error || 'Bilinmeyen hata'}`);
+            if (success) this.dom.recordingPreviewPanel?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            else this.showToast(`Reji videosu kaydedilemedi: ${error || 'Bilinmeyen hata'}`);
           },
         });
+      });
+    }
+
+    if (d.btnDismissVideoPreview) {
+      d.btnDismissVideoPreview.addEventListener('click', () => this._dismissRecordingPreview());
+    }
+    if (d.recordingVideoPreview) {
+      d.recordingVideoPreview.addEventListener('error', () => {
+        if (d.recordingStatus) {
+          d.recordingStatus.textContent = this.recorder?.lastDownloadResult?.saved
+            ? 'Video dosyası kaydedildi; bu ortam önizlemeyi oynatamadı. Dosyayı başka bir oynatıcıda açabilirsiniz.'
+            : 'Video önizlemesi bu ortamda oynatılamadı.';
+        }
       });
     }
 
@@ -905,40 +932,115 @@ export class UIManager {
   /**
    * RecorderManager durum değişikliklerini arayüze yansıtır
    */
-  updateRecorderUI({ isRecording, duration, formattedDuration, filename, error, canceled, downloadResult }) {
+  updateRecorderUI({ isRecording, isFinalizing = false, duration, formattedDuration, filename, error, canceled, downloadResult, blob }) {
     const d = this.dom;
+    const isBusy = isRecording || isFinalizing;
 
     // Üst rozet
     if (d.badgeRecorderMode) {
-      d.badgeRecorderMode.style.display = isRecording ? 'inline-flex' : 'none';
+      d.badgeRecorderMode.style.display = isBusy ? 'inline-flex' : 'none';
       if (d.labelRecorderMode) {
-        d.labelRecorderMode.textContent = `● REC ${formattedDuration || '00:00'}`;
+        d.labelRecorderMode.textContent = isFinalizing
+          ? `● KAYDEDİLİYOR ${formattedDuration || '00:00'}`
+          : `● REC ${formattedDuration || '00:00'}`;
       }
     }
 
     // Tab 5 buton ve banner
     if (d.btnToggleVideoRecord) {
+      d.btnToggleVideoRecord.disabled = isFinalizing;
       if (isRecording) {
         d.btnToggleVideoRecord.classList.add('recording-active');
         d.btnToggleVideoRecord.textContent = `⏹ Kaydı Durdur (${formattedDuration || '00:00'})`;
+      } else if (isFinalizing) {
+        d.btnToggleVideoRecord.classList.remove('recording-active');
+        d.btnToggleVideoRecord.textContent = '⌛ Video kaydediliyor…';
       } else {
         d.btnToggleVideoRecord.classList.remove('recording-active');
         d.btnToggleVideoRecord.textContent = '● Manuel Video Kaydı Başlat';
       }
     }
+    if (d.btnRecordSequence) d.btnRecordSequence.disabled = isBusy;
+    if (d.btnQuality720p) d.btnQuality720p.disabled = isBusy;
+    if (d.btnQuality1080p) d.btnQuality1080p.disabled = isBusy;
 
     if (d.renderRecordingBanner) {
-      d.renderRecordingBanner.style.display = isRecording ? 'flex' : 'none';
+      d.renderRecordingBanner.style.display = isBusy ? 'flex' : 'none';
       if (d.labelBannerTimer) {
-        d.labelBannerTimer.textContent = `CANVAS KAYDEDİLİYOR: ${formattedDuration || '00:00'}`;
+        d.labelBannerTimer.textContent = isFinalizing
+          ? 'VİDEO HAZIRLANIYOR VE KAYDEDİLİYOR…'
+          : `CANVAS KAYDEDİLİYOR: ${formattedDuration || '00:00'}`;
       }
     }
 
-    if (filename && !isRecording) {
-      this.showToast(saveResultMessage('Video', downloadResult || { saved: true, filename }));
+    if (d.recordingStatus) {
+      if (isRecording) d.recordingStatus.textContent = `Video kaydı sürüyor · ${formattedDuration || '00:00'}. Durdurmak için kayıt düğmesine dokunun.`;
+      else if (isFinalizing) d.recordingStatus.textContent = 'Kayıt durduruldu. Video hazırlanıyor ve dosyaya yazılıyor; lütfen bekleyin.';
+      else if (error) d.recordingStatus.textContent = `Kayıt başarısız: ${error}`;
+      else if (canceled) d.recordingStatus.textContent = 'Dosyayı kaydetme iptal edildi; oluşturulan video önizleme alanında kullanılabilir.';
+      else if (filename) d.recordingStatus.textContent = saveResultMessage('Video', downloadResult || { saved: true, filename });
+      else d.recordingStatus.textContent = 'Kayıt hazır. Kaydettiğiniz video tamamlanınca burada önizleyebilirsiniz.';
     }
+    if (blob instanceof Blob && blob.size > 0) this._showRecordingPreview(blob);
+    if (filename && !isBusy) this._showSavedFileToast('Video', downloadResult || { saved: true, filename }, blob);
     if (canceled) this.showToast('Video dosyasını kaydetme işlemi iptal edildi.');
     if (error) this.showToast(`Kayıt hatası: ${error}`);
+  }
+
+  _showSavedFileToast(label, result, blob) {
+    const message = saveResultMessage(label, result);
+    let canShare = result?.method === 'capacitor' && Boolean(result.uri);
+    if (!canShare && blob instanceof Blob && typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      try {
+        const file = new File([blob], result.filename || 'animationer-export', { type: blob.type || 'application/octet-stream' });
+        canShare = typeof navigator.canShare !== 'function' || navigator.canShare({ files: [file] });
+      } catch {
+        canShare = false;
+      }
+    }
+
+    if (!canShare) {
+      this.showToast(message);
+      return;
+    }
+
+    this.showToast(message, {
+      actionLabel: 'Paylaş',
+      action: async () => {
+        try {
+          await shareGeneratedFile(blob, result);
+          this.showToast(`${result.filename || label} için paylaşım seçenekleri açıldı.`);
+        } catch (error) {
+          this.showToast(error.name === 'AbortError' ? 'Dosya paylaşımı iptal edildi.' : `Dosya paylaşılamadı: ${error.message}`);
+        }
+      },
+    });
+  }
+
+  _showRecordingPreview(blob) {
+    const video = this.dom.recordingVideoPreview;
+    const panel = this.dom.recordingPreviewPanel;
+    if (!video || !panel) return;
+    if (this.recordingPreviewUrl) URL.revokeObjectURL(this.recordingPreviewUrl);
+    this.recordingPreviewUrl = URL.createObjectURL(blob);
+    video.src = this.recordingPreviewUrl;
+    video.load();
+    panel.hidden = false;
+    if (!this.isPanelHidden) panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  _dismissRecordingPreview() {
+    const video = this.dom.recordingVideoPreview;
+    if (video) {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    }
+    if (this.recordingPreviewUrl) {
+      URL.revokeObjectURL(this.recordingPreviewUrl);
+      this.recordingPreviewUrl = null;
+    }
+    if (this.dom.recordingPreviewPanel) this.dom.recordingPreviewPanel.hidden = true;
   }
 
   /**
@@ -1006,12 +1108,21 @@ export class UIManager {
     this.isPanelHidden = !this.isPanelHidden;
     if (this.dom.studioPanel) {
       this.dom.studioPanel.classList.toggle('hidden-cinematic', this.isPanelHidden);
+      this.dom.studioPanel.setAttribute('aria-hidden', String(this.isPanelHidden));
+      this.dom.studioPanel.inert = this.isPanelHidden;
+    }
+    if (this.dom.btnRestorePanel) {
+      this.dom.btnRestorePanel.hidden = !this.isPanelHidden;
+      this.dom.btnRestorePanel.setAttribute('aria-expanded', String(!this.isPanelHidden));
+      this.dom.btnRestorePanel.setAttribute('aria-label', this.isPanelHidden ? 'Kontrol panelini aç' : 'Kontrol paneli açık');
     }
     if (this.dom.btnToggleVisibility) {
       this.dom.btnToggleVisibility.textContent = this.isPanelHidden ? 'Paneli Aç [H]' : 'Tam Ekran [H]';
       this.dom.btnToggleVisibility.setAttribute('aria-pressed', String(this.isPanelHidden));
     }
-    this.showToast(this.isPanelHidden ? 'Sinematik Tam Ekran Modu (Geri dönmek için H)' : 'Stüdyo Paneli Açıldı');
+    if (this.isPanelHidden) this.dom.btnRestorePanel?.focus({ preventScroll: true });
+    else this.dom.btnToggleVisibility?.focus({ preventScroll: true });
+    this.showToast(this.isPanelHidden ? 'Sinematik görünüm açık. Kontrolleri aç düğmesiyle geri dönün.' : 'Stüdyo paneli açıldı.');
   }
 
   /**
@@ -1371,16 +1482,32 @@ export class UIManager {
    * Monokrom Toast Bildirimi Gösterir
    * @param {string} msg
    */
-  showToast(msg) {
+  showToast(msg, { actionLabel, action } = {}) {
     const toast = this.dom.toast;
     if (!toast) return;
 
-    toast.textContent = msg;
+    if (this.dom.toastMessage) this.dom.toastMessage.textContent = msg;
+    else toast.textContent = msg;
+    if (this.dom.toastAction) {
+      this.dom.toastAction.hidden = typeof action !== 'function';
+      this.dom.toastAction.textContent = actionLabel || '';
+      this.dom.toastAction.disabled = false;
+      this.dom.toastAction.onclick = typeof action === 'function' ? async () => {
+        this.dom.toastAction.disabled = true;
+        try {
+          await action();
+        } catch (error) {
+          this.showToast(`İşlem tamamlanamadı: ${error.message || 'bilinmeyen hata'}`);
+        } finally {
+          if (this.dom.toastAction) this.dom.toastAction.disabled = false;
+        }
+      } : null;
+    }
     toast.classList.add('show');
 
     clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => {
       toast.classList.remove('show');
-    }, 2800);
+    }, typeof action === 'function' ? 9000 : 4500);
   }
 }
