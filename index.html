@@ -97,6 +97,13 @@
 
     <!-- Studio panel injected at runtime from src/ui/studio-panel.html -->
     <div id="studio-panel-root"></div>
+    <button id="btn-restore-studio-panel" class="panel-restore-btn" type="button" aria-controls="studio-panel" aria-expanded="false" hidden>
+      Kontrolleri Aç
+    </button>
+    <div id="toast" class="hud-toast">
+      <span id="toast-message" role="status" aria-live="polite" aria-atomic="true"></span>
+      <button id="toast-action" class="hud-toast-action" type="button" hidden></button>
+    </div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

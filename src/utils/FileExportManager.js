@@ -44,11 +44,19 @@ export async function saveToCapacitorDocuments(blob, filename, filesystem, direc
     throw error;
   }
 
+  let uri;
+  try {
+    ({ uri } = await filesystem.getUri({ path, directory }));
+  } catch {
+    // Saving succeeded; sharing is optional and must not turn it into a failed export.
+  }
+
   return {
     saved: true,
     method: 'capacitor',
     filename: safeFilename,
     location: `Documents/${path}`,
+    uri,
   };
 }
 
@@ -62,7 +70,37 @@ function saveInBrowser(blob, filename) {
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
-  return { saved: true, method: 'browser', filename };
+  return { saved: true, method: 'browser', filename, location: 'Tarayıcı indirilenleri' };
+}
+
+export async function shareGeneratedFile(blob, result) {
+  if (!result?.saved) throw new Error('Paylaşılacak kayıtlı bir dosya bulunamadı.');
+
+  if (result.method === 'capacitor' && result.uri) {
+    const { Share } = await import('@capacitor/share');
+    const availability = await Share.canShare();
+    if (!availability.value) throw new Error('Bu cihazda dosya paylaşımı desteklenmiyor.');
+    await Share.share({
+      title: result.filename || 'Animationer dışa aktarma',
+      text: result.filename || 'Animationer dosyası',
+      files: [result.uri],
+      dialogTitle: 'Dosyayı paylaş',
+    });
+    return;
+  }
+
+  if (blob instanceof Blob && typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+    const file = new File([blob], result.filename || 'animationer-export', {
+      type: blob.type || 'application/octet-stream',
+    });
+    if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [file] })) {
+      throw new Error('Bu tarayıcı bu dosya türünü paylaşamıyor.');
+    }
+    await navigator.share({ title: file.name, files: [file] });
+    return;
+  }
+
+  throw new Error('Bu platformda dosya paylaşımı desteklenmiyor.');
 }
 
 export async function saveGeneratedFile(blob, filename) {
