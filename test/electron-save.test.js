@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { saveGeneratedFileFromRenderer } from '../electron/save-generated-file.js';
+import { ElectronChunkedSaveSessions } from '../electron/save-generated-file-stream.js';
 
 const makeWindow = () => ({ webContents: {} });
 
@@ -67,4 +68,51 @@ test('Electron save handler rejects unrelated renderer senders and unsupported e
     saveGeneratedFileFromRenderer({ sender: window.webContents }, { filename: 'payload.exe', data: new ArrayBuffer(1) }, window, { dialogApi }),
     /dosya türü/i,
   );
+});
+
+test('chunked Electron save writes bounded binary chunks and publishes the file only at finish', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'animationer-stream-'));
+  const target = path.join(directory, 'capture.webm');
+  const window = makeWindow();
+  const event = { sender: window.webContents };
+  const sessions = new ElectronChunkedSaveSessions({ idFactory: () => 'test-session' });
+  try {
+    const started = await sessions.begin(event, { filename: 'capture.webm', size: 5 }, window, {
+      async showSaveDialog() { return { canceled: false, filePath: target }; },
+    });
+    assert.equal(started.sessionId, 'test-session');
+    await sessions.write(event, started.sessionId, new Uint8Array([0, 1]), window);
+    await sessions.write(event, started.sessionId, new Uint8Array([127, 128, 255]), window);
+    await assert.rejects(readFile(target), { code: 'ENOENT' });
+
+    const result = await sessions.finish(event, started.sessionId, window);
+    assert.deepEqual(result, { saved: true, filename: 'capture.webm', path: target });
+    assert.deepEqual(await readFile(target), Buffer.from([0, 1, 127, 128, 255]));
+    assert.equal(sessions.sessions.size, 0);
+  } finally {
+    await sessions.abortAll();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('chunked Electron save rejects unowned sessions and removes aborted temporary files', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'animationer-stream-abort-'));
+  const target = path.join(directory, 'capture.mp4');
+  const window = makeWindow();
+  const event = { sender: window.webContents };
+  const sessions = new ElectronChunkedSaveSessions({ idFactory: () => 'abort-session' });
+  try {
+    const started = await sessions.begin(event, { filename: 'capture.mp4', size: 4 }, window, {
+      async showSaveDialog() { return { canceled: false, filePath: target }; },
+    });
+    await assert.rejects(sessions.write({ sender: {} }, started.sessionId, new Uint8Array([1]), window), /uygulama penceresinden/i);
+    await sessions.write(event, started.sessionId, new Uint8Array([1]), window);
+    await assert.rejects(sessions.finish(event, started.sessionId, window), /tamamı ulaşmadı/i);
+    await sessions.abort(event, started.sessionId, window);
+    assert.equal(sessions.sessions.size, 0);
+    assert.deepEqual(await readdir(directory), []);
+  } finally {
+    await sessions.abortAll();
+    await rm(directory, { recursive: true, force: true });
+  }
 });

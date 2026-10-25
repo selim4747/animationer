@@ -1,4 +1,5 @@
 import { saveGeneratedFile } from '../utils/FileExportManager.js';
+import { getDeviceMemoryGiB, getDevicePerformanceProfile } from '../utils/device-profile.js';
 
 export const MAX_RECORDING_DURATION_SECONDS = 180;
 export const MAX_RECORDING_BYTES = 128 * 1024 * 1024;
@@ -20,10 +21,12 @@ export class RecorderManager {
     maxDurationSeconds = MAX_RECORDING_DURATION_SECONDS,
     maxRecordingBytes = MAX_RECORDING_BYTES,
   } = {}) {
+    const profile = getDevicePerformanceProfile(getDeviceMemoryGiB());
     this.canvas = canvas;
     this.onStateChange = onStateChange;
     this.maxDurationSeconds = maxDurationSeconds;
-    this.maxRecordingBytes = maxRecordingBytes;
+    this.maxRecordingBytes = Math.min(maxRecordingBytes, profile.maxRecordingBytes);
+    this.maxFrameRate = profile.maxFrameRate;
     this.isRecording = false;
     this.isFinalizing = false;
     this.mediaRecorder = null;
@@ -53,7 +56,7 @@ export class RecorderManager {
   }
 
   setFrameRate(frameRate) {
-    this.frameRate = Number(frameRate) === 60 ? 60 : 30;
+    this.frameRate = Number(frameRate) === 60 && this.maxFrameRate >= 60 ? 60 : 30;
     return this.frameRate;
   }
 
@@ -118,6 +121,9 @@ export class RecorderManager {
             sizeBytes: this.recordedBytes,
             maxRecordingBytes: this.maxRecordingBytes,
             frameRate: this.frameRate,
+            maxFrameRate: this.maxFrameRate,
+            width: this.canvas.width,
+            height: this.canvas.height,
           });
         }
       };
@@ -147,6 +153,9 @@ export class RecorderManager {
             maxRecordingBytes: this.maxRecordingBytes,
             maxDurationSeconds: this.maxDurationSeconds,
             frameRate: this.frameRate,
+            maxFrameRate: this.maxFrameRate,
+            width: this.canvas.width,
+            height: this.canvas.height,
           });
         }
         if (elapsed >= this.maxDurationSeconds) this.stopRecording('duration-limit');
@@ -160,6 +169,9 @@ export class RecorderManager {
         maxRecordingBytes: this.maxRecordingBytes,
         maxDurationSeconds: this.maxDurationSeconds,
         frameRate: this.frameRate,
+        maxFrameRate: this.maxFrameRate,
+        width: this.canvas.width,
+        height: this.canvas.height,
       });
       return true;
     } catch (error) {
@@ -227,10 +239,12 @@ export class RecorderManager {
     }
 
     let blob = null;
+    const recordedBytes = this.recordedBytes;
     try {
       const mimeType = recorder.mimeType || this._getSupportedMimeType() || 'video/webm';
       blob = new Blob(this.recordedChunks, { type: mimeType });
       if (blob.size === 0) throw new Error('Video dosyası oluşturulamadı.');
+      this.recordedChunks = [];
       this.lastRecordingBlob = this.activeTimelineManager ? blob : null;
       this.lastStopReason = this.stopReason;
       const filename = createRecordingFilename(mimeType);
@@ -246,6 +260,7 @@ export class RecorderManager {
         canceled: downloadResult.canceled || false,
         error: downloadResult.saved || downloadResult.canceled ? undefined : 'Dosya cihaza kaydedilemedi.',
         blob,
+        sizeBytes: recordedBytes,
         stopReason: this.stopReason,
         frameRate: this.frameRate,
       });

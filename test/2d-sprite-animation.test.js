@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { SpriteAnimationManager } from '../src/components/SpriteAnimationManager.js';
+import { MAX_PROJECT_ASSET_EXPORT_BYTES, SpriteAnimationManager } from '../src/components/SpriteAnimationManager.js';
 import { ACTION_TYPES, TimelineManager } from '../src/components/TimelineManager.js';
 
 function makeActor() {
@@ -133,6 +133,65 @@ test('portable project export embeds original sprite image and timeline timing r
   assert.equal(saved.steps[0].startAt, 1.5);
   assert.equal(saved.steps[0].duration, 4);
   assert.equal(saved.steps[0].data.loop, false);
+});
+
+test('portable project export rejects oversized aggregate image bytes before allocating buffers', async () => {
+  const manager = new SpriteAnimationManager(new THREE.Scene(), { width: 400, height: 300 });
+  let readAttempted = false;
+  const actor = makeActor();
+  actor.sourceFile = {
+    size: MAX_PROJECT_ASSET_EXPORT_BYTES + 1,
+    async arrayBuffer() { readAttempted = true; throw new Error('Should reject at preflight.'); },
+  };
+  manager.actors.push(actor);
+  await assert.rejects(manager.exportAssets(), /proje JSON dışa aktarımı için spritesheet toplam sınırı 50 MiB/i);
+  assert.equal(readAttempted, false);
+});
+
+test('portable project export applies the lower low-memory mobile budget', async () => {
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { deviceMemory: 2, userAgent: 'Android' } });
+  try {
+    const manager = new SpriteAnimationManager(new THREE.Scene(), { width: 400, height: 300 });
+    let readAttempted = false;
+    const actor = makeActor();
+    actor.sourceFile = {
+      size: 12 * 1024 * 1024 + 1,
+      async arrayBuffer() { readAttempted = true; throw new Error('Should reject at the device-profile preflight.'); },
+    };
+    manager.actors.push(actor);
+    await assert.rejects(manager.exportAssets(), /toplam sınırı 12 MiB/i);
+    assert.equal(readAttempted, false);
+  } finally {
+    if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
+    else delete globalThis.navigator;
+  }
+});
+
+test('portable project export reads spritesheets sequentially to bound peak working memory', async () => {
+  const manager = new SpriteAnimationManager(new THREE.Scene(), { width: 400, height: 300 });
+  let activeReads = 0;
+  let maxActiveReads = 0;
+  for (let index = 0; index < 3; index++) {
+    const actor = makeActor();
+    actor.id = `sprite-${index + 1}`;
+    actor.sourceFile = {
+      size: 3,
+      name: `${index}.png`,
+      type: 'image/png',
+      async arrayBuffer() {
+        activeReads++;
+        maxActiveReads = Math.max(maxActiveReads, activeReads);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        activeReads--;
+        return Uint8Array.from([index, 1, 2]).buffer;
+      },
+    };
+    manager.actors.push(actor);
+  }
+  const assets = await manager.exportAssets();
+  assert.equal(assets.length, 3);
+  assert.equal(maxActiveReads, 1);
 });
 
 test('project sprite manifest rejects duplicate or missing IDs before touching the scene', () => {
