@@ -57,6 +57,11 @@ class MemoryIndexedDB {
                 queueMicrotask(() => { get.result = [...data.values()]; get.onsuccess?.(); });
                 return get;
               },
+              getAllKeys: () => {
+                const get = {};
+                queueMicrotask(() => { get.result = [...data.keys()]; get.onsuccess?.(); });
+                return get;
+              },
               get: (key) => {
                 const get = {};
                 queueMicrotask(() => { get.result = data.get(key); get.onsuccess?.(); });
@@ -76,6 +81,40 @@ class MemoryIndexedDB {
     });
     return request;
   }
+}
+
+function createNativeFiles({ failWrites = false } = {}) {
+  const files = new Map();
+  let serial = 0;
+  return {
+    isEnabled: true,
+    async initialize() { return true; },
+    async writeBlob(blob, folder, fileName) {
+      if (failWrites) throw new Error('disk full');
+      const path = `Animationer/${folder}/${++serial}-${fileName}`;
+      files.set(path, blob);
+      return { storage: 'app-files', path, size: blob.size, mimeType: blob.type || 'application/octet-stream' };
+    },
+    async readBlob(ref, mimeType) {
+      const blob = files.get(ref.path);
+      if (!blob) throw new Error('file missing');
+      return new Blob([await blob.arrayBuffer()], { type: mimeType || blob.type });
+    },
+    async writeJson(folder, fileName, value) {
+      const path = `Animationer/${folder}/${++serial}-${fileName}`;
+      files.set(path, JSON.stringify(value));
+      return { storage: 'app-files', path, size: files.get(path).length, mimeType: 'application/json' };
+    },
+    async readJson(path) {
+      const json = files.get(path);
+      if (typeof json !== 'string') throw new Error('manifest missing');
+      return JSON.parse(json);
+    },
+    async deleteFile(path) { files.delete(path); },
+    async deleteDirectory(path) { for (const key of [...files.keys()]) if (key.startsWith(`${path}/`)) files.delete(key); },
+    projectDirectory(id) { return `Animationer/projects/${String(id).replace(/[^a-zA-Z0-9._-]/g, '_')}`; },
+    files,
+  };
 }
 
 const v2 = (updatedAt = '2026-01-01T00:00:00.000Z') => ({
@@ -236,4 +275,89 @@ test('2D character template and library limits are enforced before saving', asyn
   const phoneStore = new IndexedProjectStore(new MemoryIndexedDB());
   await assert.rejects(() => phoneStore.saveCharacterTemplate({ id: 'phone-overflow', name: 'Phone', blob: makeBlob(2), mimeType: 'image/png', columns: 1, rows: 1, fps: 12 }, { maxLibraryBytes: 1 }), /1 MB/i);
   assert.equal((await store.listCharacterTemplates()).length, 5);
+});
+
+test('native project records keep binary assets in app files and hydrate only when the project opens', async () => {
+  const db = new MemoryIndexedDB();
+  const fileStore = createNativeFiles();
+  const store = new IndexedProjectStore(db, { fileStore });
+  const input = { ...v2(), projectId: 'native-project' };
+  await store.saveProject('native-project', input);
+  const stored = db.stores.get('projects').get('project:native-project');
+  assert.equal(stored.nativeProject, true);
+  assert.equal('sprites' in stored, false);
+  const manifest = await fileStore.readJson(stored.manifestPath);
+  assert.equal(manifest.sprites[0].blob, undefined);
+  assert.equal(manifest.sprites[0].fileRef.storage, 'app-files');
+  const loaded = await store.loadProject('native-project');
+  assert.equal(loaded.sprites[0].blob.size, input.sprites[0].blob.size);
+  assert.equal(new TextDecoder().decode(await loaded.sprites[0].blob.arrayBuffer()), '\u0001\u0002\u0003');
+  assert.equal((await store.loadProject('native-project', { hydrateAssets: false })).sprites[0].blob, undefined);
+});
+
+test('native character libraries store file references and ignore browser-only total library limits', async () => {
+  const db = new MemoryIndexedDB();
+  const fileStore = createNativeFiles();
+  const store = new IndexedProjectStore(db, { fileStore });
+  await store.saveCharacterTemplate({ id: 'native-sheet', name: 'Sheet', blob: new Blob(['png'], { type: 'image/png' }), mimeType: 'image/png', fileName: 'sheet.png', columns: 1, rows: 1, fps: 12 }, { maxLibraryBytes: 1 });
+  await store.saveCharacterModel({ id: 'native-model', name: 'Model', blob: new Blob(['glb'], { type: 'model/gltf-binary' }), fileName: 'model.glb' }, { maxLibraryBytes: 1 });
+  assert.equal(db.stores.get('character-library').get('native-sheet').blob, undefined);
+  assert.equal(db.stores.get('character-models').get('native-model').blob, undefined);
+  assert.equal((await store.listCharacterTemplateMetadata())[0].blobSize, 3);
+  assert.equal((await store.listCharacterModelMetadata())[0].blobSize, 3);
+  assert.equal((await store.getCharacterTemplate('native-sheet')).blob.size, 3);
+  assert.equal((await store.getCharacterModel('native-model')).blob.size, 3);
+  const fiftyMiBBlob = new Blob(['x'], { type: 'image/png' });
+  Object.defineProperty(fiftyMiBBlob, 'size', { value: MAX_CHARACTER_TEMPLATE_BYTES });
+  for (let index = 0; index < 6; index += 1) {
+    await store.saveCharacterTemplate({ id: `unbounded-${index}`, name: `Character ${index}`, blob: fiftyMiBBlob, mimeType: 'image/png', fileName: `c${index}.png`, columns: 1, rows: 1, fps: 12 }, { maxLibraryBytes: 1 });
+  }
+  assert.ok(6 * MAX_CHARACTER_TEMPLATE_BYTES > MAX_CHARACTER_LIBRARY_BYTES);
+  assert.equal((await store.listCharacterTemplateMetadata()).length, 7);
+  const fiftyMiBModel = new Blob(['x'], { type: 'model/gltf-binary' });
+  Object.defineProperty(fiftyMiBModel, 'size', { value: MAX_CHARACTER_MODEL_BYTES });
+  for (let index = 0; index < 6; index += 1) {
+    await store.saveCharacterModel({ id: `unbounded-model-${index}`, name: `Model ${index}`, blob: fiftyMiBModel, fileName: `m${index}.glb` }, { maxLibraryBytes: 1 });
+  }
+  assert.equal((await store.listCharacterModelMetadata()).length, 7);
+});
+
+test('native project storage bypasses the fixed browser project-size ceiling', async () => {
+  const db = new MemoryIndexedDB();
+  const fileStore = createNativeFiles();
+  const store = new IndexedProjectStore(db, { fileStore });
+  const oversized = new Blob(['x'], { type: 'image/png' });
+  Object.defineProperty(oversized, 'size', { value: MAX_PROJECT_BYTES + 1 });
+  const record = { ...v2(), projectId: 'large-native', sprites: [{ id: 'large', fileName: 'large.png', blob: oversized }] };
+  await store.saveProject('large-native', record);
+  const pointer = db.stores.get('projects').get('project:large-native');
+  const manifest = await fileStore.readJson(pointer.manifestPath);
+  assert.equal(manifest.sprites[0].fileRef.size, MAX_PROJECT_BYTES + 1);
+});
+
+test('native migration converts legacy project and library Blobs while preserving file-backed access', async () => {
+  const db = new MemoryIndexedDB();
+  const browserStore = new IndexedProjectStore(db);
+  await browserStore.saveProject('legacy-project', { ...v2(), projectId: 'legacy-project' });
+  await browserStore.saveCharacterTemplate({ id: 'legacy-sheet', name: 'Legacy', blob: new Blob(['sprite'], { type: 'image/png' }), mimeType: 'image/png', fileName: 'legacy.png', columns: 1, rows: 1, fps: 12 });
+  const fileStore = createNativeFiles();
+  const androidStore = new IndexedProjectStore(db, { fileStore });
+  await androidStore.listProjects();
+  await androidStore.listCharacterTemplateMetadata();
+  assert.equal(db.stores.get('projects').get('project:legacy-project').nativeProject, true);
+  assert.equal(db.stores.get('character-library').get('legacy-sheet').blob, undefined);
+  assert.equal((await androidStore.loadProject('legacy-project')).sprites[0].blob.size, 3);
+  assert.equal((await androidStore.getCharacterTemplate('legacy-sheet')).blob.size, 6);
+});
+
+test('native migration leaves source IndexedDB data intact when file copying fails', async () => {
+  const db = new MemoryIndexedDB();
+  const browserStore = new IndexedProjectStore(db);
+  await browserStore.saveProject('safe-project', { ...v2(), projectId: 'safe-project' });
+  const original = db.stores.get('projects').get('project:safe-project');
+  const androidStore = new IndexedProjectStore(db, { fileStore: createNativeFiles({ failWrites: true }) });
+  await assert.rejects(() => androidStore.listProjects(), /disk full/i);
+  const after = db.stores.get('projects').get('project:safe-project');
+  assert.equal(after.sprites[0].blob.size, original.sprites[0].blob.size);
+  assert.equal(after.nativeProject, undefined);
 });

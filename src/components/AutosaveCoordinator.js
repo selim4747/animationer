@@ -108,6 +108,7 @@ export class AutosaveCoordinator {
       viewport: { width: globalThis.window?.innerWidth || 1, height: globalThis.window?.innerHeight || 1 },
       projectId: this.projectId,
       name: this.projectName,
+      skipAssetBudget: this.projectStore.fileStore?.isEnabled === true,
     });
   }
 
