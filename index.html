@@ -89,6 +89,10 @@
           [H] Sinematik
         </button>
 
+        <button id="btn-home-screen" class="hud-btn" type="button" title="Ana ekrana dön">
+          Ana Ekran
+        </button>
+
         <button id="btn-open-help" class="hud-btn icon-btn" title="Yardım & Bilgi">
           ?
         </button>
@@ -105,6 +109,85 @@
       <progress id="toast-progress" class="hud-toast-progress" max="100" value="0" aria-label="Dosya kaydetme ilerlemesi" hidden></progress>
       <button id="toast-action" class="hud-toast-action" type="button" hidden></button>
     </div>
+
+    <main id="home-screen" class="home-screen" aria-label="Animationer ana ekran">
+      <header class="home-header">
+        <div class="home-brand-lockup">
+          <span class="home-brand-mark">REJİ</span>
+          <div><strong>STUDIO</strong><span>Sahne ve karakter kitaplığı</span></div>
+        </div>
+        <div class="home-local-status"><span class="home-status-dot"></span> BU CİHAZDA KAYITLI</div>
+      </header>
+
+      <div class="home-layout">
+        <section class="home-projects" aria-labelledby="home-project-heading">
+          <div class="home-welcome">
+            <div>
+              <p class="home-eyebrow">ANIMATIONER · PROJE MERKEZİ</p>
+              <h1>Sahnelerin burada.</h1>
+              <p>Haritalarını, karakterlerini ve reji akışlarını tek bir yerden aç.</p>
+            </div>
+            <button id="home-create-project" class="home-primary-button" type="button">＋ Yeni Proje</button>
+          </div>
+
+          <div class="home-section-heading">
+            <div><p class="home-eyebrow">ÇALIŞMA ALANI</p><h2 id="home-project-heading">Projelerin</h2></div>
+            <span id="home-project-count" class="home-count">0 PROJE</span>
+          </div>
+          <div id="home-project-list" class="home-project-grid" aria-live="polite"></div>
+          <p id="home-project-empty" class="home-empty-state" hidden>Henüz kayıtlı projen yok. “Yeni Proje” ile bir sahne oluştur.</p>
+          <p id="home-project-error" class="home-error-state" role="alert" hidden></p>
+        </section>
+
+        <aside class="home-library" aria-labelledby="home-library-heading">
+          <div class="home-section-heading library-heading">
+            <div><p class="home-eyebrow">TEKRAR KULLANILABİLİR VARLIKLAR</p><h2 id="home-library-heading">Karakter Kitaplığı</h2></div>
+          </div>
+          <div class="home-library-toolbar">
+            <div class="home-library-tabs" role="tablist" aria-label="Karakter biçimi">
+              <button type="button" class="home-library-tab is-active" data-library-kind="3d" role="tab" aria-selected="true">3D Modeller</button>
+              <button type="button" class="home-library-tab" data-library-kind="2d" role="tab" aria-selected="false">2D Karakterler</button>
+            </div>
+            <div class="home-library-upload-actions">
+              <button id="home-add-3d" class="home-small-button" type="button">＋ GLB ekle</button>
+              <button id="home-add-2d" class="home-small-button" type="button" hidden>＋ Spritesheet ekle</button>
+            </div>
+          </div>
+          <div id="home-sprite-settings" class="home-sprite-settings" hidden>
+            <label>Kolon <input id="home-sprite-columns" type="number" min="1" max="64" value="1" /></label>
+            <label>Satır <input id="home-sprite-rows" type="number" min="1" max="64" value="1" /></label>
+            <label>FPS <input id="home-sprite-fps" type="number" min="1" max="60" value="12" /></label>
+          </div>
+
+          <div class="home-character-preview" aria-label="Seçili karakter önizlemesi">
+            <canvas id="home-character-canvas" aria-label="3D karakter önizlemesi" hidden></canvas>
+            <img id="home-character-image" alt="Seçili 2D karakter" hidden />
+            <div id="home-preview-placeholder" class="home-preview-placeholder"><span>3D / 2D</span><p>Önizlemek için kitaplıktan bir karakter seç.</p></div>
+            <div class="home-preview-caption"><strong id="home-preview-name">Karakter seçilmedi</strong><span id="home-preview-detail">Yerel karakter kitaplığı</span></div>
+          </div>
+          <div id="home-character-list" class="home-character-grid" aria-live="polite"></div>
+          <p id="home-character-empty" class="home-empty-state compact" hidden>Bu kitaplık henüz boş. Dosya ekleyerek karakterlerini burada sakla.</p>
+          <p id="home-library-error" class="home-error-state" role="alert" hidden></p>
+        </aside>
+      </div>
+
+      <input id="home-model-picker" type="file" accept=".glb,model/gltf-binary" hidden />
+      <input id="home-sprite-picker" type="file" accept="image/png,image/webp,image/jpeg" hidden />
+      <dialog id="home-dialog" class="home-dialog">
+        <form id="home-dialog-form" method="dialog">
+          <p id="home-dialog-eyebrow" class="home-eyebrow">PROJE</p>
+          <h2 id="home-dialog-title">Yeni Proje</h2>
+          <p id="home-dialog-message" class="home-dialog-message">Sahnen için bir ad seç.</p>
+          <label id="home-dialog-name-label" class="home-dialog-field">Proje adı<input id="home-dialog-name" maxlength="64" autocomplete="off" /></label>
+          <label id="home-dialog-target-label" class="home-dialog-field" hidden>Projede aç<select id="home-dialog-target"></select></label>
+          <div class="home-dialog-actions">
+            <button id="home-dialog-cancel" class="home-small-button" value="cancel" type="button">İptal</button>
+            <button id="home-dialog-submit" class="home-primary-button" value="default" type="submit">Devam</button>
+          </div>
+        </form>
+      </dialog>
+      <div id="home-toast" class="home-toast" role="status" aria-live="polite"></div>
+    </main>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
