@@ -18,11 +18,14 @@ import { getDeviceMemoryGiB, getRendererPixelRatio } from './utils/device-profil
 import { SpriteAnimationManager } from './components/SpriteAnimationManager.js';
 import { WorldSpriteCharacterManager } from './components/WorldSpriteCharacterManager.js';
 import { IndexedProjectStore } from './components/ProjectStore.js';
+import { HomeScreen } from './components/HomeScreen.js';
 import { SceneBuilder } from './components/SceneBuilder.js';
 import { toRendererViewport } from './components/ViewportLayout.js';
 import studioPanelHtml from './ui/studio-panel.html?raw';
 class App {
-  constructor() {
+  constructor({ projectId, projectName }) {
+    this.projectId = projectId;
+    this.projectName = projectName || 'Yeni Proje';
     this.projectStore = new IndexedProjectStore();
     this.container = document.getElementById('canvas-container');
     this.clock = new THREE.Clock();
@@ -164,7 +167,7 @@ class App {
     this.character = new CharacterRoster(this.scene, this.collisionManager, (state) => {
       this._updateCharacterHUD(this.character?.selectedCharacter?.isMoving || false);
       this.uiManager?.updateCharacterList(state.actors || this.character.list());
-    });
+    }, this.projectStore);
 
     this.spriteAnimationManager = new SpriteAnimationManager(this.spriteScene, {
       width: window.innerWidth,
@@ -233,6 +236,13 @@ class App {
       worldSpriteCharacterManager: this.worldSpriteCharacterManager,
       projectStore: this.projectStore,
       worldSpriteReady: this.worldSpriteLibraryReady,
+      projectId: this.projectId,
+      projectName: this.projectName,
+      onReturnHome: async () => {
+        sessionStorage.removeItem('animationer-open-project');
+        sessionStorage.removeItem('animationer-open-asset');
+        window.location.reload();
+      },
       characterManager: this.character,
       onControlModeChange: (mode) => this.setControlMode(mode),
       sceneHelpers: {
@@ -241,6 +251,14 @@ class App {
         hemiLight: this.hemiLight,
       },
     });
+  }
+
+  async addLibraryCharacter(asset) {
+    if (!asset?.id) return null;
+    if (asset.kind === '3d') return this.character.loadCharacterModel(asset.id);
+    await this.worldSpriteLibraryReady;
+    if (!this.worldSpriteCharacterManager.templates.has(asset.id)) await this.worldSpriteCharacterManager.loadLibrary();
+    return this.worldSpriteCharacterManager.spawn(asset.id);
   }
 
   /**
@@ -594,7 +612,59 @@ class App {
   }
 }
 
-// Uygulamayı Başlat
-window.addEventListener('DOMContentLoaded', () => {
-  new App();
+// The project picker is the default entry point; editing starts only after a project is chosen.
+window.addEventListener('DOMContentLoaded', async () => {
+  const homeRoot = document.getElementById('home-screen');
+  const store = new IndexedProjectStore();
+  const requestedId = sessionStorage.getItem('animationer-open-project');
+  const requestedAssetText = sessionStorage.getItem('animationer-open-asset');
+  sessionStorage.removeItem('animationer-open-project');
+  sessionStorage.removeItem('animationer-open-asset');
+
+  const showHome = async (message = '') => {
+    homeRoot.hidden = false;
+    const home = new HomeScreen(homeRoot, {
+      store,
+      onOpenProject: (projectId, asset = null) => {
+        sessionStorage.setItem('animationer-open-project', projectId);
+        if (asset) sessionStorage.setItem('animationer-open-asset', JSON.stringify(asset));
+        window.location.reload();
+      },
+    });
+    window.animationerHome = home;
+    await home.init();
+    if (message) {
+      const error = document.getElementById('home-project-error');
+      error.textContent = message;
+      error.hidden = false;
+    }
+  };
+
+  if (!requestedId) {
+    await showHome();
+    return;
+  }
+
+  let record;
+  try { record = await store.loadProject(requestedId); }
+  catch (error) { console.error('Proje açılamadı:', error); }
+  if (!record) {
+    await showHome('Açılacak proje bulunamadı. Proje listenden başka bir sahne seç.');
+    return;
+  }
+
+  homeRoot.hidden = true;
+  const app = new App({ projectId: requestedId, projectName: record.name });
+  window.animationerApp = app;
+  if (requestedAssetText) {
+    try {
+      const asset = JSON.parse(requestedAssetText);
+      app.uiManager.autosave.ready
+        .then(() => app.addLibraryCharacter(asset))
+        .then(() => app.uiManager.showToast('Karakter seçilen projeye eklendi.'))
+        .catch((error) => app.uiManager.showToast(error.message || 'Karakter projeye eklenemedi.'));
+    } catch (error) {
+      app.uiManager.showToast('Kitaplık karakter isteği okunamadı.');
+    }
+  }
 });

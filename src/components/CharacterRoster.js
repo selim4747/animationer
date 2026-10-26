@@ -5,10 +5,11 @@ const COLORS = [0xf4f4f4, 0xc9c9c9, 0x9e9e9e, 0x777777, 0xffffff];
 
 /** Manages selectable procedural actors while preserving a selected-character facade. */
 export class CharacterRoster {
-  constructor(scene, collisionManager, onChange = () => {}) {
+  constructor(scene, collisionManager, onChange = () => {}, store = null) {
     this.scene = scene;
     this.collisionManager = collisionManager;
     this.onChange = onChange;
+    this.store = store;
     this.actors = [];
     this.selectedId = null;
     this.nextId = 1;
@@ -48,7 +49,7 @@ export class CharacterRoster {
     character.rootGroup.name = id;
     character.bodyMesh.material.color.setHex(COLORS[(index - 1) % COLORS.length]);
     character.teleportTo(spawn.x, spawn.y, spawn.z);
-    const actor = { id, name: name || `Karakter ${index}`, character };
+    const actor = { id, name: name || `Karakter ${index}`, character, modelId: null };
     this.actors.push(actor);
     if (!this.selectedId) this.selectedId = id;
     this._syncSelectedAppearance();
@@ -94,24 +95,141 @@ export class CharacterRoster {
     if (file.size > 50 * 1024 * 1024) throw new Error('Karakter dosyası 50 MB sınırını aşamaz.');
     if (this.actors.length >= 20) throw new Error('En fazla 20 karakter eklenebilir.');
 
-    const loader = new GLTFLoader();
-    const gltf = await new Promise((resolve, reject) => {
-      file.arrayBuffer().then((buffer) => {
-        loader.parse(buffer, '', resolve, reject);
-      }).catch(reject);
-    });
-    if (!gltf?.scene) throw new Error('GLB dosyasından sahne okunamadı.');
-
     const name = (file.name || 'Yüklenen karakter').replace(/\.glb$/i, '').slice(0, 48);
-    const actor = this.addCharacter(name || 'Yüklenen karakter');
+    const blob = file.slice(0, file.size, file.type || 'model/gltf-binary');
+    const gltf = await this._parseModelBlob(blob);
+    const model = this.store?.saveCharacterModel
+      ? await this.store.saveCharacterModel({
+        id: globalThis.crypto?.randomUUID?.() || `character-model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: name || 'Yüklenen karakter', blob, mimeType: blob.type, fileName: file.name,
+      })
+      : null;
+    return this._addParsedModel(gltf, { name: name || 'Yüklenen karakter', modelId: model?.id || null });
+  }
+
+  async _parseModelBlob(blob) {
+    const loader = new GLTFLoader();
+    const buffer = await blob.arrayBuffer();
+    const gltf = await new Promise((resolve, reject) => loader.parse(buffer, '', resolve, reject));
+    if (!gltf?.scene) throw new Error('GLB dosyasından sahne okunamadı.');
+    return gltf;
+  }
+
+  async loadCharacterModel(modelId) {
+    const model = await this.store?.getCharacterModel?.(modelId);
+    if (!model) throw new Error('3D karakter kitaplığındaki model bulunamadı.');
+    if (this.actors.length >= 20) throw new Error('En fazla 20 karakter eklenebilir.');
+    const gltf = await this._parseModelBlob(model.blob);
+    return this._addParsedModel(gltf, { name: model.name, modelId: model.id });
+  }
+
+  _addParsedModel(gltf, { name, modelId = null, position = null } = {}) {
+    if (!gltf?.scene) throw new Error('GLB dosyasından sahne okunamadı.');
+    const actor = this.addCharacter(name || 'Yüklenen karakter', position);
     try {
       actor.character.setModel(gltf.scene, gltf.animations || []);
+      actor.modelId = modelId;
       this.select(actor.id);
       return actor;
     } catch (error) {
       this.removeCharacter(actor.id);
       throw error;
     }
+  }
+
+  exportProjectStateForStorage() {
+    return {
+      selectedId: this.selectedId,
+      actors: this.actors.map(({ id, name, modelId, character }) => ({
+        id,
+        name,
+        modelId: modelId || null,
+        position: { x: character.rootGroup.position.x, y: character.rootGroup.position.y, z: character.rootGroup.position.z },
+        rotationY: character.rootGroup.rotation.y,
+        walkSpeed: character.walkSpeed,
+        wobbleIntensity: character.wobbleIntensity,
+        visible: character.rootGroup.visible,
+      })),
+    };
+  }
+
+  async restoreProjectState(state = {}) {
+    const actors = Array.isArray(state.actors) ? state.actors : [];
+    if (actors.length > 20) throw new Error('Projede 20’den fazla 3D karakter var.');
+    if (!actors.length) {
+      if (!this.actors.length) this.addCharacter('Karakter 1', { x: 0, y: 0, z: 0 });
+      return this.list();
+    }
+    const stagingScene = new this.scene.constructor();
+    const staging = new CharacterRoster(stagingScene, this.collisionManager, () => {}, this.store);
+    for (const actor of [...staging.actors]) staging._disposeActor(actor);
+    staging.actors = [];
+    staging.selectedId = null;
+    staging.nextId = 1;
+    try {
+      for (const source of actors) {
+        if (!source || typeof source.id !== 'string' || !source.id) throw new Error('3D karakter kimliği geçersiz.');
+        const position = source.position || { x: source.x || 0, y: source.y || 0, z: source.z || 0 };
+        const actor = staging.addCharacter(String(source.name || 'Karakter').slice(0, 48), position);
+        const createdId = actor.id;
+        actor.id = source.id;
+        actor.character.rootGroup.name = source.id;
+        actor.modelId = typeof source.modelId === 'string' ? source.modelId : null;
+        if (actor.modelId) {
+          const model = await this.store?.getCharacterModel?.(actor.modelId);
+          if (!model) throw new Error(`“${source.name || source.id}” karakterinin 3D kaynak modeli kitaplıkta bulunamadı.`);
+          const gltf = await this._parseModelBlob(model.blob);
+          actor.character.setModel(gltf.scene, gltf.animations || []);
+        }
+        actor.character.rootGroup.position.set(Number(position.x) || 0, Number(position.y) || 0, Number(position.z) || 0);
+        actor.character.targetPosition.copy(actor.character.rootGroup.position);
+        actor.character.rootGroup.rotation.y = Number(source.rotationY) || 0;
+        actor.character.walkSpeed = Math.max(1, Math.min(10, Number(source.walkSpeed) || 4.2));
+        actor.character.wobbleIntensity = Math.max(0, Math.min(2, Number(source.wobbleIntensity) || 0));
+        actor.character.setVisible(source.visible !== false);
+        staging.nextId = Math.max(staging.nextId, Number(source.id.match(/(\d+)$/)?.[1] || 0) + 1);
+        if (!staging.selectedId || source.id === state.selectedId) staging.selectedId = source.id;
+        // addCharacter's state callback captured its generated ID; replace it with the persisted ID.
+        actor.character.onStateChange = (detail) => staging.onChange({ type: 'state', id: actor.id, state: detail, actors: staging.list() });
+        if (createdId !== source.id) staging.actors[staging.actors.length - 1].id = source.id;
+      }
+    } catch (error) {
+      for (const actor of [...staging.actors]) staging._disposeActor(actor);
+      throw error;
+    }
+
+    for (const actor of [...this.actors]) this._disposeActor(actor);
+    this.actors = staging.actors;
+    this.selectedId = this.actors.some((actor) => actor.id === state.selectedId) ? state.selectedId : (this.actors[0]?.id || null);
+    this.nextId = Math.max(1, staging.nextId);
+    for (const actor of this.actors) {
+      stagingScene.remove(actor.character.rootGroup, actor.character.targetMarker);
+      this.scene.add(actor.character.rootGroup, actor.character.targetMarker);
+      actor.character.scene = this.scene;
+      actor.character.collisionManager = this.collisionManager;
+      actor.character.onStateChange = (detail) => this.onChange({ type: 'state', id: actor.id, state: detail, actors: this.list() });
+    }
+    staging.actors = [];
+    this._syncSelectedAppearance();
+    this.onChange({ type: 'restored', actors: this.list() });
+    return this.list();
+  }
+
+  _disposeActor(actor) {
+    if (!actor?.character) return;
+    actor.character.stopMotion();
+    this.scene.remove(actor.character.rootGroup, actor.character.targetMarker);
+    actor.character.targetMarker.geometry?.dispose?.();
+    actor.character.targetMarker.material?.dispose?.();
+    actor.character.rootGroup.traverse((object) => {
+      object.geometry?.dispose?.();
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      for (const material of materials) {
+        if (!material) continue;
+        for (const value of Object.values(material)) if (value?.isTexture) value.dispose();
+        material.dispose();
+      }
+    });
   }
 
   select(id) {
@@ -128,21 +246,7 @@ export class CharacterRoster {
     const index = this.actors.findIndex((actor) => actor.id === id);
     if (index < 0) return false;
     const [actor] = this.actors.splice(index, 1);
-    actor.character.stopMotion();
-    this.scene.remove(actor.character.rootGroup, actor.character.targetMarker);
-    actor.character.targetMarker.geometry?.dispose?.();
-    actor.character.targetMarker.material?.dispose?.();
-    actor.character.rootGroup.traverse((object) => {
-      object.geometry?.dispose?.();
-      const materials = Array.isArray(object.material) ? object.material : [object.material];
-      for (const material of materials) {
-        if (!material) continue;
-        for (const value of Object.values(material)) {
-          if (value?.isTexture) value.dispose();
-        }
-        material.dispose();
-      }
-    });
+    this._disposeActor(actor);
     if (this.selectedId === id) this.selectedId = this.actors[Math.max(0, index - 1)].id;
     this._syncSelectedAppearance();
     this.onChange({ type: 'removed', id, actors: this.list() });
@@ -150,7 +254,15 @@ export class CharacterRoster {
   }
 
   update(delta) {
-    for (const actor of this.actors) actor.character.update(delta);
+    for (const actor of this.actors) {
+      actor.character.update(delta);
+      const position = actor.character.rootGroup.position;
+      if (!actor._lastStoredPosition) actor._lastStoredPosition = position.clone();
+      else if (!actor.character.isMoving && actor._lastStoredPosition.distanceToSquared(position) > 0.0004) {
+        actor._lastStoredPosition.copy(position);
+        this.onChange({ type: 'actor-position', id: actor.id, actors: this.list() });
+      }
+    }
   }
 
   getPosition() { return this.selectedCharacter.getPosition(); }

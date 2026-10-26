@@ -53,13 +53,16 @@ export class UIManager {
    * @param {import('./RecorderManager.js').RecorderManager} [context.recorderManager]
    * @param {Object} context.sceneHelpers - gridHelper, dirLight, hemiLight referansları
    */
-  constructor({ timelineManager, character, characterManager, spriteAnimationManager, worldSpriteCharacterManager = null, projectStore = null, worldSpriteReady = Promise.resolve(), onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, sceneHelpers }) {
+  constructor({ timelineManager, character, characterManager, spriteAnimationManager, worldSpriteCharacterManager = null, projectStore = null, projectId = '', projectName = 'Yeni Proje', onReturnHome = () => {}, worldSpriteReady = Promise.resolve(), onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, sceneHelpers }) {
     this.timeline = timelineManager;
     this.character = character;
     this.characters = characterManager || character;
     this.sprites = spriteAnimationManager;
     this.worldSprites = worldSpriteCharacterManager;
     this.projectStore = projectStore;
+    this.projectId = projectId;
+    this.projectName = projectName;
+    this.onReturnHome = onReturnHome;
     this.worldSpriteReady = worldSpriteReady;
     this.onControlModeChange = onControlModeChange;
     this.door = door;
@@ -79,9 +82,12 @@ export class UIManager {
     this.autosave = new AutosaveCoordinator({
       timeline: this.timeline,
       sprites: this.sprites,
+      characters: this.characters,
       mapLoader: this.mapLoader,
       worldSprites: this.worldSprites,
       projectStore: this.projectStore,
+      projectId: this.projectId,
+      projectName: this.projectName,
       worldSpriteReady: this.worldSpriteReady,
       onStatus: (msg) => { if (this.dom?.autosaveStatus) this.dom.autosaveStatus.textContent = msg; },
       onError: (msg) => this.showToast(msg),
@@ -142,6 +148,7 @@ export class UIManager {
       btnQuickPlay: document.getElementById('btn-quick-play'),
       btnQuickDoor: document.getElementById('btn-quick-door'),
       btnCinematic: document.getElementById('btn-cinematic-mode'),
+      btnHomeScreen: document.getElementById('btn-home-screen'),
 
       // Sekme Butonları & Panelleri
       tabButtons: document.querySelectorAll('.studio-tab-btn'),
@@ -279,6 +286,21 @@ export class UIManager {
 
   _bindEvents() {
     const d = this.dom;
+
+    if (d.btnHomeScreen) {
+      d.btnHomeScreen.addEventListener('click', async () => {
+        d.btnHomeScreen.disabled = true;
+        this.timeline.stop();
+        try {
+          await this.autosave.ready;
+          await this.autosave.flush();
+          await this.onReturnHome();
+        } catch (error) {
+          d.btnHomeScreen.disabled = false;
+          this.showToast(`Ana ekrana geçilemedi: ${error.message || 'proje kaydedilemedi'}`);
+        }
+      });
+    }
 
     // --- SEKME GEÇİŞLERİ ---
     d.tabButtons.forEach((btn) => {

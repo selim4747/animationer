@@ -5,10 +5,12 @@ import {
   createAutosaveRecord,
   IndexedProjectStore,
   MAX_CHARACTER_LIBRARY_BYTES,
+  MAX_CHARACTER_MODEL_BYTES,
   MAX_CHARACTER_TEMPLATE_BYTES,
   MAX_PROJECT_BYTES,
   migrateProjectRecord,
   PROJECT_SCHEMA_VERSION,
+  validateCharacterModelRecord,
   validateCharacterTemplateRecord,
   validateProjectRecord,
 } from '../src/components/ProjectStore.js';
@@ -22,37 +24,50 @@ class MemoryIndexedDB {
         objectStoreNames: { contains: (name) => this.stores.has(name) },
         createObjectStore: (name) => { const data = new Map(); this.stores.set(name, data); if (name === 'projects') this.data = data; return data; },
         close() {},
-        transaction: (storeName) => {
-          const tx = { error: null };
-          tx.abort = () => queueMicrotask(() => tx.onabort?.());
-          const data = this.stores.get(storeName);
-          tx.objectStore = () => ({
-            put: (value, key) => {
-              queueMicrotask(() => {
-                if (this.failNextWrite) {
-                  this.failNextWrite = false;
-                  tx.error = new DOMException('Quota exceeded', 'QuotaExceededError');
-                  tx.onabort?.();
-                } else {
-                  data.set(key, value);
-                  tx.oncomplete?.();
-                }
-              });
-            },
-            getAll: () => {
-              const get = {};
-              queueMicrotask(() => { get.result = [...data.values()]; get.onsuccess?.(); });
-              return get;
-            },
-            get: (key) => {
-              const get = {};
-              queueMicrotask(() => { get.result = data.get(key); get.onsuccess?.(); });
-              return get;
-            },
-            delete: (key) => {
-              queueMicrotask(() => { data.delete(key); tx.oncomplete?.(); });
-            },
-          });
+        transaction: () => {
+          const tx = { error: null, pending: 0, settled: false };
+          const finish = () => {
+            if (tx.pending === 0 && !tx.settled) {
+              tx.settled = true;
+              queueMicrotask(() => tx.oncomplete?.());
+            }
+          };
+          tx.abort = () => { tx.settled = true; queueMicrotask(() => tx.onabort?.()); };
+          tx.objectStore = (storeName) => {
+            const data = this.stores.get(storeName);
+            if (!data) throw new Error(`Unknown object store: ${storeName}`);
+            return {
+              put: (value, key) => {
+                tx.pending++;
+                queueMicrotask(() => {
+                  if (this.failNextWrite) {
+                    this.failNextWrite = false;
+                    tx.error = new DOMException('Quota exceeded', 'QuotaExceededError');
+                    tx.settled = true;
+                    tx.onabort?.();
+                  } else {
+                    data.set(key, value);
+                    tx.pending--;
+                    finish();
+                  }
+                });
+              },
+              getAll: () => {
+                const get = {};
+                queueMicrotask(() => { get.result = [...data.values()]; get.onsuccess?.(); });
+                return get;
+              },
+              get: (key) => {
+                const get = {};
+                queueMicrotask(() => { get.result = data.get(key); get.onsuccess?.(); });
+                return get;
+              },
+              delete: (key) => {
+                tx.pending++;
+                queueMicrotask(() => { data.delete(key); tx.pending--; finish(); });
+              },
+            };
+          };
           return tx;
         },
       };
@@ -73,13 +88,13 @@ const v2 = (updatedAt = '2026-01-01T00:00:00.000Z') => ({
   viewport: { width: 320, height: 568 },
 });
 
-test('migrates legacy portable project v1 to explicit v3 storage schema', () => {
+test('migrates legacy portable project v1 to explicit v4 storage schema', () => {
   const migrated = migrateProjectRecord({
     format: 'animationer-project', projectVersion: 1, version: '1.0.0', playMode: 'scheduled',
     timestamp: '2025-01-01T00:00:00.000Z', steps: [{ type: 'WAIT', data: { duration: 1 } }],
     sprites: [{ id: 'sprite-1', data: 'AQID', name: 'Sheet' }],
   });
-  assert.equal(migrated.schemaVersion, 3);
+  assert.equal(migrated.schemaVersion, 4);
   assert.equal(migrated.timeline.playMode, 'scheduled');
   assert.equal(migrated.timeline.steps.length, 1);
   assert.equal(migrated.scope.mapAssets, false);
@@ -90,7 +105,7 @@ test('migrates legacy portable project v1 to explicit v3 storage schema', () => 
 
 test('migrates v2 autosaves without losing timeline and sprite data', () => {
   const migrated = migrateProjectRecord({ ...v2(), schemaVersion: 2, scope: { timeline: true, sprites2d: true }, projectVersion: 2 });
-  assert.equal(migrated.schemaVersion, 3);
+  assert.equal(migrated.schemaVersion, 4);
   assert.equal(migrated.sprites.length, 1);
   assert.deepEqual(migrated.worldCharacterTemplates, []);
   assert.deepEqual(migrated.worldCharacters, []);
@@ -112,7 +127,7 @@ test('records viewport metadata and rejects projects beyond the 100 MB limit', (
   assert.ok(calculateProjectBytes({ steps: [] }, [{ blob: { size: MAX_PROJECT_BYTES } }]) > MAX_PROJECT_BYTES);
 });
 
-test('v3 autosaves validate and account for a 2D environment and placed characters', () => {
+test('v4 autosaves validate maps, placed 2D and 3D characters, and wall boxes', () => {
   const sheet = new Blob(['character'], { type: 'image/png' });
   const map = new Blob(['map'], { type: 'image/png' });
   const record = createAutosaveRecord({
@@ -120,11 +135,49 @@ test('v3 autosaves validate and account for a 2D environment and placed characte
     mapAsset: { kind: 'image', fileName: 'floor.png', blob: map, scale: 16, opacity: 0.8, groundOrientation: true },
     worldCharacterTemplates: [{ id: 'hero', name: 'Hero', blob: sheet, mimeType: 'image/png', fileName: 'hero.png', columns: 1, rows: 1, fps: 12 }],
     worldCharacters: [{ id: 'world2d-1', name: 'Hero 1', templateId: 'hero', x: 1, y: 0, z: -2 }],
+    characters3d: [{ id: 'character-1', name: 'Hero', modelId: null, position: { x: 1, y: 0, z: -2 }, rotationY: 0, walkSpeed: 4.2, wobbleIntensity: 1, visible: true }],
+    wallBoxes: [{ x: 1, z: 2, width: 3, depth: 2, height: 1 }],
   });
   assert.equal(record.scope.mapAssets, true);
   assert.equal(record.scope.worldCharacters, true);
+  assert.equal(record.characters3d.length, 1);
+  assert.equal(record.wallBoxes.length, 1);
   assert.equal(calculateProjectBytes(record.timeline, record.sprites, record.mapAsset, record.worldCharacterTemplates), map.size + sheet.size + new TextEncoder().encode(JSON.stringify(record.timeline)).byteLength);
   assert.throws(() => validateProjectRecord({ ...record, worldCharacters: [{ ...record.worldCharacters[0], templateId: 'missing' }] }), /kaynak spritesheet eksik/i);
+});
+
+test('named projects can be created, renamed, duplicated, listed and deleted independently', async () => {
+  const store = new IndexedProjectStore(new MemoryIndexedDB());
+  const first = await store.createProject('  Studio A  ');
+  const second = await store.createProject('Studio B');
+  assert.equal(first.name, 'Studio A');
+  assert.notEqual(first.projectId, second.projectId);
+  assert.equal(first.characters3d.length, 1);
+  const renamed = await store.renameProject(first.projectId, 'Studio Renamed');
+  assert.equal(renamed.name, 'Studio Renamed');
+  const copy = await store.duplicateProject(first.projectId, 'Studio Copy');
+  assert.notEqual(copy.projectId, first.projectId);
+  assert.equal(copy.characters3d.length, first.characters3d.length);
+  assert.deepEqual((await store.listProjects()).map(({ name }) => name).sort(), ['Studio B', 'Studio Copy', 'Studio Renamed']);
+  await store.deleteProject(second.projectId);
+  assert.equal(await store.loadProject(second.projectId), null);
+  assert.equal((await store.listProjects()).length, 2);
+});
+
+test('3D GLB models persist in the shared library and remain protected while a project uses them', async () => {
+  const store = new IndexedProjectStore(new MemoryIndexedDB());
+  const model = await store.saveCharacterModel({ id: 'model-hero', name: 'Hero', fileName: 'hero.glb', blob: new Blob(['glb'], { type: 'model/gltf-binary' }) });
+  assert.equal(model.name, 'Hero');
+  assert.equal((await store.listCharacterModelMetadata())[0].id, model.id);
+  assert.equal('blob' in (await store.listCharacterModelMetadata())[0], false);
+  const project = await store.createProject('Uses hero');
+  const used = { ...project, characters3d: project.characters3d.map((actor) => ({ ...actor, modelId: model.id })) };
+  await store.saveProject(project.projectId, used);
+  await assert.rejects(() => store.deleteCharacterModel(model.id), /uses hero/i);
+  assert.ok(await store.getCharacterModel(model.id));
+  const oversized = new Blob(['x']);
+  Object.defineProperty(oversized, 'size', { value: MAX_CHARACTER_MODEL_BYTES + 1 });
+  assert.throws(() => validateCharacterModelRecord({ id: 'large', name: 'Large', fileName: 'large.glb', blob: oversized }), /50 MB/i);
 });
 
 test('IndexedDB autosave rolls back a quota failure and preserves the last valid record', async () => {

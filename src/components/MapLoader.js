@@ -111,17 +111,17 @@ export class MapLoader {
    * @param {string} url - Dosya ObjectURL veya bağlantısı
    * @param {string} fileName - Dosya adı
    */
-  loadGLTF(url, fileName = 'Model.glb') {
+  loadGLTF(url, fileName = 'Model.glb', sourceFile = null) {
     this.clear();
     this.onStatusChange({ type: 'loading', name: fileName });
-
-    this.gltfLoader.load(
-      url,
-      (gltf) => {
+    return new Promise((resolve, reject) => {
+      this.gltfLoader.load(url, (gltf) => {
         URL.revokeObjectURL(url);
         const model = gltf.scene;
         this.currentLoadedObject = model;
         this.currentObjectType = '3d';
+        this.currentSourceFile = sourceFile ? sourceFile.slice(0, sourceFile.size, sourceFile.type || 'model/gltf-binary') : null;
+        this.currentFileName = fileName;
 
         // BoundingBox hesapla: X ve Z ekseninde ortala, tabanı Y = 0 zeminine oturt
         const modelBox = new THREE.Box3().setFromObject(model);
@@ -186,14 +186,15 @@ export class MapLoader {
           walkableCount: this.registeredWalkableSurfaces.length,
           obstacleCount: this.registeredObstacles.length,
         });
-      },
-      undefined,
-      (error) => {
+        this.onStateChange({ type: 'map-loaded' });
+        resolve(model);
+      }, undefined, (error) => {
         URL.revokeObjectURL(url);
         console.error('GLTF Yükleme Hatası:', error);
         this.onStatusChange({ type: 'error', message: '3D Model yüklenemedi!' });
-      }
-    );
+        reject(error || new Error('3D model yüklenemedi.'));
+      });
+    });
   }
 
   /**
@@ -248,29 +249,60 @@ export class MapLoader {
   }
 
   exportStateForStorage() {
-    if (this.currentObjectType !== '2d' || !this.currentSourceFile) return null;
-    return {
-      kind: 'image',
-      fileName: this.currentFileName || this.currentSourceFile.name || 'environment.png',
-      mimeType: this.currentSourceFile.type,
-      blob: this.currentSourceFile.slice(0, this.currentSourceFile.size, this.currentSourceFile.type),
-      scale: this.currentScale,
-      opacity: this.currentOpacity,
-      groundOrientation: this.isGroundOrientation,
-    };
+    if (this.currentObjectType === '2d' && this.currentSourceFile) {
+      return {
+        kind: 'image',
+        fileName: this.currentFileName || this.currentSourceFile.name || 'environment.png',
+        mimeType: this.currentSourceFile.type,
+        blob: this.currentSourceFile.slice(0, this.currentSourceFile.size, this.currentSourceFile.type),
+        scale: this.currentScale,
+        opacity: this.currentOpacity,
+        groundOrientation: this.isGroundOrientation,
+      };
+    }
+    if (this.currentObjectType === '3d' && this.currentSourceFile) {
+      if (!/\.glb$/i.test(this.currentFileName || '')) {
+        throw new Error('Kayıtlı projelerde 3D ortam için tek dosyalı .glb kullanın; .gltf harici kaynakları projeye dahil edemiyor.');
+      }
+      return { kind: 'model', fileName: this.currentFileName, mimeType: this.currentSourceFile.type, blob: this.currentSourceFile.slice(0, this.currentSourceFile.size, this.currentSourceFile.type) };
+    }
+    if (this.currentObjectType === '3d' && this.currentLoadedObject && this.currentFileName === '3D Galeri (Örnek)') {
+      return { kind: 'demo-gallery', fileName: this.currentFileName };
+    }
+    return null;
   }
 
   async restoreProjectState(mapAsset) {
     if (!mapAsset) { this.clear(); return null; }
+    if (mapAsset.kind === 'demo-gallery') { this.loadDemo3DGallery(); return true; }
     if (!(mapAsset.blob instanceof Blob)) throw new Error('Kayıtlı 2D ortam görseli okunamıyor.');
     const url = URL.createObjectURL(mapAsset.blob);
     try {
-      await this.loadImage(url, mapAsset.fileName, mapAsset.blob);
-      this.setScale(mapAsset.scale);
-      this.setOpacity(mapAsset.opacity);
-      this.setOrientation(mapAsset.groundOrientation);
+      if (mapAsset.kind === 'model') await this.loadGLTF(url, mapAsset.fileName, mapAsset.blob);
+      else {
+        await this.loadImage(url, mapAsset.fileName, mapAsset.blob);
+        this.setScale(mapAsset.scale);
+        this.setOpacity(mapAsset.opacity);
+        this.setOrientation(mapAsset.groundOrientation);
+      }
       return true;
     } finally { URL.revokeObjectURL(url); }
+  }
+
+  exportWallBoxesForStorage() {
+    return (this.collisionManager?.wallBoxes || []).map((box) => ({
+      x: box.position.x,
+      z: box.position.z,
+      width: Number(box.userData.width),
+      depth: Number(box.userData.depth),
+      height: Number(box.userData.height),
+    }));
+  }
+
+  async restoreWallBoxes(boxes = []) {
+    this.clearAllWallBoxes();
+    for (const box of boxes) this.createWallBox(box.x, box.z, box.width, box.depth, box.height);
+    return this.exportWallBoxesForStorage();
   }
 
   setOrientation(isGround) {
@@ -341,8 +373,8 @@ export class MapLoader {
     const url = URL.createObjectURL(file);
 
     if (name.endsWith('.glb') || name.endsWith('.gltf')) {
-      this.loadGLTF(url, file.name);
-      return true;
+      try { return await this.loadGLTF(url, file.name, file); }
+      finally { URL.revokeObjectURL(url); }
     } else if (
       name.endsWith('.png') ||
       name.endsWith('.jpg') ||
@@ -403,6 +435,7 @@ export class MapLoader {
       box,
       count: this.collisionManager.wallBoxes.length,
     });
+    this.onStateChange({ type: 'wall-box-added' });
     return box;
   }
 
@@ -414,13 +447,16 @@ export class MapLoader {
     if (!this.collisionManager?.wallBoxes?.includes(box)) return false;
     this.collisionManager.removeWallBox(box);
     this.onStatusChange({ type: 'wallBoxRemoved', count: this.collisionManager.wallBoxes.length });
+    this.onStateChange({ type: 'wall-box-removed' });
     return true;
   }
 
   clearAllWallBoxes() {
     if (this.collisionManager) {
+      const hadBoxes = this.collisionManager.wallBoxes.length > 0;
       this.collisionManager.clearWallBoxes();
       this.onStatusChange({ type: 'wallBoxesCleared' });
+      if (hadBoxes) this.onStateChange({ type: 'wall-boxes-cleared' });
     }
   }
 
@@ -577,6 +613,7 @@ export class MapLoader {
 
     this.currentLoadedObject = group;
     this.currentObjectType = '3d';
+    this.currentFileName = '3D Galeri (Örnek)';
     this.scene.add(group);
 
     this.onStatusChange({
@@ -588,6 +625,7 @@ export class MapLoader {
       walkableCount: 1,
       obstacleCount: this.registeredObstacles.length,
     });
+    this.onStateChange({ type: 'map-loaded' });
   }
 
   getWalkableObjects() {
