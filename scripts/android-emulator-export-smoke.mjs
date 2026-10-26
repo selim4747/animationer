@@ -229,8 +229,27 @@ async function main() {
   try {
     const homeVisible = await evaluate(devtools.command, `!document.querySelector('#home-screen')?.hidden`);
     if (homeVisible) {
+      const homeDeadline = Date.now() + 30_000;
+      let homeReady = false;
+      while (Date.now() < homeDeadline) {
+        homeReady = await evaluate(devtools.command, `Boolean(window.animationerHome && (
+          document.querySelector('#home-project-empty')?.hidden === false ||
+          document.querySelector('#home-project-list')?.children.length > 0
+        ))`);
+        if (homeReady) break;
+        await sleep(250);
+      }
+      assert(homeReady, 'Project home did not finish loading its local project list.');
       console.log('PASS: Project home is visible; creating a project through the Android touch UI.');
       await tapSelector(devtools.command, '#home-create-project');
+      const dialogDeadline = Date.now() + 5_000;
+      let dialogOpen = false;
+      while (Date.now() < dialogDeadline) {
+        dialogOpen = await evaluate(devtools.command, `Boolean(document.querySelector('#home-dialog')?.open)`);
+        if (dialogOpen) break;
+        await sleep(100);
+      }
+      assert(dialogOpen, 'New Project dialog did not open after tapping its button.');
       await evaluate(devtools.command, `(() => {
         const input = document.querySelector('#home-dialog-name');
         if (!input) throw new Error('Project name input is missing.');
