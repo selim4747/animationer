@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ThreeJS Studio</string>
+    <string name="title_activity_main">ThreeJS Studio</string>
+    <string name="package_name">com.monochrome.threejsstudio</string>
+    <string name="custom_url_scheme">com.monochrome.threejsstudio</string>
+</resources>
