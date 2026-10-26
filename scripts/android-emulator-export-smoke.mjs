@@ -227,23 +227,45 @@ async function main() {
   globalThis.__devtoolsCommand = devtools.command;
 
   try {
+    const homeVisible = await evaluate(devtools.command, `!document.querySelector('#home-screen')?.hidden`);
+    if (homeVisible) {
+      console.log('PASS: Project home is visible; creating a project through the Android touch UI.');
+      await tapSelector(devtools.command, '#home-create-project');
+      await evaluate(devtools.command, `(() => {
+        const input = document.querySelector('#home-dialog-name');
+        if (!input) throw new Error('Project name input is missing.');
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(input, 'Android smoke test');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`);
+      await tapSelector(devtools.command, '#home-dialog-submit');
+    }
+
     const uiDeadline = Date.now() + 120_000;
     let uiState;
     while (Date.now() < uiDeadline) {
-      uiState = await evaluate(devtools.command, `(() => ({
-        tabs: Array.from(document.querySelectorAll('.studio-tab-btn')).map((button) => button.dataset.tab),
-        screenshotButton: !!document.querySelector('#btn-take-screenshot'),
-        canvas: !!document.querySelector('canvas'),
-        appTitle: document.title,
-        readyState: document.readyState,
-        bodyText: document.body?.innerText?.slice(0, 300) || '',
-      }))()`);
+      try {
+        uiState = await evaluate(devtools.command, `(() => ({
+          tabs: Array.from(document.querySelectorAll('.studio-tab-btn')).map((button) => button.dataset.tab),
+          screenshotButton: !!document.querySelector('#btn-take-screenshot'),
+          canvas: !!document.querySelector('#canvas-container canvas'),
+          appTitle: document.title,
+          projectId: window.animationerApp?.projectId || null,
+          homeVisible: !document.querySelector('#home-screen')?.hidden,
+          readyState: document.readyState,
+          bodyText: document.body?.innerText?.slice(0, 300) || '',
+        }))()`);
+      } catch {
+        // Creating a project reloads the WebView; retry until the studio document is ready.
+        await sleep(500);
+        continue;
+      }
       if (uiState.tabs?.length === EXPECTED_TABS.length && uiState.screenshotButton && uiState.canvas) break;
       await sleep(1_000);
     }
-    assert.deepEqual(uiState?.tabs, EXPECTED_TABS, `Expected all six tabs; got ${JSON.stringify(uiState?.tabs)}`);
-    assert(uiState.screenshotButton && uiState.canvas, `App UI did not become ready: ${JSON.stringify(uiState)}`);
-    console.log(`PASS: Android app UI loaded (${uiState.appTitle}; ${EXPECTED_TABS.length} tabs; canvas present).`);
+    assert.deepEqual(uiState?.tabs, EXPECTED_TABS, `Expected all six tabs after project-home entry; got ${JSON.stringify(uiState)}`);
+    assert(uiState.screenshotButton && uiState.canvas && uiState.projectId && !uiState.homeVisible, `App UI did not become ready after opening a project: ${JSON.stringify(uiState)}`);
+    console.log(`PASS: Android project opened into studio (${uiState.projectId}; ${EXPECTED_TABS.length} tabs; canvas present).`);
 
     // Exercise every tab with Android touch input and verify the matching panel becomes active.
     for (const tabId of EXPECTED_TABS) {
