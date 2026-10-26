@@ -52,7 +52,7 @@ jobs:
           "$SDKMANAGER" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
       - name: Initialize & Sync Capacitor Android Project
         run: |
-          npx cap add android
+          if [[ ! -d android ]]; then npx cap add android; fi
           npx cap sync android
       - name: Build Debug APK via Gradle
         working-directory: ./android

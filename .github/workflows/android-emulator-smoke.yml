@@ -76,7 +76,7 @@ jobs:
           config.android = { ...config.android, webContentsDebuggingEnabled: true };
           fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
           NODE
-          npx cap add android
+          if [[ ! -d android ]]; then npx cap add android; fi
           npx cap sync android
           chmod +x android/gradlew
           cd android
