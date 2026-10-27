@@ -268,6 +268,10 @@ async function main() {
           tabs: Array.from(document.querySelectorAll('.studio-tab-btn')).map((button) => button.dataset.tab),
           screenshotButton: !!document.querySelector('#btn-take-screenshot'),
           canvas: !!document.querySelector('#canvas-container canvas'),
+          panelInteractive: (() => {
+            const body = document.querySelector('#panel-body-wrapper');
+            return Boolean(body && !body.inert && body.getAttribute('aria-busy') !== 'true');
+          })(),
           appTitle: document.title,
           projectId: window.animationerApp?.projectId || null,
           homeVisible: !document.querySelector('#home-screen')?.hidden,
@@ -279,12 +283,12 @@ async function main() {
         await sleep(500);
         continue;
       }
-      if (uiState.tabs?.length === EXPECTED_TABS.length && uiState.screenshotButton && uiState.canvas) break;
+      if (uiState.tabs?.length === EXPECTED_TABS.length && uiState.screenshotButton && uiState.canvas && uiState.panelInteractive) break;
       await sleep(1_000);
     }
     assert.deepEqual(uiState?.tabs, EXPECTED_TABS, `Expected all six tabs after project-home entry; got ${JSON.stringify(uiState)}`);
-    assert(uiState.screenshotButton && uiState.canvas && uiState.projectId && !uiState.homeVisible, `App UI did not become ready after opening a project: ${JSON.stringify(uiState)}`);
-    console.log(`PASS: Android project opened into studio (${uiState.projectId}; ${EXPECTED_TABS.length} tabs; canvas present).`);
+    assert(uiState.screenshotButton && uiState.canvas && uiState.panelInteractive && uiState.projectId && !uiState.homeVisible, `App UI did not become interactive after opening a project: ${JSON.stringify(uiState)}`);
+    console.log(`PASS: Android project opened into interactive studio (${uiState.projectId}; ${EXPECTED_TABS.length} tabs; canvas present).`);
 
     // Exercise every tab with Android touch input and verify the matching panel becomes active.
     for (const tabId of EXPECTED_TABS) {
