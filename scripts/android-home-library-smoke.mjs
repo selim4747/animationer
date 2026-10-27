@@ -86,7 +86,9 @@ async function waitUntil(command, expression, description, timeoutMs = 20_000) {
     if (last) return last;
     await sleep(250);
   }
-  throw new Error(`Timed out waiting for ${description}; last value=${JSON.stringify(last)}`);
+  const libraryError = await evaluate(command, `document.querySelector('#home-library-error')?.textContent.trim() || ''`).catch(() => '');
+  const toast = await evaluate(command, `document.querySelector('#home-toast')?.textContent.trim() || ''`).catch(() => '');
+  throw new Error(`Timed out waiting for ${description}; last value=${JSON.stringify(last)}; libraryError=${JSON.stringify(libraryError)}; toast=${JSON.stringify(toast)}`);
 }
 async function tapSelector(command, selector) {
   const element = await evaluate(command, `(() => {
