@@ -1160,7 +1160,7 @@ input[type="range"]::-moz-range-thumb {
     gap: 4px;
     flex-wrap: nowrap;
   }
-  .hud-actions > :not(#btn-open-help) {
+  .hud-actions > :not(#btn-open-help):not(#btn-home-screen) {
     display: none !important;
   }
   .hud-badge {
@@ -1170,6 +1170,12 @@ input[type="range"]::-moz-range-thumb {
   .hud-actions #btn-open-help {
     min-width: 40px;
     min-height: 40px;
+  }
+  .hud-actions #btn-home-screen {
+    display: inline-flex;
+    min-height: 40px;
+    padding: 4px 7px;
+    font-size: 9px;
   }
   .hud-hint-pill {
     top: max(54px, calc(env(safe-area-inset-top, 0px) + 48px));
