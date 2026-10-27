@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { IndexedProjectStore, MAX_CHARACTER_MODEL_BYTES, MAX_CHARACTER_TEMPLATE_BYTES } from './ProjectStore.js';
+import { loadImage } from '../utils/load-image.js';
 
 function element(tag, className, text = '') {
   const node = document.createElement(tag);
@@ -419,9 +420,7 @@ export class HomeScreen {
       if (!Number.isFinite(fps) || fps < 1 || fps > 60) throw new Error('FPS 1–60 arasında olmalı.');
       const url = URL.createObjectURL(file);
       try {
-        const image = new Image();
-        image.src = url;
-        await image.decode();
+        const image = await loadImage(url);
         if (!image.naturalWidth || !image.naturalHeight || image.naturalWidth % columns || image.naturalHeight % rows) throw new Error('Görsel boyutları satır ve sütun sayısına tam bölünmeli.');
       } finally { URL.revokeObjectURL(url); }
       const name = (file.name || '2D Karakter').replace(/\.(png|webp|jpe?g)$/i, '').slice(0, 48);
