@@ -5,6 +5,7 @@ import { deflateSync } from 'node:zlib';
 
 const DEVTOOLS_URL = 'http://127.0.0.1:9222';
 const APP_ID = 'com.monochrome.threejsstudio';
+const APK_PATH = 'android/app/build/outputs/apk/debug/app-debug.apk';
 const TMP = '/tmp/animationer-home-library';
 
 function adbText(args) {
@@ -182,6 +183,13 @@ async function main() {
   writeFileSync(spritePng, makePng(4, 2));
   writeFileSync(brokenGlb, Buffer.from('not a glb'));
   writeFileSync(modelGlb, makeGlb());
+
+  console.log('Installing and launching the app on Android API 35.');
+  console.log(adbText(['install', '-r', APK_PATH]));
+  adbText(['shell', 'am', 'force-stop', APP_ID]);
+  const activity = adbText(['shell', 'am', 'start', '-W', '-n', `${APP_ID}/.MainActivity`]);
+  console.log(activity);
+  assert(activity.includes('Status: ok'), 'Android MainActivity did not start successfully.');
 
   await waitForWebViewAndForward();
   const target = await waitForPageTarget();
