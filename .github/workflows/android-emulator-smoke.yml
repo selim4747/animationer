@@ -104,9 +104,4 @@ jobs:
           emulator-boot-timeout: 600
           disable-linux-hw-accel: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: |
-            if [[ "${{ inputs.test_suite }}" == "home-library" ]]; then
-              node scripts/android-home-library-smoke.mjs
-            else
-              node scripts/android-emulator-export-smoke.mjs
-            fi
+          script: if [ "${{ inputs.test_suite }}" = "home-library" ]; then node scripts/android-home-library-smoke.mjs; else node scripts/android-emulator-export-smoke.mjs; fi
