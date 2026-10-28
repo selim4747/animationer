@@ -248,10 +248,23 @@ async function main() {
     assert.equal(projectDialogReady, true, 'Project Home did not open the create-project dialog.');
     await evaluate(devtools.command, `(() => { const input = document.querySelector('#home-dialog-name'); input.value = 'Android Smoke Project'; input.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
     await tapSelector(devtools.command, '#home-dialog-submit');
-    const createdProject = await evaluate(devtools.command, `(() => ({ homeVisible: !document.querySelector('#home-screen')?.hidden, projectName: document.querySelector('.home-project-card h3')?.textContent || '', projectId: document.querySelector('.home-project-card')?.dataset.projectId || null }))()`);
-    assert.equal(createdProject.homeVisible, false, 'Creating a project did not open Studio.');
-    assert.equal(createdProject.projectName, 'Android Smoke Project', `Studio did not open the newly created smoke project: ${JSON.stringify(createdProject)}`);
-    assert(createdProject.projectId, 'The newly created smoke project has no project ID.');
+    const studioDeadline = Date.now() + 30_000;
+    let createdProject;
+    while (Date.now() < studioDeadline) {
+      createdProject = await evaluate(devtools.command, `(() => ({
+        homeVisible: (() => { const home = document.querySelector('#home-screen'); return !!home && getComputedStyle(home).display !== 'none' && !home.hidden; })(),
+        appReady: Boolean(window.animationerApp && document.querySelector('#studio-panel')),
+        projectName: window.animationerApp?.projectName || '',
+        projectId: window.animationerApp?.projectId || null,
+        panelInert: document.querySelector('#panel-body-wrapper')?.inert ?? true,
+      }))()`);
+      if (!createdProject.homeVisible && createdProject.appReady && !createdProject.panelInert) break;
+      await sleep(500);
+    }
+    assert.equal(createdProject?.homeVisible, false, `Creating a project did not navigate away from Project Home: ${JSON.stringify(createdProject)}`);
+    assert.equal(createdProject?.appReady, true, `Studio did not initialize for the newly created smoke project: ${JSON.stringify(createdProject)}`);
+    assert.equal(createdProject?.projectName, 'Android Smoke Project', `Studio opened a different project: ${JSON.stringify(createdProject)}`);
+    assert(createdProject?.projectId, 'The newly created smoke project has no project ID.');
     console.log('PASS: Cold launch showed Project Home; Home created the smoke project and opened it in Studio.');
 
     const uiDeadline = Date.now() + 120_000;
