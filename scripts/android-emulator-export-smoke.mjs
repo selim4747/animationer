@@ -227,6 +227,22 @@ async function main() {
   globalThis.__devtoolsCommand = devtools.command;
 
   try {
+    const homeReadyDeadline = Date.now() + 120_000;
+    let homeReady = false;
+    while (Date.now() < homeReadyDeadline) {
+      homeReady = await evaluate(devtools.command, `Boolean(window.animationerHome || window.animationerApp)`);
+      if (homeReady) break;
+      await sleep(500);
+    }
+    assert(homeReady, 'Neither Project Home nor Studio finished initializing.');
+    const homeVisible = await evaluate(devtools.command, `(() => { const home = document.querySelector('#home-screen'); return !!home && getComputedStyle(home).display !== 'none' && !home.hidden; })()`);
+    if (homeVisible) {
+      await tapSelector(devtools.command, '#home-create-project');
+      await evaluate(devtools.command, `(() => { const input = document.querySelector('#home-dialog-name'); if (!input) return false; input.value = 'Android Smoke Project'; input.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+      await tapSelector(devtools.command, '#home-dialog-submit');
+      console.log('PASS: Project Home created an Android smoke project and opened it in Studio.');
+    }
+
     const uiDeadline = Date.now() + 120_000;
     let uiState;
     while (Date.now() < uiDeadline) {
@@ -406,7 +422,44 @@ async function main() {
     const previewDuration = Number.isFinite(preview.duration) ? `${preview.duration.toFixed(2)}s` : 'stream duration unavailable';
     console.log(`PASS: Manual Android video saved and played through the in-app preview (${videoPath}; ${video.length} bytes; ${preview.width}x${preview.height}; ${previewDuration}).`);
 
-    console.log('ANDROID USER TEST SUMMARY: 6 tabs, collapse/expand, touch-restorable full-screen mode, timeline edit, project JSON, Android Share sheet, PNG and playable manual video export exercised.');
+    // Verify the project can be renamed, duplicated, favorited, and deleted from Project Home.
+    await tapSelector(devtools.command, '#btn-home-screen');
+    let homeState;
+    const homeDeadline = Date.now() + 30_000;
+    while (Date.now() < homeDeadline) {
+      homeState = await evaluate(devtools.command, `(() => ({ visible: !document.querySelector('#home-screen')?.hidden, cards: document.querySelectorAll('.home-project-card').length }))()`);
+      if (homeState.visible && homeState.cards) break;
+      await sleep(500);
+    }
+    assert(homeState?.visible && homeState.cards === 1, `Project Home did not return with the smoke project: ${JSON.stringify(homeState)}`);
+    let projectId = await evaluate(devtools.command, `document.querySelector('.home-project-card')?.dataset.projectId || null`);
+    assert(projectId, 'The smoke project has no project ID.');
+    const projectSelector = (action) => `.home-project-card[data-project-id="${projectId}"] [data-action="${action}"]`;
+    await tapSelector(devtools.command, projectSelector('rename'));
+    await evaluate(devtools.command, `(() => { const input = document.querySelector('#home-dialog-name'); input.value = 'Android Smoke Renamed'; input.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    await tapSelector(devtools.command, '#home-dialog-submit');
+    await sleep(300);
+    let renamed = await evaluate(devtools.command, `document.querySelector('.home-project-card h3')?.textContent || ''`);
+    assert.equal(renamed, 'Android Smoke Renamed', `Project rename failed: ${renamed}`);
+    await tapSelector(devtools.command, projectSelector('favorite'));
+    let favorite = await evaluate(devtools.command, `document.querySelector(${JSON.stringify(projectSelector('favorite'))})?.getAttribute('aria-pressed')`);
+    assert.equal(favorite, 'true', 'Project favorite toggle did not persist.');
+    await tapSelector(devtools.command, projectSelector('duplicate'));
+    await evaluate(devtools.command, `(() => { const input = document.querySelector('#home-dialog-name'); input.value = 'Android Smoke Copy'; input.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    await tapSelector(devtools.command, '#home-dialog-submit');
+    await sleep(400);
+    homeState = await evaluate(devtools.command, `(() => ({ cards: document.querySelectorAll('.home-project-card').length, copy: [...document.querySelectorAll('.home-project-card h3')].some((item) => item.textContent === 'Android Smoke Copy') }))()`);
+    assert.deepEqual(homeState, { cards: 2, copy: true }, `Project duplicate failed: ${JSON.stringify(homeState)}`);
+    projectId = await evaluate(devtools.command, `[...document.querySelectorAll('.home-project-card')].find((card) => card.querySelector('h3')?.textContent === 'Android Smoke Copy')?.dataset.projectId || null`);
+    assert(projectId, 'The duplicate project card was not found.');
+    await tapSelector(devtools.command, projectSelector('delete'));
+    await tapSelector(devtools.command, '#home-dialog-submit');
+    await sleep(300);
+    homeState = await evaluate(devtools.command, `(() => ({ cards: document.querySelectorAll('.home-project-card').length, name: document.querySelector('.home-project-card h3')?.textContent || '' }))()`);
+    assert.deepEqual(homeState, { cards: 1, name: 'Android Smoke Renamed' }, `Project deletion failed: ${JSON.stringify(homeState)}`);
+    console.log('PASS: Project Home rename, favorite, duplicate, and delete touch flows.');
+
+    console.log('ANDROID USER TEST SUMMARY: Project Home create/rename/favorite/duplicate/delete; 6 studio tabs, collapse/expand, full-screen mode, timeline edit, JSON backup, Android Share sheet, PNG, and playable video export exercised.');
   } finally {
     delete globalThis.__devtoolsCommand;
     devtools.socket.close();
