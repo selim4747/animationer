@@ -53,12 +53,14 @@ export class UIManager {
    * @param {import('./RecorderManager.js').RecorderManager} [context.recorderManager]
    * @param {Object} context.sceneHelpers - gridHelper, dirLight, hemiLight referansları
    */
-  constructor({ timelineManager, character, characterManager, spriteAnimationManager, worldSpriteCharacterManager = null, projectStore = null, projectId = '', projectName = 'Yeni Proje', onReturnHome = () => {}, worldSpriteReady = Promise.resolve(), onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, sceneHelpers }) {
+  constructor({ timelineManager, character, characterManager, spriteAnimationManager, worldSpriteCharacterManager = null, sceneEditor = null, projectTemplate = 'demo', projectStore = null, projectId = '', projectName = 'Yeni Proje', onReturnHome = () => {}, worldSpriteReady = Promise.resolve(), onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, sceneHelpers }) {
     this.timeline = timelineManager;
     this.character = character;
     this.characters = characterManager || character;
     this.sprites = spriteAnimationManager;
     this.worldSprites = worldSpriteCharacterManager;
+    this.sceneEditor = sceneEditor;
+    this.projectTemplate = projectTemplate === 'blank' ? 'blank' : 'demo';
     this.projectStore = projectStore;
     this.projectId = projectId;
     this.projectName = projectName;
@@ -86,10 +88,12 @@ export class UIManager {
       mapLoader: this.mapLoader,
       worldSprites: this.worldSprites,
       cameraManager: this.cameraManager,
+      sceneEditor: this.sceneEditor,
       scene: this.sceneHelpers.scene,
       projectStore: this.projectStore,
       projectId: this.projectId,
       projectName: this.projectName,
+      projectTemplate: this.projectTemplate,
       worldSpriteReady: this.worldSpriteReady,
       onStatus: (msg) => { if (this.dom?.autosaveStatus) this.dom.autosaveStatus.textContent = msg; },
       onError: (msg) => this.showToast(msg),
@@ -112,6 +116,7 @@ export class UIManager {
     this.updateSpriteList(this.sprites?.list?.() || [], this.sprites?.selectedId);
     this.updateWorldSpriteUI();
     this.updateMapMeshList();
+    this.updateSceneEditorUI();
     this.updateRecorderUI({
       maxRecordingBytes: this.recorder?.maxRecordingBytes,
       maxDurationSeconds: this.recorder?.maxDurationSeconds,
@@ -204,6 +209,15 @@ export class UIManager {
       wallBoxList: document.getElementById('studio-wall-box-list'),
       mapObjectList: document.getElementById('studio-map-object-list'),
       sceneSkyColor: document.getElementById('scene-sky-color'),
+      sceneEditorToggle: document.getElementById('btn-scene-editor-toggle'),
+      sceneEditorObject: document.getElementById('scene-editor-object'),
+      sceneEditorMode: document.getElementById('scene-editor-mode'),
+      sceneEditorX: document.getElementById('scene-editor-x'),
+      sceneEditorY: document.getElementById('scene-editor-y'),
+      sceneEditorZ: document.getElementById('scene-editor-z'),
+      sceneEditorApply: document.getElementById('btn-scene-editor-apply'),
+      sceneEditorReset: document.getElementById('btn-scene-editor-reset'),
+      sceneEditorStatus: document.getElementById('scene-editor-status'),
 
       // Sekme 3: KAMERALAR
       btnFreeOrbit: document.getElementById('btn-free-orbit'),
@@ -499,10 +513,12 @@ export class UIManager {
           }
           const reader = new FileReader();
           reader.onload = async (evt) => {
+            const stagedModelIds = [];
+            let previousImportState = null;
             try {
               const payload = JSON.parse(evt.target.result);
               if (payload?.format === 'animationer-project') {
-                if (![1, 2, 3].includes(payload.schemaVersion || payload.projectVersion || 1)) throw new Error('Bu proje sürümü desteklenmiyor.');
+                if (![1, 2, 3, 4, PROJECT_SCHEMA_VERSION].includes(payload.schemaVersion || payload.projectVersion || 1)) throw new Error('Bu proje sürümü desteklenmiyor.');
                 const migrated = migrateProjectRecord(payload);
                 const portableModelBytes = (payload.portableModels || []).reduce((sum, model) => sum + (typeof model.data === 'string' ? Math.floor(model.data.length * 3 / 4) : 0), 0);
                 const importBytes = calculateProjectBytes(migrated.timeline, migrated.sprites, migrated.mapAsset, migrated.worldCharacterTemplates) + portableModelBytes;
@@ -525,6 +541,7 @@ export class UIManager {
                   const newId = `import-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
                   const blob = base64ToBlob(portable.data, portable.mimeType || 'model/gltf-binary');
                   await this.projectStore.saveCharacterModel({ ...portable, id: newId, blob, data: undefined });
+                  stagedModelIds.push(newId);
                   modelIdMap.set(portable.id, newId);
                 }
                 const characters3d = (migrated.characters3d || []).map((actor) => ({
@@ -537,12 +554,14 @@ export class UIManager {
                 const missing = candidateTimeline.steps.find((step) => step.type === 'PLAY_SPRITE_ANIMATION' && !assetIds.has(step.actorId));
                 if (missing) throw new Error(`'${missing.actorId}' sprite dosyası projede yok; mevcut sahne korundu.`);
 
+                previousImportState = await this.autosave?._buildRecord?.();
                 // Each resource manager stages/decode-validates its input before replacing that resource.
                 await this.worldSprites?.importProjectState?.({ templates: normalized.worldCharacterTemplates, actors: normalized.worldCharacters }, { replaceTemplates: true });
                 await this.sprites.importAssets(assets);
                 await this.mapLoader?.restoreProjectState?.(mapAsset);
                 await this.mapLoader?.restoreWallBoxes?.(normalized.wallBoxes || []);
                 await this.characters?.restoreProjectState?.({ actors: normalized.characters3d || [], selectedId: normalized.selectedCharacter3dId });
+                this.sceneEditor?.restoreProjectState?.(normalized.sceneEdits || []);
                 if (this.sceneHelpers.scene?.background?.set && normalized.skyColor) this.sceneHelpers.scene.background.set(`#${normalized.skyColor}`);
                 this.cameraManager?.restoreProjectState?.({ stations: normalized.cameraStations || [], activeStationId: normalized.activeCameraStationId, followCharacter: normalized.cameraFollowCharacter });
                 if (d.sceneSkyColor && normalized.skyColor) d.sceneSkyColor.value = `#${normalized.skyColor}`;
@@ -554,6 +573,28 @@ export class UIManager {
                 this.showToast('Tam proje yedeği; sahne, karakterler, kameralar ve rejiyle yüklendi.');
               } else { this.timeline.importSequence(payload); this.showToast('Eski biçim zaman çizelgesi yüklendi (görseller bu dosyada bulunmuyor)'); }
             } catch (err) {
+              if (previousImportState) {
+                try {
+                  await this.worldSprites?.importProjectState?.({ templates: previousImportState.worldCharacterTemplates, actors: previousImportState.worldCharacters }, { replaceTemplates: true });
+                  await this.sprites.importAssets(previousImportState.sprites);
+                  await this.mapLoader?.restoreProjectState?.(previousImportState.mapAsset);
+                  await this.mapLoader?.restoreWallBoxes?.(previousImportState.wallBoxes || []);
+                  await this.characters?.restoreProjectState?.({ actors: previousImportState.characters3d, selectedId: previousImportState.selectedCharacter3dId });
+                  this.sceneEditor?.restoreProjectState?.(previousImportState.sceneEdits || []);
+                  if (this.sceneHelpers.scene?.background?.set) this.sceneHelpers.scene.background.set(`#${previousImportState.skyColor}`);
+                  this.cameraManager?.restoreProjectState?.({ stations: previousImportState.cameraStations || [], activeStationId: previousImportState.activeCameraStationId, followCharacter: previousImportState.cameraFollowCharacter });
+                  this.timeline.steps = previousImportState.timeline.steps;
+                  this.timeline.playMode = previousImportState.timeline.playMode;
+                  this.timeline._notify();
+                } catch (rollbackError) {
+                  console.error('Project import state rollback failed:', rollbackError);
+                  this.showToast(`Geri yükleme hatası; önceki sahne tamamen geri alınamadı: ${rollbackError.message}`);
+                }
+              }
+              for (const id of stagedModelIds) {
+                try { await this.projectStore?.deleteCharacterModel?.(id); }
+                catch (cleanupError) { console.error('Imported model rollback failed:', cleanupError); }
+              }
               this.showToast(`Proje yüklenemedi; mevcut sahne korundu: ${err.message || 'geçersiz dosya'}`);
             }
           };
@@ -752,6 +793,34 @@ export class UIManager {
     if (d.dropZone && d.filePicker) {
       d.dropZone.addEventListener('click', () => d.filePicker.click());
     }
+
+    d.sceneEditorToggle?.addEventListener('click', () => {
+      const active = this.sceneEditor?.setActive(!this.sceneEditor.active);
+      d.sceneEditorToggle.setAttribute('aria-pressed', String(Boolean(active)));
+      d.sceneEditorToggle.textContent = `Sahne seçimi: ${active ? 'Açık' : 'Kapalı'}`;
+      this.updateSceneEditorUI();
+      this.showToast(active ? 'Düzenlemek için sahnedeki bir nesneye dokunun.' : 'Sahne seçim modu kapatıldı.');
+    });
+    d.sceneEditorObject?.addEventListener('change', () => this.sceneEditor?.select(d.sceneEditorObject.value));
+    d.sceneEditorMode?.addEventListener('change', () => {
+      this.sceneEditor?.setMode(d.sceneEditorMode.value);
+      this.updateSceneEditorUI();
+    });
+    d.sceneEditorApply?.addEventListener('click', () => {
+      const selection = this.sceneEditor?.getSelection();
+      if (!selection) return this.showToast('Önce düzenlenecek bir nesne seçin.');
+      const transform = selection.transform;
+      const target = this.sceneEditor.mode === 'rotate' ? transform.rotation : this.sceneEditor.mode === 'scale' ? transform.scale : transform.position;
+      const values = [d.sceneEditorX, d.sceneEditorY, d.sceneEditorZ].map((input) => Number(input?.value));
+      if (values.some((value) => !Number.isFinite(value))) return this.showToast('X, Y ve Z alanlarına geçerli sayılar girin.');
+      const axes = ['x', 'y', 'z'];
+      axes.forEach((axis, index) => { target[axis] = this.sceneEditor.mode === 'rotate' ? values[index] * Math.PI / 180 : values[index]; });
+      if (this.sceneEditor.setTransform(selection.id, transform)) this.showToast(`“${selection.label}” güncellendi.`);
+    });
+    d.sceneEditorReset?.addEventListener('click', () => {
+      if (!this.sceneEditor?.resetTransform()) return this.showToast('İlk dönüşüm bilgisi bulunamadı.');
+      this.showToast('Nesne ilk dönüşümüne döndürüldü.');
+    });
 
     // 2D Yönelim Değiştirme
     if (d.btnOrientHorizontal) {
@@ -1729,6 +1798,7 @@ export class UIManager {
       empty.className = 'studio-info-text';
       empty.textContent = 'Yüklenmiş GLB ortamında düzenlenebilir mesh yok.';
       list.appendChild(empty);
+      this.updateSceneEditorUI();
       return;
     }
     meshes.forEach((mesh) => {
@@ -1746,6 +1816,48 @@ export class UIManager {
       visibleLabel.append(visible, document.createTextNode('Görünür'));
       row.append(name, kind, visibleLabel); list.appendChild(row);
     });
+    this.updateSceneEditorUI();
+  }
+
+  updateSceneEditorUI() {
+    const d = this.dom;
+    if (!this.sceneEditor || !d.sceneEditorObject) return;
+    const objects = this.sceneEditor.list();
+    const selection = this.sceneEditor.getSelection();
+    d.sceneEditorObject.replaceChildren();
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = objects.length ? 'Nesne seçin…' : 'Düzenlenebilir nesne yok';
+    d.sceneEditorObject.appendChild(placeholder);
+    for (const item of objects) {
+      const option = document.createElement('option');
+      option.value = item.id;
+      option.textContent = item.label;
+      d.sceneEditorObject.appendChild(option);
+    }
+    d.sceneEditorObject.value = selection?.id || '';
+    if (d.sceneEditorToggle) {
+      d.sceneEditorToggle.setAttribute('aria-pressed', String(this.sceneEditor.active));
+      d.sceneEditorToggle.textContent = `Sahne seçimi: ${this.sceneEditor.active ? 'Açık' : 'Kapalı'}`;
+    }
+    if (d.sceneEditorMode) d.sceneEditorMode.value = this.sceneEditor.mode;
+    const mode = this.sceneEditor.mode;
+    const values = selection?.transform?.[mode === 'rotate' ? 'rotation' : mode === 'scale' ? 'scale' : 'position'];
+    const axes = ['x', 'y', 'z'];
+    [d.sceneEditorX, d.sceneEditorY, d.sceneEditorZ].forEach((input, index) => {
+      if (!input) return;
+      const raw = values?.[axes[index]];
+      const value = mode === 'rotate' && Number.isFinite(raw) ? raw * 180 / Math.PI : raw;
+      input.value = Number.isFinite(value) ? String(Number(value.toFixed(3))) : (mode === 'scale' ? '1' : '0');
+      input.disabled = !selection;
+    });
+    if (d.sceneEditorApply) d.sceneEditorApply.disabled = !selection;
+    if (d.sceneEditorReset) d.sceneEditorReset.disabled = !selection;
+    if (d.sceneEditorStatus) {
+      d.sceneEditorStatus.textContent = !this.sceneEditor.active
+        ? `${objects.length} nesne düzenlenebilir. Seçim modunu açın.`
+        : selection ? `Seçili: ${selection.label} · Değişiklikler otomatik kaydedilir.` : 'Sahnede bir nesneye dokunarak seçin.';
+    }
   }
 
   /**

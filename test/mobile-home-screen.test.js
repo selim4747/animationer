@@ -33,5 +33,6 @@ test('portrait mobile HUD keeps the home-return control visible alongside help',
   const portraitRule = css.match(/@media \(max-width: 640px\) and \(orientation: portrait\), \(max-width: 640px\) \{([\s\S]*?)\n\}/)?.[1];
   assert.ok(portraitRule, 'mobile portrait media rule exists');
   assert.match(portraitRule, /\.hud-actions\s*>\s*:not\(#btn-open-help\):not\(#btn-home-screen\)\s*\{\s*display:\s*none\s*!important;/);
-  assert.match(portraitRule, /\.hud-actions\s+#btn-home-screen\s*\{[^}]*display:\s*inline-flex;[^}]*min-height:\s*40px;/s);
+  assert.match(portraitRule, /\.hud-actions\s+#btn-open-help\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px;/s);
+  assert.match(portraitRule, /\.hud-actions\s+#btn-home-screen\s*\{[^}]*display:\s*inline-flex;[^}]*min-height:\s*44px;/s);
 });

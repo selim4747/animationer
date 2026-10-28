@@ -99,10 +99,17 @@ export class RecorderManager {
       this.isFinalizing = false;
       this._recorderFailed = false;
       this._stopHandled = false;
+      this._recordingLimitExceeded = false;
       const recorder = this.mediaRecorder;
 
       recorder.ondataavailable = (event) => {
         if (!event.data || event.data.size === 0 || this._recorderFailed) return;
+        const remainingBytes = Math.max(0, this.maxRecordingBytes - this.recordedBytes);
+        if (event.data.size > remainingBytes) {
+          this._recordingLimitExceeded = true;
+          if (this.isRecording) this.stopRecording('size-limit');
+          return;
+        }
         this.recordedChunks.push(event.data);
         this.recordedBytes += event.data.size;
         if (this.isRecording && this.recordedBytes >= this.maxRecordingBytes) {
@@ -241,9 +248,47 @@ export class RecorderManager {
     let blob = null;
     const recordedBytes = this.recordedBytes;
     try {
+      if (this._recordingLimitExceeded) {
+        this.lastStopReason = this.stopReason;
+        this.lastDownloadResult = {
+          saved: false,
+          error: 'Kayıt boyutu sınırı aşıldı; dosya oluşturulmadı.',
+          limitExceeded: true,
+        };
+        this.onStateChange({
+          isRecording: false,
+          isFinalizing: false,
+          error: this.lastDownloadResult.error,
+          stopReason: this.stopReason,
+          limitExceeded: true,
+          sizeBytes: recordedBytes,
+          maxRecordingBytes: this.maxRecordingBytes,
+        });
+        this._resolveStop(null);
+        return;
+      }
       const mimeType = recorder.mimeType || this._getSupportedMimeType() || 'video/webm';
       blob = new Blob(this.recordedChunks, { type: mimeType });
       if (blob.size === 0) throw new Error('Video dosyası oluşturulamadı.');
+      if (blob.size > this.maxRecordingBytes) {
+        this.lastStopReason = this.stopReason;
+        this.lastDownloadResult = {
+          saved: false,
+          error: 'Kayıt boyutu sınırı aşıldı; dosya oluşturulmadı.',
+          limitExceeded: true,
+        };
+        this.onStateChange({
+          isRecording: false,
+          isFinalizing: false,
+          error: this.lastDownloadResult.error,
+          stopReason: this.stopReason,
+          limitExceeded: true,
+          sizeBytes: blob.size,
+          maxRecordingBytes: this.maxRecordingBytes,
+        });
+        this._resolveStop(null);
+        return;
+      }
       this.recordedChunks = [];
       this.lastRecordingBlob = this.activeTimelineManager ? blob : null;
       this.lastStopReason = this.stopReason;
@@ -255,10 +300,10 @@ export class RecorderManager {
         isFinalizing: false,
         duration: this.recordDurationSeconds,
         formattedDuration: '00:00',
-        filename: downloadResult.saved ? filename : undefined,
+        filename: downloadResult.saved || downloadResult.initiated ? filename : undefined,
         downloadResult,
         canceled: downloadResult.canceled || false,
-        error: downloadResult.saved || downloadResult.canceled ? undefined : 'Dosya cihaza kaydedilemedi.',
+        error: downloadResult.saved || downloadResult.initiated || downloadResult.canceled ? undefined : 'Dosya cihaza kaydedilemedi.',
         blob,
         sizeBytes: recordedBytes,
         stopReason: this.stopReason,
@@ -371,7 +416,7 @@ export class RecorderManager {
         throw new Error(this.lastDownloadResult?.error || 'Video dosyası oluşturulamadı.');
       }
       downloadResult = this.lastDownloadResult;
-      if (downloadResult && !downloadResult.saved) {
+      if (downloadResult && !downloadResult.saved && !downloadResult.initiated) {
         throw new Error(downloadResult.canceled ? 'Dosya kaydetme iptal edildi.' : downloadResult.error || 'Video dosyası cihaza kaydedilemedi.');
       }
       success = true;

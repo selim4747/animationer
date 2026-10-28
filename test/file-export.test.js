@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { saveGeneratedFile, saveToCapacitorDocuments } from '../src/utils/FileExportManager.js';
+import { LEGACY_ELECTRON_MAX_BYTES, saveGeneratedFile, saveToCapacitorDocuments } from '../src/utils/FileExportManager.js';
 
 test('routes exported files through the Windows Electron save dialog bridge', async () => {
   const originalWindow = globalThis.window;
@@ -53,6 +53,20 @@ test('streams large Windows blobs through bounded chunks and reports monotonic p
     assert(chunks.every((chunk) => chunk.byteLength <= 3 * 1024 * 1024));
     assert.equal(progress.at(-1).percent, 100);
     assert(progress.every((event, index) => index === 0 || event.bytesWritten >= progress[index - 1].bytesWritten));
+  } finally {
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+  }
+});
+
+test('refuses large files on the legacy Electron bridge before reading the full buffer', async () => {
+  const originalWindow = globalThis.window;
+  let called = false;
+  globalThis.window = { dioramaDesktop: { async saveGeneratedFile() { called = true; return { saved: true }; } } };
+  try {
+    const blob = new Blob([new Uint8Array(LEGACY_ELECTRON_MAX_BYTES + 1)]);
+    await assert.rejects(saveGeneratedFile(blob, 'large.webm'), /eski dışa aktarma köprüsü.*desteklenmiyor/i);
+    assert.equal(called, false);
   } finally {
     if (originalWindow === undefined) delete globalThis.window;
     else globalThis.window = originalWindow;
@@ -156,7 +170,8 @@ test('uses a Blob URL and a browser download link outside native apps', async ()
 
   try {
     const result = await saveGeneratedFile(new Blob(['image']), 'capture.png');
-    assert.equal(result.saved, true);
+    assert.equal(result.saved, false);
+    assert.equal(result.initiated, true);
     assert.equal(result.method, 'browser');
     assert.equal(clicked, true);
     assert.equal(created[0][1].href, 'blob:test-export');

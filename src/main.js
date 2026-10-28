@@ -20,12 +20,15 @@ import { WorldSpriteCharacterManager } from './components/WorldSpriteCharacterMa
 import { IndexedProjectStore } from './components/ProjectStore.js';
 import { HomeScreen } from './components/HomeScreen.js';
 import { SceneBuilder } from './components/SceneBuilder.js';
+import { SceneEditor } from './components/SceneEditor.js';
 import { toRendererViewport } from './components/ViewportLayout.js';
 import studioPanelHtml from './ui/studio-panel.html?raw';
 class App {
-  constructor({ projectId, projectName }) {
+  constructor({ projectId, projectName, projectRecord = null }) {
     this.projectId = projectId;
     this.projectName = projectName || 'Yeni Proje';
+    this.projectTemplate = projectRecord?.projectTemplate === 'blank' ? 'blank' : 'demo';
+    this.isBlankProject = this.projectTemplate === 'blank';
     this.projectStore = new IndexedProjectStore();
     this.container = document.getElementById('canvas-container');
     this.clock = new THREE.Clock();
@@ -46,9 +49,23 @@ class App {
     this._initLightingAndEnvironment();
     this._initComponents();
     this.sceneBuilder = new SceneBuilder(this.scene, this.collisionManager);
-    this.sceneBuilder.buildMultiStoryArchitecture();
-    this.sceneBuilder.buildTestFurniture();
-    this.testWalkableSurfaces = this.sceneBuilder.walkableSurfaces;
+    if (!this.isBlankProject) {
+      this.sceneBuilder.buildMultiStoryArchitecture();
+      this.sceneBuilder.buildTestFurniture();
+      this.testWalkableSurfaces = this.sceneBuilder.walkableSurfaces;
+    } else {
+      this.gridHelper.visible = false;
+    }
+    this.sceneEditor = new SceneEditor({
+      scene: this.scene, camera: this.camera, domElement: this.renderer.domElement,
+      mapLoader: this.mapLoader, sceneBuilder: this.sceneBuilder, door: this.door,
+      collisionManager: this.collisionManager, characters: this.character,
+      worldSprites: this.worldSpriteCharacterManager,
+      onChange: (state) => {
+        this.uiManager?.updateSceneEditorUI(state);
+        if (state?.type === 'transform' || state?.type === 'restored') this.uiManager?.autosave?.schedule();
+      },
+    });
 
     // Inject studio panel HTML (extracted from index.html for maintainability)
     const panelRoot = document.getElementById('studio-panel-root');
@@ -161,13 +178,13 @@ class App {
     // 2. Menteşeli Kapı & Kesit Mimarisi
     this.door = new Door(this.scene, this.collisionManager, (state) => {
       this._updateDoorHUD(state.isOpen);
-    });
+    }, { enabled: !this.isBlankProject });
 
     // 3. Prosedürel Karakter (3D Navigasyon ve Floor Snapping)
     this.character = new CharacterRoster(this.scene, this.collisionManager, (state) => {
       this._updateCharacterHUD(this.character?.selectedCharacter?.isMoving || false);
       this.uiManager?.updateCharacterList(state.actors || this.character.list());
-    }, this.projectStore);
+    }, this.projectStore, { initialCharacter: !this.isBlankProject });
 
     this.spriteAnimationManager = new SpriteAnimationManager(this.spriteScene, {
       width: window.innerWidth,
@@ -208,6 +225,7 @@ class App {
           this.uiManager.updateTimelineUI();
         }
       },
+      initialDemo: !this.isBlankProject,
     });
 
     // 7. Video ve Ekran Görüntüsü Dışa Aktarma Yöneticisi (RecorderManager)
@@ -238,6 +256,8 @@ class App {
       worldSpriteReady: this.worldSpriteLibraryReady,
       projectId: this.projectId,
       projectName: this.projectName,
+      projectTemplate: this.projectTemplate,
+      sceneEditor: this.sceneEditor,
       onReturnHome: async () => {
         sessionStorage.removeItem('animationer-open-project');
         sessionStorage.removeItem('animationer-open-asset');
@@ -443,6 +463,12 @@ class App {
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    if (this.sceneEditor?.active) {
+      this.sceneEditor.selectAt(e.clientX, e.clientY);
+      return;
+    }
+    if (!this.character.selectedCharacter && !this.worldSpriteCharacterManager.activeControl) return;
 
     this.raycaster.setFromCamera(this.mouse, this.camera);
 
@@ -657,7 +683,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
 
   homeRoot.hidden = true;
-  const app = new App({ projectId: requestedId, projectName: record.name });
+  const app = new App({ projectId: requestedId, projectName: record.name, projectRecord: record });
   window.animationerApp = app;
   if (requestedAssetText) {
     try {

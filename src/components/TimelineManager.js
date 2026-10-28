@@ -26,7 +26,7 @@ export class TimelineManager {
    * @param {import('./CameraManager.js').CameraManager} options.cameraManager
    * @param {Function} options.onStateChange
    */
-  constructor({ character, door, cameraManager, spriteAnimationManager, onStateChange = () => {} }) {
+  constructor({ character, door, cameraManager, spriteAnimationManager, onStateChange = () => {}, initialDemo = true }) {
     this.character = character;
     this.door = door;
     this.cameraManager = cameraManager;
@@ -52,7 +52,7 @@ export class TimelineManager {
     this.playMode = 'sequential';
 
     // Varsayılan zengin bir demo akışı yükle
-    this._initDefaultDemoSequence();
+    if (initialDemo) this._initDefaultDemoSequence();
   }
 
   /**

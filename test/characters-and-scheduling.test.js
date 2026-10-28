@@ -23,7 +23,8 @@ test('roster adds/selects/removes actors and routes controls only to the selecte
 
   assert.equal(roster.removeCharacter(second.id), true);
   assert.equal(roster.list().length, 1);
-  assert.equal(roster.removeCharacter(first.rootGroup.name), false, 'cannot remove the final character');
+  assert.equal(roster.removeCharacter(first.rootGroup.name), true, 'the roster may be empty for blank scenes');
+  assert.equal(roster.list().length, 0);
 });
 
 test('continuous controls stop in place and duration-based moves arrive on the requested duration', async () => {

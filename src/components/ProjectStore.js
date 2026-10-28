@@ -1,6 +1,6 @@
 import { getDeviceMemoryGiB, getDevicePerformanceProfile } from '../utils/device-profile.js';
 
-export const PROJECT_SCHEMA_VERSION = 4;
+export const PROJECT_SCHEMA_VERSION = 5;
 export const MAX_PROJECT_BYTES = 100 * 1024 * 1024;
 export const MAX_CHARACTER_TEMPLATE_BYTES = 50 * 1024 * 1024;
 export const MAX_CHARACTER_LIBRARY_BYTES = 250 * 1024 * 1024;
@@ -13,6 +13,17 @@ const CHARACTER_MODEL_STORE = 'character-models';
 const ACTIVE_KEY = 'autosave';
 const LEGACY_MIGRATION_KEY = 'migration:legacy-autosave';
 const PROJECT_KEY_PREFIX = 'project:';
+const DEMO_STARTER_STEPS = [
+  { id: 'step-1', type: 'MOVE_TO', title: 'Koridora Doğru Yürü', data: { x: 0, y: 0, z: -1.8 } },
+  { id: 'step-2', type: 'TRIGGER_DOOR', title: 'Oda Kapısını Aç', data: { action: 'open' } },
+  { id: 'step-3', type: 'WAIT', title: '0.8s Kapı Önünde Durakla', data: { duration: 0.8 } },
+  { id: 'step-4', type: 'MOVE_TO', title: 'İç Mekana Masaya Yürü', data: { x: 0, y: 0.1, z: -6.8 } },
+  { id: 'step-5', type: 'PLAY_EMOTE', title: 'Kutlama / Neşeli Zıplama', data: { emote: 'jump' } },
+  { id: 'step-6', type: 'SWITCH_CAMERA', title: 'Dış Genel Sahaya Dön', data: { stationId: 'station-ext' } },
+  { id: 'step-7', type: 'MOVE_TO', title: 'Merdivene Doğru İlerle', data: { x: -5, y: 0, z: 0.8 } },
+  { id: 'step-8', type: 'MOVE_TO', title: 'Merdiveni Tırman (2. Kat)', data: { x: -5, y: 1.75, z: -2.8 } },
+  { id: 'step-9', type: 'PLAY_EMOTE', title: '2. Katta Selam Ver', data: { emote: 'wave' } },
+];
 
 function createId(prefix) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`}`;
@@ -104,6 +115,15 @@ function normalized3dActors(value) {
 export function migrateProjectRecord(input) {
   if (!input || typeof input !== 'object') throw new Error('Kayıtlı proje bozuk.');
   if (input.schemaVersion === PROJECT_SCHEMA_VERSION) return validateProjectRecord(input);
+  if (input.schemaVersion === 4) {
+    return validateProjectRecord({
+      ...input,
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      projectVersion: PROJECT_SCHEMA_VERSION,
+      projectTemplate: input.projectTemplate === 'blank' ? 'blank' : 'demo',
+      sceneEdits: Array.isArray(input.sceneEdits) ? input.sceneEdits : [],
+    });
+  }
   if (input.schemaVersion === 3) {
     return validateProjectRecord({
       ...input,
@@ -188,6 +208,13 @@ export function validateProjectRecord(input) {
     target: { x: Number(station.target?.x), y: Number(station.target?.y), z: Number(station.target?.z) },
     isAutoTrigger: Boolean(station.isAutoTrigger),
   })) : [];
+  const projectTemplate = input.projectTemplate === 'blank' ? 'blank' : 'demo';
+  const sceneEdits = Array.isArray(input.sceneEdits) ? input.sceneEdits.slice(0, 500).map((edit) => ({
+    id: String(edit?.id || '').slice(0, 256),
+    position: { x: Number(edit?.position?.x), y: Number(edit?.position?.y), z: Number(edit?.position?.z) },
+    rotation: { x: Number(edit?.rotation?.x), y: Number(edit?.rotation?.y), z: Number(edit?.rotation?.z) },
+    scale: { x: Number(edit?.scale?.x), y: Number(edit?.scale?.y), z: Number(edit?.scale?.z) },
+  })) : [];
   if (!Array.isArray(worldCharacterTemplates) || worldCharacterTemplates.length > 50) throw new Error('2D karakter kaynak listesi geçersiz.');
   if (!Array.isArray(worldCharacters) || worldCharacters.length > 50) throw new Error('Sahnedeki 2D karakter listesi geçersiz.');
   if (wallBoxes.length > 200 || wallBoxes.some((box) => ![box.x, box.z, box.width, box.depth, box.height].every(Number.isFinite)
@@ -197,6 +224,11 @@ export function validateProjectRecord(input) {
   if (cameraStations.some((station) => !station.id || !station.name
     || ![station.position.x, station.position.y, station.position.z, station.target.x, station.target.y, station.target.z].every(Number.isFinite))) {
     throw new Error('Kamera istasyonu kaydı geçersiz.');
+  }
+  if (sceneEdits.length > 500 || sceneEdits.some((edit) => !edit.id
+    || ![edit.position.x, edit.position.y, edit.position.z, edit.rotation.x, edit.rotation.y, edit.rotation.z, edit.scale.x, edit.scale.y, edit.scale.z].every(Number.isFinite)
+    || [edit.scale.x, edit.scale.y, edit.scale.z].some((value) => value <= 0 || value > 1000))) {
+    throw new Error('Sahne düzenleme kaydı geçersiz.');
   }
   if (mapAsset && mapAsset.kind === 'image'
     && (!assetSize(mapAsset) || !mapAsset.fileName || !Number.isFinite(mapAsset.scale) || !Number.isFinite(mapAsset.opacity) || mapAsset.opacity < 0 || mapAsset.opacity > 1 || typeof mapAsset.groundOrientation !== 'boolean')) {
@@ -244,6 +276,7 @@ export function validateProjectRecord(input) {
     projectVersion: PROJECT_SCHEMA_VERSION,
     projectId: typeof input.projectId === 'string' ? input.projectId : '',
     name: safeProjectName(input.name, 'Yeni Proje'),
+    projectTemplate,
     createdAt: input.createdAt || input.updatedAt || new Date().toISOString(),
     updatedAt: input.updatedAt || new Date().toISOString(),
     scope: { ...input.scope },
@@ -258,10 +291,11 @@ export function validateProjectRecord(input) {
     cameraStations,
     activeCameraStationId: typeof input.activeCameraStationId === 'string' ? input.activeCameraStationId.slice(0, 128) : null,
     cameraFollowCharacter: input.cameraFollowCharacter !== false,
+    sceneEdits,
   };
 }
 
-export function createAutosaveRecord({ timeline, sprites, viewport, mapAsset = null, worldCharacterTemplates = [], worldCharacters = [], characters3d = [], selectedCharacter3dId = null, wallBoxes = [], skyColor = '080808', cameraStations = [], activeCameraStationId = null, cameraFollowCharacter = true, projectId = '', name = 'Yeni Proje', createdAt = null }) {
+export function createAutosaveRecord({ timeline, sprites, viewport, mapAsset = null, worldCharacterTemplates = [], worldCharacters = [], characters3d = [], selectedCharacter3dId = null, wallBoxes = [], skyColor = '080808', cameraStations = [], activeCameraStationId = null, cameraFollowCharacter = true, projectId = '', name = 'Yeni Proje', projectTemplate = 'demo', sceneEdits = [], createdAt = null }) {
   const assetBudget = getDevicePerformanceProfile(getDeviceMemoryGiB()).maxProjectAssetExportBytes;
   const assetBytes = [...sprites, ...worldCharacterTemplates].reduce((total, asset) => total + assetSize(asset), mapAsset ? assetSize(mapAsset) : 0);
   if (assetBytes > assetBudget) throw new Error(`Bu cihazda otomatik kayıt görsel varlık sınırı ${Math.floor(assetBudget / (1024 * 1024))} MiB; daha küçük görseller kullanın.`);
@@ -271,6 +305,7 @@ export function createAutosaveRecord({ timeline, sprites, viewport, mapAsset = n
     format: 'animationer-project',
     projectId,
     name,
+    projectTemplate,
     createdAt: createdAt || timestamp,
     updatedAt: timestamp,
     scope: { timeline: true, sprites2d: true, characterTransforms: characters3d.length > 0, mapAssets: Boolean(mapAsset), worldCharacters: true, cameraPreferences: true },
@@ -286,6 +321,7 @@ export function createAutosaveRecord({ timeline, sprites, viewport, mapAsset = n
     cameraStations,
     activeCameraStationId,
     cameraFollowCharacter,
+    sceneEdits,
     viewport: viewport && Number.isFinite(viewport.width) && Number.isFinite(viewport.height)
       ? { width: Math.max(1, Math.round(viewport.width)), height: Math.max(1, Math.round(viewport.height)) }
       : null,
@@ -296,6 +332,7 @@ function projectIndexEntry(record) {
   return {
     id: record.projectId,
     name: record.name,
+    projectTemplate: record.projectTemplate,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     mapKind: record.mapAsset?.kind || null,
@@ -375,15 +412,17 @@ export class IndexedProjectStore {
       });
     } finally { db.close(); }
   }
-  async createProject(name = 'Yeni Proje') {
+  async createProject(name = 'Yeni Proje', { template = 'demo' } = {}) {
+    if (!['blank', 'demo'].includes(template)) throw new Error('Proje başlangıç türü geçersiz.');
     const id = createId('project');
     const timestamp = new Date().toISOString();
     const record = createAutosaveRecord({
-      projectId: id, name: safeProjectName(name), createdAt: timestamp,
-      timeline: { version: '1.0.0', playMode: 'sequential', steps: [] },
+      projectId: id, name: safeProjectName(name), projectTemplate: template, createdAt: timestamp,
+      timeline: { version: '1.0.0', playMode: 'sequential', steps: template === 'blank' ? [] : DEMO_STARTER_STEPS.map((step) => ({ ...step, data: { ...step.data } })) },
       sprites: [], viewport: null,
-      characters3d: [{ id: 'character-1', name: 'Karakter 1', modelId: null, position: { x: 0, y: 0, z: 0 }, rotationY: 0, walkSpeed: 4.2, wobbleIntensity: 1, visible: true }],
-      selectedCharacter3dId: 'character-1',
+      characters3d: template === 'blank' ? [] : [{ id: 'character-1', name: 'Karakter 1', modelId: null, position: { x: 0, y: 0, z: 0 }, rotationY: 0, walkSpeed: 4.2, wobbleIntensity: 1, visible: true }],
+      selectedCharacter3dId: template === 'blank' ? null : 'character-1',
+      sceneEdits: [],
     });
     await this.saveProject(id, record);
     return record;
@@ -457,6 +496,7 @@ export class IndexedProjectStore {
       worldCharacterTemplates: [...source.worldCharacterTemplates],
       worldCharacters: source.worldCharacters.map((actor) => ({ ...actor })),
       characters3d: source.characters3d.map((actor) => ({ ...actor, position: { ...actor.position } })),
+      sceneEdits: (source.sceneEdits || []).map((edit) => ({ ...edit, position: { ...edit.position }, rotation: { ...edit.rotation }, scale: { ...edit.scale } })),
       wallBoxes: source.wallBoxes.map((box) => ({ ...box })),
       mapAsset: source.mapAsset ? { ...source.mapAsset } : null,
     };

@@ -26,7 +26,7 @@
       <div class="drag-overlay-box">
         <div class="drag-icon">📁</div>
         <div class="drag-title">Dosyayı Buraya Bırakın</div>
-        <div class="drag-sub">.glb, .gltf, .png, .jpg, .webp</div>
+        <div class="drag-sub">.glb, .png, .jpg, .webp</div>
       </div>
     </div>
 
@@ -179,6 +179,12 @@
           <h2 id="home-dialog-title">Yeni Proje</h2>
           <p id="home-dialog-message" class="home-dialog-message">Sahnen için bir ad seç.</p>
           <label id="home-dialog-name-label" class="home-dialog-field">Proje adı<input id="home-dialog-name" maxlength="64" autocomplete="off" /></label>
+          <label id="home-dialog-template-label" class="home-dialog-field" hidden>Başlangıç sahnesi
+            <select id="home-dialog-template">
+              <option value="demo">Deneme Sahnesi — hazır içerik ve karakter</option>
+              <option value="blank">Boş Sahne — içerik ve karakter olmadan</option>
+            </select>
+          </label>
           <label id="home-dialog-target-label" class="home-dialog-field" hidden>Projede aç<select id="home-dialog-target"></select></label>
           <div class="home-dialog-actions">
             <button id="home-dialog-cancel" class="home-small-button" value="cancel" type="button">İptal</button>

@@ -70,6 +70,7 @@ export class HomeScreen {
       previewName: byId('home-preview-name'), previewDetail: byId('home-preview-detail'), toast: byId('home-toast'),
       dialog: byId('home-dialog'), dialogForm: byId('home-dialog-form'), dialogEyebrow: byId('home-dialog-eyebrow'), dialogTitle: byId('home-dialog-title'),
       dialogMessage: byId('home-dialog-message'), dialogNameLabel: byId('home-dialog-name-label'), dialogName: byId('home-dialog-name'),
+      dialogTemplateLabel: byId('home-dialog-template-label'), dialogTemplate: byId('home-dialog-template'),
       dialogTargetLabel: byId('home-dialog-target-label'), dialogTarget: byId('home-dialog-target'), dialogSubmit: byId('home-dialog-submit'), dialogCancel: byId('home-dialog-cancel'),
       createProject: byId('home-create-project'), spriteSettings: byId('home-sprite-settings'),
       columns: byId('home-sprite-columns'), rows: byId('home-sprite-rows'), fps: byId('home-sprite-fps'),
@@ -352,6 +353,8 @@ export class HomeScreen {
     this.dom.dialogTitle.textContent = title;
     this.dom.dialogMessage.textContent = message;
     this.dom.dialogNameLabel.hidden = !['create', 'rename', 'duplicate'].includes(action);
+    if (this.dom.dialogTemplateLabel) this.dom.dialogTemplateLabel.hidden = action !== 'create';
+    if (this.dom.dialogTemplate && action === 'create') this.dom.dialogTemplate.value = 'demo';
     this.dom.dialogTargetLabel.hidden = action !== 'use-character';
     this.dom.dialogSubmit.textContent = action === 'delete' ? 'Projeyi sil' : action === 'use-character' ? 'Projeyi aç ve ekle' : 'Kaydet';
     this.dom.dialogSubmit.classList.toggle('is-destructive', action === 'delete');
@@ -377,7 +380,8 @@ export class HomeScreen {
     this._clearError(this.dom.projectError);
     try {
       if (pending.action === 'create') {
-        const project = await this.store.createProject(this.dom.dialogName.value || 'Yeni Proje');
+        const template = this.dom.dialogTemplate?.value === 'blank' ? 'blank' : 'demo';
+        const project = await this.store.createProject(this.dom.dialogName.value || 'Yeni Proje', { template });
         this.dom.dialog.close();
         this._openProject(project.projectId);
       } else if (pending.action === 'rename') {

@@ -58,3 +58,40 @@ test('playback-only notifications do not trigger writes, while later edits are s
   assert.equal(saved.length, 1);
   assert.equal(saved[0].timeline.steps.length, 2);
 });
+
+test('failed partial restore reapplies the pre-restore manager state', async () => {
+  const timeline = new TimelineStub();
+  const originalSteps = [...timeline.steps];
+  let spriteState = 'before';
+  let mapCalls = 0;
+  const sprites = {
+    onStateChange: () => {},
+    async exportAssetsForStorage() { return []; },
+    async importAssets() { spriteState = spriteState === 'before' ? 'restored' : 'before'; },
+  };
+  const mapLoader = {
+    exportStateForStorage() { return null; },
+    exportWallBoxesForStorage() { return []; },
+    async restoreProjectState() {
+      mapCalls += 1;
+      if (mapCalls === 1) throw new Error('injected map failure');
+    },
+    async restoreWallBoxes() {},
+  };
+  const store = {
+    async load() {
+      return {
+        timeline: { version: '1.0', playMode: 'scheduled', steps: [{ id: 'new', type: 'WAIT', duration: 3 }] },
+        sprites: [], mapAsset: null, worldCharacterTemplates: [], worldCharacters: [],
+        characters3d: [], selectedCharacter3dId: null, wallBoxes: [], skyColor: '080808',
+        cameraStations: [], activeCameraStationId: null, cameraFollowCharacter: true,
+      };
+    },
+  };
+  const coordinator = new AutosaveCoordinator({ timeline, sprites, mapLoader, projectStore: store, onStatus: () => {}, onError: () => {} });
+  await assert.rejects(coordinator.restore(), /injected map failure/);
+  assert.equal(spriteState, 'before', 'sprite state is restored after the map step fails');
+  assert.equal(mapCalls, 2, 'rollback attempts to restore the prior map');
+  assert.deepEqual(timeline.steps, originalSteps, 'timeline was not committed before the failure');
+  assert.equal(timeline.playMode, 'sequential');
+});
