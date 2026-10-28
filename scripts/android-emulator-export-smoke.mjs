@@ -250,15 +250,17 @@ async function main() {
         tabs: Array.from(document.querySelectorAll('.studio-tab-btn')).map((button) => button.dataset.tab),
         screenshotButton: !!document.querySelector('#btn-take-screenshot'),
         canvas: !!document.querySelector('canvas'),
+        panelInert: document.querySelector('#panel-body-wrapper')?.inert ?? true,
         appTitle: document.title,
         readyState: document.readyState,
         bodyText: document.body?.innerText?.slice(0, 300) || '',
       }))()`);
-      if (uiState.tabs?.length === EXPECTED_TABS.length && uiState.screenshotButton && uiState.canvas) break;
+      if (uiState.tabs?.length === EXPECTED_TABS.length && uiState.screenshotButton && uiState.canvas && !uiState.panelInert) break;
       await sleep(1_000);
     }
     assert.deepEqual(uiState?.tabs, EXPECTED_TABS, `Expected all six tabs; got ${JSON.stringify(uiState?.tabs)}`);
     assert(uiState.screenshotButton && uiState.canvas, `App UI did not become ready: ${JSON.stringify(uiState)}`);
+    assert.equal(uiState.panelInert, false, 'Studio controls remained inert after project restoration.');
     console.log(`PASS: Android app UI loaded (${uiState.appTitle}; ${EXPECTED_TABS.length} tabs; canvas present).`);
 
     // Exercise every tab with Android touch input and verify the matching panel becomes active.
