@@ -117,10 +117,11 @@ async function evaluate(command, expression) {
 }
 
 async function tapSelector(command, selector) {
-  const element = await evaluate(command, `(() => {
+  const element = await evaluate(command, `(async () => {
     const target = document.querySelector(${JSON.stringify(selector)});
     if (!target) return null;
     target.scrollIntoView({ block: 'center' });
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const rect = target.getBoundingClientRect();
     const style = getComputedStyle(target);
     const x = rect.left + rect.width / 2;
@@ -133,10 +134,13 @@ async function tapSelector(command, selector) {
       visible: rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.pointerEvents !== 'none',
       receivesTouch,
       coveredBy: receivesTouch ? null : [hit?.tagName || 'none', hit?.id || '', typeof hit?.className === 'string' ? hit.className : ''].join('#'),
+      pointerEvents: style.pointerEvents,
+      rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      ancestors: (() => { const result = []; for (let node = target; node && result.length < 6; node = node.parentElement) { const current = getComputedStyle(node); result.push({ tag: node.tagName, id: node.id, pointerEvents: current.pointerEvents, inert: node.inert === true }); } return result; })(),
     };
   })()`);
-  assert(element?.visible, `Touch target is not visible: ${selector}`);
-  assert(element.receivesTouch, `Touch target is covered by ${element.coveredBy}: ${selector}`);
+  assert(element?.visible, `Touch target is not visible: ${selector}; details=${JSON.stringify(element)}`);
+  assert(element.receivesTouch, `Touch target is covered by ${element.coveredBy}: ${selector}; details=${JSON.stringify(element)}`);
   const point = { x: Math.round(element.x), y: Math.round(element.y), id: 0, radiusX: 1, radiusY: 1, force: 1 };
   await command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
   await command('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
