@@ -35,6 +35,9 @@ export class TimelineManager {
 
     // Kuyruk Adımları
     this.steps = [];
+    this._undoStack = [];
+    this._redoStack = [];
+    this._historyLimit = 50;
 
     // Oynatma Durumu
     this.isPlaying = false;
@@ -115,6 +118,45 @@ export class TimelineManager {
     ];
   }
 
+  _copySteps(steps) {
+    if (typeof structuredClone === 'function') return structuredClone(steps);
+    return JSON.parse(JSON.stringify(steps));
+  }
+
+  _captureTimeline() {
+    return { steps: this._copySteps(this.steps), playMode: this.playMode };
+  }
+
+  _recordStructuralEdit() {
+    this._undoStack.push(this._captureTimeline());
+    if (this._undoStack.length > this._historyLimit) this._undoStack.shift();
+    this._redoStack = [];
+  }
+
+  _restoreTimeline(snapshot) {
+    this.steps = this._copySteps(snapshot.steps);
+    this.playMode = snapshot.playMode;
+    this.currentStepIndex = -1;
+    this._notify();
+  }
+
+  /** Undo the latest structural timeline edit; returns false if unavailable. */
+  undo() {
+    if (this.isPlaying || this._undoStack.length === 0) return false;
+    this._redoStack.push(this._captureTimeline());
+    this._restoreTimeline(this._undoStack.pop());
+    return true;
+  }
+
+  /** Redo the latest undone structural timeline edit; returns false if unavailable. */
+  redo() {
+    if (this.isPlaying || this._redoStack.length === 0) return false;
+    this._undoStack.push(this._captureTimeline());
+    if (this._undoStack.length > this._historyLimit) this._undoStack.shift();
+    this._restoreTimeline(this._redoStack.pop());
+    return true;
+  }
+
   _notify() {
     this.onStateChange({
       isPlaying: this.isPlaying,
@@ -168,6 +210,7 @@ export class TimelineManager {
       ...this._cleanTimingOptions(options),
     };
 
+    this._recordStructuralEdit();
     this.steps.push(step);
     this._notify();
     return step;
@@ -184,9 +227,52 @@ export class TimelineManager {
       data,
       ...this._cleanTimingOptions(options),
     };
+    this._recordStructuralEdit();
     this.steps.push(step);
     this._notify();
     return step;
+  }
+
+  /** Clone a step immediately after its source; returns null for an invalid index. */
+  cloneStep(index) {
+    if (!Number.isInteger(index) || index < 0 || index >= this.steps.length) return null;
+    const clone = this._copySteps([this.steps[index]])[0];
+    clone.id = 'step-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    this._recordStructuralEdit();
+    this.steps.splice(index + 1, 0, clone);
+    this._notify();
+    return clone;
+  }
+
+  updateStep(index, patch = {}) {
+    if (this.isPlaying || !Number.isInteger(index) || index < 0 || index >= this.steps.length) return false;
+    const current = this.steps[index];
+    const next = { ...current };
+    if (typeof patch.title === 'string') {
+      const title = patch.title.trim().slice(0, 100);
+      if (!title) return false;
+      next.title = title;
+    }
+    if (typeof patch.actorId === 'string') next.actorId = patch.actorId.slice(0, 128);
+    if (patch.data && typeof patch.data === 'object' && !Array.isArray(patch.data)) {
+      const data = { ...current.data, ...patch.data };
+      if (current.type === ACTION_TYPES.WAIT && (!Number.isFinite(Number(data.duration)) || Number(data.duration) <= 0 || Number(data.duration) > 3600)) return false;
+      if (current.type === ACTION_TYPES.MOVE_TO && !['x', 'y', 'z'].every((axis) => Number.isFinite(Number(data[axis])) && Math.abs(Number(data[axis])) <= 1000)) return false;
+      if (current.type === ACTION_TYPES.FOLLOW && data.offset && !['x', 'y', 'z'].every((axis) => Number.isFinite(Number(data.offset[axis])) && Math.abs(Number(data.offset[axis])) <= 100)) return false;
+      next.data = data;
+    }
+    for (const field of ['startAt', 'duration']) {
+      if (!(field in patch)) continue;
+      if (patch[field] === null || patch[field] === '') { delete next[field]; continue; }
+      const value = Number(patch[field]);
+      if (!Number.isFinite(value) || (field === 'startAt' && (value < 0 || value > 3600)) || (field === 'duration' && (value <= 0 || value > 3600))) return false;
+      next[field] = value;
+    }
+    if (JSON.stringify(next) === JSON.stringify(current)) return true;
+    this._recordStructuralEdit();
+    this.steps[index] = next;
+    this._notify();
+    return true;
   }
 
   _cleanTimingOptions(options = {}) {
@@ -235,6 +321,7 @@ export class TimelineManager {
    */
   removeStep(index) {
     if (index >= 0 && index < this.steps.length) {
+      this._recordStructuralEdit();
       this.steps.splice(index, 1);
       if (this.currentStepIndex >= this.steps.length) {
         this.currentStepIndex = Math.max(-1, this.steps.length - 1);
@@ -253,6 +340,8 @@ export class TimelineManager {
       toIndex >= 0 &&
       toIndex < this.steps.length
     ) {
+      if (fromIndex === toIndex) return;
+      this._recordStructuralEdit();
       const item = this.steps.splice(fromIndex, 1)[0];
       this.steps.splice(toIndex, 0, item);
       this._notify();
@@ -263,6 +352,7 @@ export class TimelineManager {
    * Kuyruğu temizleme
    */
   clear() {
+    if (this.steps.length) this._recordStructuralEdit();
     this.stop();
     this.steps = [];
     this._notify();
@@ -718,6 +808,7 @@ export class TimelineManager {
         };
       });
 
+      this._recordStructuralEdit();
       this.stop();
       this.steps = validatedSteps;
       this.playMode = data?.playMode === 'scheduled' ? 'scheduled' : 'sequential';

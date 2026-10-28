@@ -249,6 +249,7 @@ class App {
         gridHelper: this.gridHelper,
         dirLight: this.dirLight,
         hemiLight: this.hemiLight,
+        scene: this.scene,
       },
     });
   }
@@ -527,12 +528,14 @@ class App {
     }
     if (this.uiManager && state.stations) {
       this.uiManager.updateCameraList(state.stations, state.activeId);
+      this.uiManager.autosave?.schedule();
     }
   }
 
   _updateMapHUD(status) {
     if (this.uiManager) {
       this.uiManager.updateWallBoxList();
+      this.uiManager.updateMapMeshList();
       if (status?.message) this.uiManager.showToast(status.message);
     }
   }

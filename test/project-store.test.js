@@ -237,3 +237,28 @@ test('2D character template and library limits are enforced before saving', asyn
   await assert.rejects(() => phoneStore.saveCharacterTemplate({ id: 'phone-overflow', name: 'Phone', blob: makeBlob(2), mimeType: 'image/png', columns: 1, rows: 1, fps: 12 }, { maxLibraryBytes: 1 }), /1 MB/i);
   assert.equal((await store.listCharacterTemplates()).length, 5);
 });
+
+test('shared library assets can be renamed, edited, replaced and report project references', async () => {
+  const store = new IndexedProjectStore(new MemoryIndexedDB());
+  await store.saveCharacterTemplate({ id: 'sheet', name: 'Sheet', blob: new Blob(['a'], { type: 'image/png' }), mimeType: 'image/png', fileName: 'a.png', columns: 1, rows: 1, fps: 12 });
+  const project = await store.createProject('Uses sheet');
+  await store.saveProject(project.projectId, { ...project, worldCharacterTemplates: [{ id: 'sheet', name: 'Sheet', blob: new Blob(['a'], { type: 'image/png' }), mimeType: 'image/png', fileName: 'a.png', columns: 1, rows: 1, fps: 12 }], worldCharacters: [{ id: 'placed', name: 'Placed Hero', templateId: 'sheet', x: 0, y: 0, z: 0 }] });
+  const usages = await store.getCharacterTemplateUsages('sheet');
+  assert.equal(usages[0].projectName, 'Uses sheet');
+  assert.deepEqual(usages[0].characters, ['Placed Hero']);
+  await store.renameCharacterTemplate('sheet', 'Renamed');
+  const edited = await store.updateCharacterTemplateMetadata('sheet', { columns: 2, rows: 2, fps: 24 });
+  assert.deepEqual([edited.name, edited.columns, edited.rows, edited.fps], ['Renamed', 2, 2, 24]);
+  await store.replaceCharacterTemplate('sheet', new Blob(['new'], { type: 'image/webp' }));
+  assert.equal((await store.getCharacterTemplate('sheet')).mimeType, 'image/webp');
+  await assert.rejects(() => store.updateCharacterTemplateMetadata('sheet', { columns: 0, rows: 2, fps: 24 }), /satır.sütun/i);
+});
+
+test('project favorites persist backward-compatibly in project records', async () => {
+  const store = new IndexedProjectStore(new MemoryIndexedDB());
+  const project = await store.createProject('Favorite');
+  await store.setProjectFavorite(project.projectId, true);
+  assert.equal((await store.listProjects())[0].favorite, true);
+  await store.setProjectFavorite(project.projectId, false);
+  assert.equal((await store.loadProject(project.projectId)).favorite, false);
+});

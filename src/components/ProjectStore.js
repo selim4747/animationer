@@ -180,11 +180,23 @@ export function validateProjectRecord(input) {
   const wallBoxes = Array.isArray(input.wallBoxes) ? input.wallBoxes.map((box) => ({
     x: Number(box.x), z: Number(box.z), width: Number(box.width), depth: Number(box.depth), height: Number(box.height),
   })) : [];
+  const skyColor = /^#?[0-9a-f]{6}$/i.test(String(input.skyColor || '')) ? String(input.skyColor).replace(/^#/, '').toLowerCase() : '080808';
+  const cameraStations = Array.isArray(input.cameraStations) ? input.cameraStations.slice(0, 100).map((station) => ({
+    id: String(station.id || '').slice(0, 128),
+    name: String(station.name || '').trim().slice(0, 80),
+    position: { x: Number(station.position?.x), y: Number(station.position?.y), z: Number(station.position?.z) },
+    target: { x: Number(station.target?.x), y: Number(station.target?.y), z: Number(station.target?.z) },
+    isAutoTrigger: Boolean(station.isAutoTrigger),
+  })) : [];
   if (!Array.isArray(worldCharacterTemplates) || worldCharacterTemplates.length > 50) throw new Error('2D karakter kaynak listesi geçersiz.');
   if (!Array.isArray(worldCharacters) || worldCharacters.length > 50) throw new Error('Sahnedeki 2D karakter listesi geçersiz.');
   if (wallBoxes.length > 200 || wallBoxes.some((box) => ![box.x, box.z, box.width, box.depth, box.height].every(Number.isFinite)
     || box.width <= 0 || box.depth <= 0 || box.height <= 0 || box.width > 1000 || box.depth > 1000 || box.height > 1000)) {
     throw new Error('Harita engel kutusu kaydı geçersiz.');
+  }
+  if (cameraStations.some((station) => !station.id || !station.name
+    || ![station.position.x, station.position.y, station.position.z, station.target.x, station.target.y, station.target.z].every(Number.isFinite))) {
+    throw new Error('Kamera istasyonu kaydı geçersiz.');
   }
   if (mapAsset && mapAsset.kind === 'image'
     && (!assetSize(mapAsset) || !mapAsset.fileName || !Number.isFinite(mapAsset.scale) || !Number.isFinite(mapAsset.opacity) || mapAsset.opacity < 0 || mapAsset.opacity > 1 || typeof mapAsset.groundOrientation !== 'boolean')) {
@@ -242,10 +254,14 @@ export function validateProjectRecord(input) {
     worldCharacters: [...worldCharacters],
     characters3d,
     wallBoxes,
+    skyColor,
+    cameraStations,
+    activeCameraStationId: typeof input.activeCameraStationId === 'string' ? input.activeCameraStationId.slice(0, 128) : null,
+    cameraFollowCharacter: input.cameraFollowCharacter !== false,
   };
 }
 
-export function createAutosaveRecord({ timeline, sprites, viewport, mapAsset = null, worldCharacterTemplates = [], worldCharacters = [], characters3d = [], selectedCharacter3dId = null, wallBoxes = [], projectId = '', name = 'Yeni Proje', createdAt = null }) {
+export function createAutosaveRecord({ timeline, sprites, viewport, mapAsset = null, worldCharacterTemplates = [], worldCharacters = [], characters3d = [], selectedCharacter3dId = null, wallBoxes = [], skyColor = '080808', cameraStations = [], activeCameraStationId = null, cameraFollowCharacter = true, projectId = '', name = 'Yeni Proje', createdAt = null }) {
   const assetBudget = getDevicePerformanceProfile(getDeviceMemoryGiB()).maxProjectAssetExportBytes;
   const assetBytes = [...sprites, ...worldCharacterTemplates].reduce((total, asset) => total + assetSize(asset), mapAsset ? assetSize(mapAsset) : 0);
   if (assetBytes > assetBudget) throw new Error(`Bu cihazda otomatik kayıt görsel varlık sınırı ${Math.floor(assetBudget / (1024 * 1024))} MiB; daha küçük görseller kullanın.`);
@@ -257,7 +273,7 @@ export function createAutosaveRecord({ timeline, sprites, viewport, mapAsset = n
     name,
     createdAt: createdAt || timestamp,
     updatedAt: timestamp,
-    scope: { timeline: true, sprites2d: true, characterTransforms: characters3d.length > 0, mapAssets: Boolean(mapAsset), worldCharacters: true, cameraPreferences: false },
+    scope: { timeline: true, sprites2d: true, characterTransforms: characters3d.length > 0, mapAssets: Boolean(mapAsset), worldCharacters: true, cameraPreferences: true },
     timeline,
     sprites,
     mapAsset,
@@ -266,6 +282,10 @@ export function createAutosaveRecord({ timeline, sprites, viewport, mapAsset = n
     characters3d,
     selectedCharacter3dId,
     wallBoxes,
+    skyColor,
+    cameraStations,
+    activeCameraStationId,
+    cameraFollowCharacter,
     viewport: viewport && Number.isFinite(viewport.width) && Number.isFinite(viewport.height)
       ? { width: Math.max(1, Math.round(viewport.width)), height: Math.max(1, Math.round(viewport.height)) }
       : null,
@@ -285,6 +305,7 @@ function projectIndexEntry(record) {
     wallBoxCount: record.wallBoxes?.length || 0,
     spriteCount: record.sprites?.length || 0,
     timelineStepCount: record.timeline?.steps?.length || 0,
+    favorite: record.favorite === true,
   };
 }
 
@@ -373,6 +394,7 @@ export class IndexedProjectStore {
     const timestamp = new Date().toISOString();
     const record = validateProjectRecord({
       ...input,
+      favorite: typeof input?.favorite === 'boolean' ? input.favorite : existing?.favorite === true,
       projectId: id,
       name: safeProjectName(input?.name, existing?.name || 'Yeni Proje'),
       createdAt: existing?.createdAt || input?.createdAt || timestamp,
@@ -405,6 +427,14 @@ export class IndexedProjectStore {
       const entries = await requestResult(db.transaction(PROJECT_INDEX_STORE, 'readonly').objectStore(PROJECT_INDEX_STORE).getAll(), 'Proje listesi okunamadı.');
       return (entries || []).filter((entry) => entry && typeof entry.id === 'string').sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
     } finally { db.close(); }
+  }
+  async setProjectFavorite(id, favorite) {
+    if (typeof favorite !== 'boolean') throw new Error('Favori durumu geçersiz.');
+    const record = await this.loadProject(id);
+    if (!record) throw new Error('Proje bulunamadı.');
+    record.favorite = favorite;
+    await this.saveProject(id, record);
+    return favorite;
   }
   async renameProject(id, name) {
     const record = await this.loadProject(id);
@@ -511,6 +541,32 @@ export class IndexedProjectStore {
     } finally { db.close(); }
     return template;
   }
+  async renameCharacterTemplate(id, name) {
+    const record = await this.getCharacterTemplate(id);
+    if (!record) throw new Error('2D karakter kaydı bulunamadı.');
+    return this.saveCharacterTemplate({ ...record, name });
+  }
+  async updateCharacterTemplateMetadata(id, { columns, rows, fps }) {
+    const record = await this.getCharacterTemplate(id);
+    if (!record) throw new Error('2D karakter kaydı bulunamadı.');
+    return this.saveCharacterTemplate({ ...record, columns, rows, fps });
+  }
+  async replaceCharacterTemplate(id, file) {
+    const record = await this.getCharacterTemplate(id);
+    if (!record) throw new Error('2D karakter kaydı bulunamadı.');
+    if (!file || !['image/png', 'image/webp', 'image/jpeg'].includes(file.type) || !file.size || file.size > MAX_CHARACTER_TEMPLATE_BYTES) throw new Error('2D spritesheet dosyası geçersiz veya 50 MB sınırını aşıyor.');
+    return this.saveCharacterTemplate({ ...record, blob: file.slice(0, file.size, file.type), mimeType: file.type, fileName: file.name || record.fileName });
+  }
+  async getCharacterTemplateUsages(id) {
+    const projects = await this.listProjects();
+    const usages = [];
+    for (const item of projects) {
+      const record = await this.loadProject(item.id);
+      const actors = record?.worldCharacters?.filter((actor) => actor.templateId === id) || [];
+      if (actors.length) usages.push({ projectId: item.id, projectName: item.name, count: actors.length, characters: actors.map((actor) => actor.name) });
+    }
+    return usages;
+  }
   async deleteCharacterTemplate(id) {
     if (typeof id !== 'string' || !id) return false;
     const db = await this._open();
@@ -608,6 +664,27 @@ export class IndexedProjectStore {
         } catch (error) { onInvalid(item, error); return []; }
       });
     } finally { db.close(); }
+  }
+  async renameCharacterModel(id, name) {
+    const record = await this.getCharacterModel(id);
+    if (!record) throw new Error('3D karakter kaydı bulunamadı.');
+    return this.saveCharacterModel({ ...record, name });
+  }
+  async replaceCharacterModel(id, file) {
+    const record = await this.getCharacterModel(id);
+    if (!record) throw new Error('3D karakter kaydı bulunamadı.');
+    if (!file || !/\.glb$/i.test(file.name || '') || !file.size || file.size > MAX_CHARACTER_MODEL_BYTES) throw new Error('3D karakter dosyası geçersiz veya 50 MB sınırını aşıyor; .glb dosyası seçin.');
+    return this.saveCharacterModel({ ...record, blob: file.slice(0, file.size, file.type || 'model/gltf-binary'), mimeType: file.type || 'model/gltf-binary', fileName: file.name });
+  }
+  async getCharacterModelUsages(id) {
+    const projects = await this.listProjects();
+    const usages = [];
+    for (const item of projects) {
+      const record = await this.loadProject(item.id);
+      const actors = record?.characters3d?.filter((actor) => actor.modelId === id) || [];
+      if (actors.length) usages.push({ projectId: item.id, projectName: item.name, count: actors.length, characters: actors.map((actor) => actor.name) });
+    }
+    return usages;
   }
   async deleteCharacterModel(id) {
     const projects = await this.listProjects();

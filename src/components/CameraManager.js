@@ -220,15 +220,49 @@ export class CameraManager {
    * @param {string} id
    */
   removeStation(id) {
-    this.stations = this.stations.filter((s) => s.id !== id);
-    if (this.activeStationId === id) {
-      this.setFreeMode();
+    if (id === 'station-ext' || !this.stations.some((station) => station.id === id)) return false;
+    this.stations = this.stations.filter((station) => station.id !== id);
+    this._stationListChanged(id);
+    return true;
+  }
+
+  /** Rename a station; names are trimmed and limited to 80 characters. */
+  renameStation(id, name) {
+    if (typeof name !== 'string') return false;
+    const trimmedName = name.trim();
+    if (!trimmedName || trimmedName.length > 80) return false;
+    const station = this.stations.find((item) => item.id === id);
+    if (!station) return false;
+    station.name = trimmedName;
+    this.onStateChange({ mode: this.activeStationId ? 'locked' : 'free', stations: this.stations, activeId: this.activeStationId });
+    return true;
+  }
+
+  /** Move a station to a zero-based list index; returns false for invalid or protected moves. */
+  reorderStation(id, index) {
+    const fromIndex = this.stations.findIndex((station) => station.id === id);
+    if (fromIndex < 0 || id === 'station-ext' || !Number.isInteger(index) || index < 0 || index >= this.stations.length) return false;
+    if (fromIndex > 0 && index === 0) return false;
+    if (fromIndex === index) return true;
+    const [station] = this.stations.splice(fromIndex, 1);
+    this.stations.splice(index, 0, station);
+    this._stationListChanged();
+    return true;
+  }
+
+  _stationListChanged(removedId = null) {
+    if (removedId && this.activeStationId === removedId) this.setFreeMode();
+    else this.onStateChange({ mode: this.activeStationId ? 'locked' : 'free', stations: this.stations, activeId: this.activeStationId });
+    if (this.isTourActive) {
+      if (this.stations.length < 2) {
+        this.stopTour();
+        this.tourIndex = 0;
+      } else {
+        this.tourIndex = ((this.tourIndex % this.stations.length) + this.stations.length) % this.stations.length;
+        if (this.tourIndex > 0) this.tourIndex = 0;
+      }
     } else {
-      this.onStateChange({
-        mode: this.activeStationId ? 'locked' : 'free',
-        stations: this.stations,
-        activeId: this.activeStationId,
-      });
+      this.tourIndex = this.stations.length ? Math.min(this.tourIndex, this.stations.length - 1) : 0;
     }
   }
 
@@ -249,14 +283,58 @@ export class CameraManager {
     }
   }
 
+  exportProjectStateForStorage() {
+    return {
+      stations: this.stations.map((station) => ({
+        id: station.id, name: station.name,
+        position: { x: station.position.x, y: station.position.y, z: station.position.z },
+        target: { x: station.target.x, y: station.target.y, z: station.target.z },
+        isAutoTrigger: Boolean(station.isAutoTrigger),
+      })),
+      activeStationId: this.activeStationId,
+      followCharacter: this.followCharacter,
+    };
+  }
+
+  restoreProjectState(state = {}) {
+    const defaults = [
+      { id: 'station-ext', name: 'Dış Saha (Kamera 1)', position: { x: 12, y: 10, z: 16 }, target: { x: 0, y: 1, z: 0 }, isAutoTrigger: false },
+      { id: 'station-interior-cctv', name: 'İç Mekan CCTV (Tavan)', position: { x: 3.2, y: 3.4, z: -4.8 }, target: { x: 0, y: 1, z: -8.2 }, isAutoTrigger: true },
+    ];
+    const rows = Array.isArray(state.stations) ? state.stations : defaults;
+    const restored = rows.flatMap((station) => {
+      const values = [station?.position?.x, station?.position?.y, station?.position?.z, station?.target?.x, station?.target?.y, station?.target?.z].map(Number);
+      if (!station?.id || !station?.name || values.some((value) => !Number.isFinite(value))) return [];
+      return [{ id: String(station.id).slice(0, 128), name: String(station.name).trim().slice(0, 80) || 'Kamera',
+        position: new THREE.Vector3(...values.slice(0, 3)), target: new THREE.Vector3(...values.slice(3)), isAutoTrigger: Boolean(station.isAutoTrigger) }];
+    });
+    const makeDefault = (fallback) => ({ ...fallback, position: new THREE.Vector3(fallback.position.x, fallback.position.y, fallback.position.z), target: new THREE.Vector3(fallback.target.x, fallback.target.y, fallback.target.z) });
+    if (!restored.some((station) => station.id === 'station-ext')) restored.unshift(makeDefault(defaults[0]));
+    if (!restored.some((station) => station.id === 'station-interior-cctv')) restored.splice(Math.min(1, restored.length), 0, makeDefault(defaults[1]));
+    if (restored[0]?.id !== 'station-ext') {
+      const exteriorIndex = restored.findIndex((station) => station.id === 'station-ext');
+      restored.unshift(restored.splice(exteriorIndex, 1)[0]);
+    }
+    this.stopTour();
+    this.stations = restored;
+    this.interiorCCTV = this.stations.find((station) => station.id === 'station-interior-cctv');
+    this.followCharacter = state.followCharacter !== false;
+    this.activeStationId = this.stations.some((station) => station.id === state.activeStationId) ? state.activeStationId : null;
+    if (this.activeStationId && this.camera && this.controls) this.transitionToStation(this.activeStationId);
+    else if (!this.activeStationId && this.controls) this.setFreeMode();
+    else this.onStateChange({ mode: this.activeStationId ? 'locked' : 'free', stationName: this.stations.find((station) => station.id === this.activeStationId)?.name || 'Serbest Orbit', stations: this.stations, activeId: this.activeStationId });
+    return true;
+  }
+
   /**
    * Otomatik kamera turunu başlatır
    */
   startTour() {
-    if (this.stations.length < 2) return;
+    if (this.stations.length < 2) return false;
     this.isTourActive = true;
     this.tourIndex = 0;
     this._playTourStep();
+    return true;
   }
 
   stopTour() {
@@ -266,7 +344,10 @@ export class CameraManager {
 
   _playTourStep() {
     if (!this.isTourActive) return;
+    if (this.stations.length < 2) { this.stopTour(); this.tourIndex = 0; return; }
+    this.tourIndex = ((this.tourIndex % this.stations.length) + this.stations.length) % this.stations.length;
     const station = this.stations[this.tourIndex];
+    if (!station) { this.stopTour(); this.tourIndex = 0; return; }
     this.transitionToStation(station);
 
     this.tourIndex = (this.tourIndex + 1) % this.stations.length;

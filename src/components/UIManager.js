@@ -85,6 +85,8 @@ export class UIManager {
       characters: this.characters,
       mapLoader: this.mapLoader,
       worldSprites: this.worldSprites,
+      cameraManager: this.cameraManager,
+      scene: this.sceneHelpers.scene,
       projectStore: this.projectStore,
       projectId: this.projectId,
       projectName: this.projectName,
@@ -99,6 +101,7 @@ export class UIManager {
       this.autosave.ready.finally(() => {
         this.dom.panelBody.inert = false;
         this.dom.panelBody.removeAttribute('aria-busy');
+        if (this.dom.sceneSkyColor && this.sceneHelpers.scene?.background?.getHexString) this.dom.sceneSkyColor.value = `#${this.sceneHelpers.scene.background.getHexString()}`;
       }).catch(() => {});
     }
 
@@ -108,6 +111,7 @@ export class UIManager {
     this.updateCharacterList(this.characters?.list?.() || []);
     this.updateSpriteList(this.sprites?.list?.() || [], this.sprites?.selectedId);
     this.updateWorldSpriteUI();
+    this.updateMapMeshList();
     this.updateRecorderUI({
       maxRecordingBytes: this.recorder?.maxRecordingBytes,
       maxDurationSeconds: this.recorder?.maxDurationSeconds,
@@ -169,6 +173,8 @@ export class UIManager {
       btnImportJSON: document.getElementById('btn-import-timeline-json'),
       fileInputJSON: document.getElementById('file-picker-timeline-json'),
       btnClearTimeline: document.getElementById('btn-clear-timeline'),
+      btnTimelineUndo: document.getElementById('btn-timeline-undo'),
+      btnTimelineRedo: document.getElementById('btn-timeline-redo'),
       timelinePlayMode: document.getElementById('timeline-play-mode'),
       timelineStartAt: document.getElementById('timeline-start-at'),
       timelineDuration: document.getElementById('timeline-duration'),
@@ -196,6 +202,8 @@ export class UIManager {
       btnAddWallBox: document.getElementById('btn-add-wall-box'),
       btnClearWallBoxes: document.getElementById('btn-clear-wall-boxes'),
       wallBoxList: document.getElementById('studio-wall-box-list'),
+      mapObjectList: document.getElementById('studio-map-object-list'),
+      sceneSkyColor: document.getElementById('scene-sky-color'),
 
       // Sekme 3: KAMERALAR
       btnFreeOrbit: document.getElementById('btn-free-orbit'),
@@ -440,36 +448,37 @@ export class UIManager {
         d.btnExportJSON.disabled = true;
         this.showToast('Proje JSON’u hazırlanıyor…', { duration: 0 });
         try {
-          const sprites = await this.sprites.exportAssets();
-          this.sprites.constructor.validateProjectAssets(sprites);
-          const timeline = JSON.parse(this.timeline.exportSequence());
-          const mapAsset = this.mapLoader?.exportStateForStorage?.() || null;
-          const worldState = await this.worldSprites?.exportProjectStateForStorage?.() || { templates: [], actors: [] };
-          const totalBytes = calculateProjectBytes(timeline, sprites, mapAsset, worldState.templates);
+          const record = await this.autosave._buildRecord();
+          const modelIds = [...new Set(record.characters3d.map((actor) => actor.modelId).filter(Boolean))];
+          const models = [];
+          for (const id of modelIds) {
+            const model = await this.projectStore.getCharacterModel(id);
+            if (!model) throw new Error(`3D karakter kaynağı kitaplıkta bulunamadı (${id}).`);
+            models.push(model);
+          }
+          const totalBytes = calculateProjectBytes(record.timeline, record.sprites, record.mapAsset, record.worldCharacterTemplates)
+            + models.reduce((sum, model) => sum + (model.blob?.size || 0), 0);
           const exportLimit = getDevicePerformanceProfile(getDeviceMemoryGiB()).maxProjectAssetExportBytes;
           if (totalBytes > exportLimit) throw new Error(`Bu cihazda proje JSON görsel varlık sınırı ${Math.floor(exportLimit / (1024 * 1024))} MiB.`);
-          let portableMap = null;
-          if (mapAsset) portableMap = { ...mapAsset, blob: undefined, data: await blobToBase64(mapAsset.blob) };
-          const portableTemplates = [];
-          for (const template of worldState.templates) {
-            const { blob, ...metadata } = template;
-            portableTemplates.push({ ...metadata, data: await blobToBase64(blob) });
-          }
+          const portableAssets = async (assets) => Promise.all(assets.map(async ({ blob, ...metadata }) => ({ ...metadata, data: await blobToBase64(blob) })));
+          const portableMap = record.mapAsset?.blob
+            ? { ...record.mapAsset, blob: undefined, data: await blobToBase64(record.mapAsset.blob) }
+            : record.mapAsset;
+          const portableModels = await portableAssets(models);
           const payload = {
-            ...timeline,
-            format: 'animationer-project', schemaVersion: PROJECT_SCHEMA_VERSION, projectVersion: PROJECT_SCHEMA_VERSION,
+            ...record,
+            schemaVersion: PROJECT_SCHEMA_VERSION, projectVersion: PROJECT_SCHEMA_VERSION,
             updatedAt: new Date().toISOString(),
-            scope: { timeline: true, sprites2d: true, characterTransforms: false, mapAssets: Boolean(mapAsset), worldCharacters: true, cameraPreferences: false },
-            sprites,
+            sprites: await portableAssets(record.sprites),
             mapAsset: portableMap,
-            worldCharacterTemplates: portableTemplates,
-            worldCharacters: worldState.actors,
+            worldCharacterTemplates: await portableAssets(record.worldCharacterTemplates),
+            portableModels,
           };
           const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
           const result = await saveGeneratedFile(blob, 'animationer-project.json', {
             onProgress: (progress) => this._reportFileProgress('Proje JSON’u', progress),
           });
-          this._showSavedFileToast('Reji + 2D proje JSON’u', result, blob);
+          this._showSavedFileToast('Tam proje yedeği', result, blob);
         } catch (error) {
           this.showToast(`Proje kaydedilemedi: ${error.message}`);
         } finally {
@@ -495,7 +504,8 @@ export class UIManager {
               if (payload?.format === 'animationer-project') {
                 if (![1, 2, 3].includes(payload.schemaVersion || payload.projectVersion || 1)) throw new Error('Bu proje sürümü desteklenmiyor.');
                 const migrated = migrateProjectRecord(payload);
-                const importBytes = calculateProjectBytes(migrated.timeline, migrated.sprites, migrated.mapAsset, migrated.worldCharacterTemplates);
+                const portableModelBytes = (payload.portableModels || []).reduce((sum, model) => sum + (typeof model.data === 'string' ? Math.floor(model.data.length * 3 / 4) : 0), 0);
+                const importBytes = calculateProjectBytes(migrated.timeline, migrated.sprites, migrated.mapAsset, migrated.worldCharacterTemplates) + portableModelBytes;
                 const importLimit = getDevicePerformanceProfile(getDeviceMemoryGiB()).maxProjectAssetExportBytes;
                 if (importBytes > importLimit) throw new Error(`Bu proje cihazın ${Math.floor(importLimit / (1024 * 1024))} MiB görsel bellek sınırını aşıyor; daha küçük dosyalarla yeniden dışa aktarın.`);
                 const assets = [];
@@ -509,7 +519,18 @@ export class UIManager {
                 const mapAsset = migrated.mapAsset?.data
                   ? { ...migrated.mapAsset, blob: base64ToBlob(migrated.mapAsset.data, migrated.mapAsset.mimeType), data: undefined }
                   : migrated.mapAsset;
-                const normalized = migrateProjectRecord({ ...migrated, sprites: assets, worldCharacterTemplates, mapAsset });
+                const modelIdMap = new Map();
+                for (const portable of payload.portableModels || []) {
+                  if (!portable?.data || !portable.id) throw new Error('Yedekteki 3D model kaydı eksik.');
+                  const newId = `import-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+                  const blob = base64ToBlob(portable.data, portable.mimeType || 'model/gltf-binary');
+                  await this.projectStore.saveCharacterModel({ ...portable, id: newId, blob, data: undefined });
+                  modelIdMap.set(portable.id, newId);
+                }
+                const characters3d = (migrated.characters3d || []).map((actor) => ({
+                  ...actor, modelId: modelIdMap.get(actor.modelId) || actor.modelId,
+                }));
+                const normalized = migrateProjectRecord({ ...migrated, sprites: assets, worldCharacterTemplates, mapAsset, characters3d });
                 const assetIds = this.sprites.constructor.validateProjectAssets(assets);
                 const candidateTimeline = new this.timeline.constructor({});
                 candidateTimeline.importSequence(normalized.timeline);
@@ -520,12 +541,17 @@ export class UIManager {
                 await this.worldSprites?.importProjectState?.({ templates: normalized.worldCharacterTemplates, actors: normalized.worldCharacters }, { replaceTemplates: true });
                 await this.sprites.importAssets(assets);
                 await this.mapLoader?.restoreProjectState?.(mapAsset);
+                await this.mapLoader?.restoreWallBoxes?.(normalized.wallBoxes || []);
+                await this.characters?.restoreProjectState?.({ actors: normalized.characters3d || [], selectedId: normalized.selectedCharacter3dId });
+                if (this.sceneHelpers.scene?.background?.set && normalized.skyColor) this.sceneHelpers.scene.background.set(`#${normalized.skyColor}`);
+                this.cameraManager?.restoreProjectState?.({ stations: normalized.cameraStations || [], activeStationId: normalized.activeCameraStationId, followCharacter: normalized.cameraFollowCharacter });
+                if (d.sceneSkyColor && normalized.skyColor) d.sceneSkyColor.value = `#${normalized.skyColor}`;
                 this.timeline.stop();
                 this.timeline.steps = candidateTimeline.steps;
                 this.timeline.playMode = candidateTimeline.playMode;
                 this.timeline._notify();
                 this.autosave?.schedule();
-                this.showToast('Proje; 2D ortam, zaman çizelgesi ve karakterlerle yüklendi');
+                this.showToast('Tam proje yedeği; sahne, karakterler, kameralar ve rejiyle yüklendi.');
               } else { this.timeline.importSequence(payload); this.showToast('Eski biçim zaman çizelgesi yüklendi (görseller bu dosyada bulunmuyor)'); }
             } catch (err) {
               this.showToast(`Proje yüklenemedi; mevcut sahne korundu: ${err.message || 'geçersiz dosya'}`);
@@ -543,6 +569,8 @@ export class UIManager {
         this.showToast('Yeni boş akış hazır.');
       });
     }
+    d.btnTimelineUndo?.addEventListener('click', () => { if (this.timeline.undo()) this.showToast('Son reji düzenlemesi geri alındı.'); });
+    d.btnTimelineRedo?.addEventListener('click', () => { if (this.timeline.redo()) this.showToast('Reji düzenlemesi yinelendi.'); });
 
     d.characterSelect?.addEventListener('change', () => {
       this.characters.select(d.characterSelect.value);
@@ -705,6 +733,10 @@ export class UIManager {
     });
 
     // --- SEKME 2: SAHNE / HARİTA ---
+    d.sceneSkyColor?.addEventListener('input', () => {
+      this.sceneHelpers.scene?.background?.set?.(d.sceneSkyColor.value);
+      this.autosave?.schedule();
+    });
     if (d.btnTriggerFile && d.filePicker) {
       d.btnTriggerFile.addEventListener('click', () => d.filePicker.click());
       d.filePicker.addEventListener('change', async (e) => {
@@ -808,9 +840,12 @@ export class UIManager {
 
     if (d.btnClearMap) {
       d.btnClearMap.addEventListener('click', () => {
+        if (!window.confirm('Yüklü harita veya zemini kaldırmak istiyor musunuz?')) return;
+        let snapshot = null;
+        try { snapshot = this.mapLoader.exportStateForStorage(); } catch { /* Non-portable maps can still be cleared after confirmation. */ }
         this.mapLoader.clear();
         if (d.panelImageControls) d.panelImageControls.style.display = 'none';
-        this.showToast('Harita Temizlendi');
+        this.showToast('Harita kaldırıldı.', snapshot ? { actionLabel: 'Geri Al', action: async () => { await this.mapLoader.restoreProjectState(snapshot); } } : {});
       });
     }
 
@@ -825,9 +860,12 @@ export class UIManager {
 
     if (d.btnClearWallBoxes) {
       d.btnClearWallBoxes.addEventListener('click', () => {
+        const previous = this.mapLoader.exportWallBoxesForStorage();
+        if (!previous.length) return this.showToast('Silinecek engel kutusu yok.');
+        if (!window.confirm(`${previous.length} engel kutusunun tamamı silinsin mi?`)) return;
         this.mapLoader.clearWallBoxes();
         this.updateWallBoxList();
-        this.showToast('Tüm Engel Kutuları Silindi');
+        this.showToast('Tüm engel kutuları silindi.', { actionLabel: 'Geri Al', action: async () => { await this.mapLoader.restoreWallBoxes(previous); this.updateWallBoxList(); } });
       });
     }
 
@@ -872,6 +910,7 @@ export class UIManager {
         this.cameraManager.setFollow(f);
         d.btnToggleFollow.classList.toggle('primary', f);
         d.btnToggleFollow.textContent = `◉ Karakteri Takip Et: [${f ? 'AÇIK' : 'KAPALI'}]`;
+        this.autosave?.schedule();
         this.showToast(`Karakter Takibi: ${f ? 'Açık' : 'Kapalı'}`);
       });
     }
@@ -896,6 +935,7 @@ export class UIManager {
         const val = parseFloat(e.target.value);
         this.character.setSpeed(val);
         if (d.labelSpeedVal) d.labelSpeedVal.textContent = `${val.toFixed(1)} m/s`;
+        this.autosave?.schedule();
       });
     }
 
@@ -904,6 +944,7 @@ export class UIManager {
         const val = parseFloat(e.target.value);
         this.character.setWobbleIntensity(val);
         if (d.labelWobbleVal) d.labelWobbleVal.textContent = `${val.toFixed(1)}x`;
+        this.autosave?.schedule();
       });
     }
 
@@ -1483,6 +1524,8 @@ export class UIManager {
     const list = this.dom.timelineListContainer;
     if (!list) return;
     if (this.dom.timelinePlayMode) this.dom.timelinePlayMode.value = this.timeline.playMode;
+    if (this.dom.btnTimelineUndo) this.dom.btnTimelineUndo.disabled = this.timeline.isPlaying || !this.timeline._undoStack?.length;
+    if (this.dom.btnTimelineRedo) this.dom.btnTimelineRedo.disabled = this.timeline.isPlaying || !this.timeline._redoStack?.length;
 
     list.innerHTML = '';
 
@@ -1523,6 +1566,7 @@ export class UIManager {
         <div class="step-actions">
           <button class="step-btn-icon btn-step-up" title="Yukarı Taşı">▲</button>
           <button class="step-btn-icon btn-step-down" title="Aşağı Taşı">▼</button>
+          <button class="step-btn-icon btn-step-duplicate" title="Adımı çoğalt">⧉</button>
           <button class="step-btn-icon btn-step-delete" title="Sil">✕</button>
         </div>
       `;
@@ -1530,17 +1574,54 @@ export class UIManager {
         const editor = document.createElement('div'); editor.className = 'timeline-sprite-editor';
         const spriteSelect = document.createElement('select'); spriteSelect.className = 'hud-select'; spriteSelect.setAttribute('aria-label', 'Animasyon spritesheet');
         for (const sprite of this.sprites?.list?.() || []) { const option = document.createElement('option'); option.value = sprite.id; option.textContent = sprite.name; spriteSelect.appendChild(option); }
-        spriteSelect.value = step.actorId || ''; spriteSelect.addEventListener('change', (event) => { event.stopPropagation(); step.actorId = spriteSelect.value; });
+        spriteSelect.value = step.actorId || ''; spriteSelect.addEventListener('change', (event) => { event.stopPropagation(); this.timeline.updateStep(idx, { actorId: spriteSelect.value }); });
         const duration = document.createElement('input'); duration.type = 'number'; duration.min = '0.01'; duration.max = '3600'; duration.step = '0.1'; duration.value = step.duration ?? 2; duration.setAttribute('aria-label', 'Süre (s)');
-        duration.addEventListener('change', (event) => { event.stopPropagation(); const value = Number(duration.value); if (Number.isFinite(value) && value > 0) step.duration = value; else duration.value = step.duration ?? 2; });
+        duration.addEventListener('change', (event) => { event.stopPropagation(); const value = Number(duration.value); if (!this.timeline.updateStep(idx, { duration: value })) duration.value = step.duration ?? 2; });
         const start = document.createElement('input'); start.type = 'number'; start.min = '0'; start.max = '3600'; start.step = '0.1'; start.value = step.startAt ?? 0; start.setAttribute('aria-label', 'Başlangıç (s)');
-        start.addEventListener('change', (event) => { event.stopPropagation(); const value = Number(start.value); if (Number.isFinite(value) && value >= 0) step.startAt = value; else start.value = step.startAt ?? 0; });
+        start.addEventListener('change', (event) => { event.stopPropagation(); const value = start.value === '' ? null : Number(start.value); if (!this.timeline.updateStep(idx, { startAt: value })) start.value = step.startAt ?? 0; });
         const loop = document.createElement('select'); loop.className = 'hud-select'; loop.setAttribute('aria-label', 'Oynatma biçimi');
         for (const [value, label] of [['true', 'Loop'], ['false', 'Tek sefer']]) { const option = document.createElement('option'); option.value = value; option.textContent = label; loop.appendChild(option); }
-        loop.value = String(step.data?.loop !== false); loop.addEventListener('change', (event) => { event.stopPropagation(); step.data.loop = loop.value === 'true'; });
+        loop.value = String(step.data?.loop !== false); loop.addEventListener('change', (event) => { event.stopPropagation(); this.timeline.updateStep(idx, { data: { loop: loop.value === 'true' } }); });
         for (const control of [spriteSelect, duration, start, loop]) control.addEventListener('click', (event) => event.stopPropagation());
         editor.append(spriteSelect, duration, start, loop); item.querySelector('.step-content').appendChild(editor);
       }
+      const editRow = document.createElement('div'); editRow.className = 'timeline-step-editor';
+      const titleInput = document.createElement('input'); titleInput.type = 'text'; titleInput.maxLength = 100; titleInput.value = step.title || '';
+      titleInput.setAttribute('aria-label', 'Adım başlığı');
+      titleInput.addEventListener('change', () => { this.timeline.updateStep(idx, { title: titleInput.value }); });
+      editRow.appendChild(titleInput);
+      const addNumber = (label, value, min, max, stepSize, patch) => {
+        const input = document.createElement('input'); input.type = 'number'; input.value = value ?? ''; input.min = String(min); input.max = String(max); input.step = String(stepSize); input.placeholder = label; input.setAttribute('aria-label', label);
+        input.addEventListener('change', () => {
+          const number = input.value === '' ? null : Number(input.value);
+          const update = patch(number);
+          if (number === null && update.data) { input.value = String(value ?? 0); return; }
+          if (this.timeline.updateStep(idx, update)) this.showToast('Reji adımı güncellendi.');
+          else input.value = String(value ?? '');
+        });
+        editRow.appendChild(input);
+      };
+      const addSelect = (label, options, value, patch) => {
+        const select = document.createElement('select'); select.className = 'hud-select'; select.setAttribute('aria-label', label);
+        for (const [optionValue, optionLabel] of options) { const option = document.createElement('option'); option.value = optionValue; option.textContent = optionLabel; select.appendChild(option); }
+        select.value = String(value ?? ''); select.addEventListener('change', () => this.timeline.updateStep(idx, patch(select.value))); editRow.appendChild(select);
+      };
+      if (step.type === 'MOVE_TO') {
+        for (const axis of ['x', 'y', 'z']) addNumber(axis.toUpperCase(), step.data?.[axis] ?? 0, -1000, 1000, 0.1, (value) => ({ data: { [axis]: value } }));
+      } else if (step.type === 'WAIT') addNumber('Bekleme süresi (sn)', step.data?.duration ?? 1, 0.01, 3600, 0.1, (value) => ({ data: { duration: value } }));
+      else if (step.type === 'TRIGGER_DOOR') addSelect('Kapı eylemi', [['open', 'Aç'], ['close', 'Kapat']], step.data?.action || 'open', (value) => ({ data: { action: value } }));
+      else if (step.type === 'SWITCH_CAMERA') addSelect('Kamera istasyonu', (this.cameraManager?.stations || []).map((station) => [station.id, station.name]), step.data?.stationId, (value) => ({ data: { stationId: value } }));
+      else if (step.type === 'PLAY_EMOTE') addSelect('Karakter hareketi', [['jump', 'Zıpla'], ['wave', 'El salla'], ['spin', 'Dön']], step.data?.emote || 'jump', (value) => ({ data: { emote: value } }));
+      else if (step.type === 'FOLLOW') {
+        addSelect('Takip hedefi', (this.characters?.list?.() || []).map((actor) => [actor.id, actor.name]), step.data?.targetCharacterId, (value) => ({ data: { targetCharacterId: value } }));
+        for (const axis of ['x', 'y', 'z']) addNumber(`Ofset ${axis.toUpperCase()}`, step.data?.offset?.[axis] ?? 0, -100, 100, 0.1, (value) => ({ data: { offset: { ...(step.data?.offset || {}), [axis]: value } } }));
+      } else if (step.type === 'SET_VISIBILITY') addSelect('Görünürlük', [['true', 'Göster'], ['false', 'Gizle']], String(step.data?.visible !== false), (value) => ({ data: { visible: value === 'true' } }));
+      if (step.type !== 'PLAY_SPRITE_ANIMATION') {
+        addNumber('Başlangıç (sn)', step.startAt, 0, 3600, 0.1, (value) => ({ startAt: value }));
+        addNumber('Adım süresi (sn)', step.duration, 0.01, 3600, 0.1, (value) => ({ duration: value }));
+      }
+      for (const control of editRow.children) control.addEventListener('click', (event) => event.stopPropagation());
+      item.querySelector('.step-content').appendChild(editRow);
       item.querySelector('.step-title').textContent = step.title || 'Adım';
       const actorName = this.characters?.getActor?.(step.actorId)?.name || this.sprites?.getActor?.(step.actorId)?.name || (step.actorId ? 'Karakter' : 'Aktif karakter');
       const meta = [actorName];
@@ -1555,6 +1636,10 @@ export class UIManager {
       item.querySelector('.btn-step-down').addEventListener('click', (e) => {
         e.stopPropagation();
         this.timeline.moveStep(idx, idx + 1);
+      });
+      item.querySelector('.btn-step-duplicate').addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.timeline.cloneStep(idx);
       });
       item.querySelector('.btn-step-delete').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1601,6 +1686,20 @@ export class UIManager {
       const details = document.createElement('span');
       const meta = box.userData || {};
       details.textContent = `#${index + 1} · X ${box.position.x.toFixed(1)}, Z ${box.position.z.toFixed(1)} · ${meta.width}×${meta.depth}×${meta.height} m`;
+      const controls = document.createElement('div');
+      controls.className = 'studio-wall-box-controls';
+      for (const [field, value] of [['x', box.position.x], ['z', box.position.z], ['width', meta.width], ['depth', meta.depth], ['height', meta.height]]) {
+        const input = document.createElement('input');
+        input.type = 'number'; input.step = '0.1'; input.value = Number(value).toFixed(1);
+        input.min = field === 'x' || field === 'z' ? '-1000' : '0.1'; input.max = field === 'x' || field === 'z' ? '1000' : '1000';
+        input.title = ({ x: 'X konumu', z: 'Z konumu', width: 'En', depth: 'Boy', height: 'Yükseklik' })[field];
+        input.setAttribute('aria-label', `Engel ${index + 1} ${input.title}`);
+        input.addEventListener('change', () => {
+          if (!this.mapLoader.updateWallBox(box, { [field]: Number(input.value) })) this.showToast('Engel değeri geçersiz; konum ±1000 m, boyutlar 0,1–1000 m olmalı.');
+          this.updateWallBoxList();
+        });
+        controls.appendChild(input);
+      }
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.className = 'station-action-btn';
@@ -1612,8 +1711,40 @@ export class UIManager {
         this.updateWallBoxList();
         this.showToast(`Engel Kutusu #${index + 1} Silindi`);
       });
-      row.append(details, remove);
+      row.append(details, controls, remove);
       list.appendChild(row);
+    });
+  }
+
+  /**
+   * Kamera istasyonları listesini render eder
+   */
+  updateMapMeshList() {
+    const list = this.dom.mapObjectList;
+    if (!list) return;
+    list.replaceChildren();
+    const meshes = this.mapLoader?.getEditableMeshes?.() || [];
+    if (!meshes.length) {
+      const empty = document.createElement('div');
+      empty.className = 'studio-info-text';
+      empty.textContent = 'Yüklenmiş GLB ortamında düzenlenebilir mesh yok.';
+      list.appendChild(empty);
+      return;
+    }
+    meshes.forEach((mesh) => {
+      const row = document.createElement('div'); row.className = 'studio-map-object-row';
+      const name = document.createElement('span'); name.className = 'studio-map-object-name'; name.textContent = mesh.name;
+      const kind = document.createElement('select'); kind.className = 'hud-select'; kind.setAttribute('aria-label', `${mesh.name} çarpışma sınıfı`);
+      for (const [value, label] of [['walkable', 'Yürünebilir'], ['obstacle', 'Engel'], ['none', 'Çarpışma yok']]) {
+        const option = document.createElement('option'); option.value = value; option.textContent = label; kind.appendChild(option);
+      }
+      kind.value = mesh.kind;
+      kind.addEventListener('change', () => { this.mapLoader.setMeshCollisionKind(mesh.id, kind.value); this.showToast(`${mesh.name}: ${kind.selectedOptions[0]?.textContent}`); });
+      const visibleLabel = document.createElement('label'); visibleLabel.className = 'studio-map-visible';
+      const visible = document.createElement('input'); visible.type = 'checkbox'; visible.checked = mesh.visible; visible.setAttribute('aria-label', `${mesh.name} görünür`);
+      visible.addEventListener('change', () => { this.mapLoader.setMeshVisible(mesh.id, visible.checked); });
+      visibleLabel.append(visible, document.createTextNode('Görünür'));
+      row.append(name, kind, visibleLabel); list.appendChild(row);
     });
   }
 
@@ -1623,6 +1754,11 @@ export class UIManager {
   updateCameraList(stations, activeId) {
     const container = this.dom.cameraListContainer;
     if (!container) return;
+    const follows = this.cameraManager?.followCharacter !== false;
+    if (this.dom.btnToggleFollow) {
+      this.dom.btnToggleFollow.classList.toggle('primary', follows);
+      this.dom.btnToggleFollow.textContent = `◉ Karakteri Takip Et: [${follows ? 'AÇIK' : 'KAPALI'}]`;
+    }
 
     container.innerHTML = '';
 
@@ -1633,17 +1769,19 @@ export class UIManager {
         card.classList.add('active');
       }
 
-      card.innerHTML = `
-        <div class="station-card-left">
-          <span class="station-dot"></span>
-          <span class="station-name">${st.name}</span>
-          ${st.isAutoTrigger ? '<span class="station-auto-badge">OTO</span>' : ''}
-        </div>
-        <div class="station-card-actions">
-          <button class="station-action-btn btn-update" title="Açıyı Güncelle">↻</button>
-          ${!st.isAutoTrigger ? '<button class="station-action-btn btn-delete" title="Sil">✕</button>' : ''}
-        </div>
-      `;
+      const left = document.createElement('div'); left.className = 'station-card-left';
+      const dot = document.createElement('span'); dot.className = 'station-dot';
+      const name = document.createElement('span'); name.className = 'station-name'; name.textContent = st.name;
+      left.append(dot, name);
+      if (st.isAutoTrigger) { const badge = document.createElement('span'); badge.className = 'station-auto-badge'; badge.textContent = 'OTO'; left.appendChild(badge); }
+      const actions = document.createElement('div'); actions.className = 'station-card-actions';
+      const makeAction = (className, title, text, disabled = false) => { const button = document.createElement('button'); button.type = 'button'; button.className = `station-action-btn ${className}`; button.title = title; button.setAttribute('aria-label', title); button.textContent = text; button.disabled = disabled; actions.appendChild(button); return button; };
+      makeAction('btn-update', 'Açıyı Güncelle', '↻');
+      makeAction('btn-rename', 'Kamerayı yeniden adlandır', 'Aa');
+      makeAction('btn-up', 'Kamerayı yukarı taşı', '↑', st.id === 'station-ext' || idx <= 1);
+      makeAction('btn-down', 'Kamerayı aşağı taşı', '↓', st.id === 'station-ext' || idx === stations.length - 1);
+      if (!st.isAutoTrigger && st.id !== 'station-ext') makeAction('btn-delete', 'Sil', '✕');
+      card.append(left, actions);
 
       card.addEventListener('click', (e) => {
         if (e.target.tagName !== 'BUTTON') {
@@ -1660,6 +1798,15 @@ export class UIManager {
           this.showToast(`${st.name} Açısı Güncellendi`);
         });
       }
+
+      card.querySelector('.btn-rename')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const nextName = window.prompt('Kamera istasyonu adı (en fazla 80 karakter):', st.name);
+        if (nextName === null) return;
+        if (!this.cameraManager.renameStation(st.id, nextName)) this.showToast('Kamera adı boş olamaz ve 80 karakteri aşamaz.');
+      });
+      card.querySelector('.btn-up')?.addEventListener('click', (e) => { e.stopPropagation(); this.cameraManager.reorderStation(st.id, idx - 1); });
+      card.querySelector('.btn-down')?.addEventListener('click', (e) => { e.stopPropagation(); this.cameraManager.reorderStation(st.id, idx + 1); });
 
       const btnDel = card.querySelector('.btn-delete');
       if (btnDel) {
