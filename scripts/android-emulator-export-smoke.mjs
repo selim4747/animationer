@@ -352,10 +352,9 @@ async function main() {
     const project = JSON.parse(readDeviceFile(jsonPath).toString('utf8'));
     assert.equal(project.format, 'animationer-project');
     assert.equal(project.schemaVersion, PROJECT_SCHEMA_VERSION);
-    assert.equal(project.scope?.timeline, true);
-    assert(Array.isArray(project.steps));
-    assert.equal(project.steps.length, stepCountAfter);
-    console.log(`PASS: Timeline accepted a new step and saved valid project JSON (${jsonPath}; ${project.steps.length} steps).`);
+    assert(Array.isArray(project.timeline?.steps));
+    assert.equal(project.timeline.steps.length, stepCountAfter);
+    console.log(`PASS: Timeline accepted a new step and saved valid project JSON (${jsonPath}; ${project.timeline.steps.length} steps).`);
 
     const shareActionVisible = await waitForShareAction(devtools.command);
     assert.equal(shareActionVisible, true, 'Saved Android project did not expose its Share action after the native save finished.');
