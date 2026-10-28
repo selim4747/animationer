@@ -335,32 +335,17 @@ async function main() {
 
     // Add a safe sample action, then export and validate the actual device JSON file.
     await tapSelector(devtools.command, '.studio-tab-btn[data-tab="tab-timeline"]');
-    const stepCountBefore = await evaluate(devtools.command, `document.querySelector('#timeline-steps-list').children.length`);
-    await evaluate(devtools.command, `(() => {
-      window.__smokeQuickWaitClicks = 0;
-      window.__smokeStepMutations = [];
-      const timeline = window.animationerApp?.uiManager?.timeline;
-      if (timeline) {
-        const add = timeline.addStep.bind(timeline);
-        timeline.addStep = (...args) => {
-          const before = timeline.steps.length;
-          const result = add(...args);
-          window.__smokeStepMutations.push({ before, immediatelyAfter: timeline.steps.length, result: result?.id || null });
-          return result;
-        };
-      }
-      document.querySelector('#btn-add-wait-step')?.addEventListener('click', () => { window.__smokeQuickWaitClicks += 1; });
-      return true;
-    })()`);
+    const stepCountBefore = await evaluate(devtools.command, `document.querySelectorAll('#timeline-steps-list .timeline-step-card').length`);
     await tapSelector(devtools.command, '#btn-add-wait-step');
     const stepDeadline = Date.now() + 5_000;
     let stepCountAfter = stepCountBefore;
     while (Date.now() < stepDeadline && stepCountAfter === stepCountBefore) {
       await sleep(200);
-      stepCountAfter = await evaluate(devtools.command, `document.querySelector('#timeline-steps-list').children.length`);
+      stepCountAfter = await evaluate(devtools.command, `document.querySelectorAll('#timeline-steps-list .timeline-step-card').length`);
     }
-    const waitButtonState = await evaluate(devtools.command, `(() => ({ clickCount: window.__smokeQuickWaitClicks, managerStepCount: window.animationerApp?.uiManager?.timeline?.steps?.length, mainManagerMatches: window.animationerApp?.timelineManager === window.animationerApp?.uiManager?.timeline, mutations: window.__smokeStepMutations, listChildren: document.querySelector('#timeline-steps-list')?.children.length, buttonDisabled: document.querySelector('#btn-add-wait-step')?.disabled, panelInert: document.querySelector('#panel-body-wrapper')?.inert, panelHidden: document.querySelector('#studio-panel')?.classList.contains('hidden-cinematic'), toast: document.querySelector('#toast-message')?.textContent || '' }))()`);
+    const waitButtonState = await evaluate(devtools.command, `(() => ({ managerStepCount: window.animationerApp?.uiManager?.timeline?.steps?.length, stepCards: document.querySelectorAll('#timeline-steps-list .timeline-step-card').length, buttonDisabled: document.querySelector('#btn-add-wait-step')?.disabled, panelInert: document.querySelector('#panel-body-wrapper')?.inert, panelHidden: document.querySelector('#studio-panel')?.classList.contains('hidden-cinematic'), toast: document.querySelector('#toast-message')?.textContent || '' }))()`);
     assert.equal(stepCountAfter, stepCountBefore + 1, `Adding the quick wait step did not update the timeline: ${JSON.stringify(waitButtonState)}`);
+    assert.equal(waitButtonState.managerStepCount, stepCountAfter, 'Timeline UI and manager step counts diverged.');
     await tapSelector(devtools.command, '#btn-export-timeline-json');
     const jsonPath = await waitForExportedFile('animationer-project.json');
     const project = JSON.parse(readDeviceFile(jsonPath).toString('utf8'));
