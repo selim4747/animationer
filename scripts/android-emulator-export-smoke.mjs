@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { PROJECT_SCHEMA_VERSION } from '../src/components/ProjectStore.js';
 
 const DEVTOOLS_URL = 'http://127.0.0.1:9222';
 const EXPORT_DIRECTORY = '/sdcard/Documents/Animationer';
@@ -350,7 +351,7 @@ async function main() {
     const jsonPath = await waitForExportedFile('animationer-project.json');
     const project = JSON.parse(readDeviceFile(jsonPath).toString('utf8'));
     assert.equal(project.format, 'animationer-project');
-    assert.equal(project.schemaVersion, 2);
+    assert.equal(project.schemaVersion, PROJECT_SCHEMA_VERSION);
     assert.equal(project.scope?.timeline, true);
     assert(Array.isArray(project.steps));
     assert.equal(project.steps.length, stepCountAfter);
