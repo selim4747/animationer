@@ -1176,12 +1176,12 @@ input[type="range"]::-moz-range-thumb {
     font-size: 10px;
   }
   .hud-actions #btn-open-help {
-    min-width: 40px;
-    min-height: 40px;
+    min-width: 44px;
+    min-height: 44px;
   }
   .hud-actions #btn-home-screen {
     display: inline-flex;
-    min-height: 40px;
+    min-height: 44px;
     padding: 4px 7px;
     font-size: 9px;
   }
@@ -1616,3 +1616,10 @@ input[type="range"]::-moz-range-thumb {
 .home-sprite-settings input { width: 66px; min-height: 30px; padding: 0 7px; border: 1px solid #3c3c3c; border-radius: 3px; background: #050505; color: var(--mono-white); font: 11px monospace; }
 .home-dialog-submit.is-destructive { border-color: #888; background: #262626; color: white !important; }
 @media (max-width: 560px) { .home-sprite-settings { justify-content: space-between; } .home-sprite-settings input { width: 64px; } }
+.scene-editor-panel { display: grid; gap: 7px; margin-top: 14px; padding: 10px; border: 1px solid #303030; border-radius: 4px; background: rgba(8, 8, 8, 0.82); }
+.scene-editor-help { margin: 0; color: #999; font: 10px/1.45 monospace; }
+.scene-editor-transform-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.scene-editor-transform-grid label { display: grid; gap: 4px; color: #aaa; font: 10px monospace; }
+.scene-editor-transform-grid input, #scene-editor-object, #scene-editor-mode, #home-dialog-template { min-width: 0; min-height: 36px; padding: 5px 7px; border: 1px solid #3c3c3c; border-radius: 3px; background: #080808; color: #eee; font: 11px monospace; }
+.scene-editor-panel button { min-height: 38px; }
+.scene-editor-panel button:focus-visible, .scene-editor-panel select:focus-visible, .scene-editor-panel input:focus-visible { outline: 2px solid #eee; outline-offset: 2px; }

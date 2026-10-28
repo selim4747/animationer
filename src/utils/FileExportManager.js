@@ -2,6 +2,7 @@ import { getDeviceMemoryGiB } from './device-profile.js';
 
 const NATIVE_CHUNK_SIZE = 3 * 1024 * 1024;
 const LOW_MEMORY_NATIVE_CHUNK_SIZE = 1024 * 1024;
+export const LEGACY_ELECTRON_MAX_BYTES = 8 * 1024 * 1024;
 
 function getNativeChunkSize() {
   const memory = getDeviceMemoryGiB();
@@ -116,8 +117,8 @@ function saveInBrowser(blob, filename, onProgress) {
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
-  reportProgress(onProgress, 'saved', blob.size, blob.size);
-  return { saved: true, method: 'browser', filename, location: 'Tarayıcı indirilenleri' };
+  reportProgress(onProgress, 'download-started', blob.size, blob.size);
+  return { saved: false, initiated: true, method: 'browser', filename, location: 'Tarayıcı indirilenleri' };
 }
 
 export async function shareGeneratedFile(blob, result) {
@@ -162,6 +163,9 @@ export async function saveGeneratedFile(blob, filename, { onProgress } = {}) {
       && typeof window.dioramaDesktop.finishGeneratedFile === 'function'
       && typeof window.dioramaDesktop.abortGeneratedFile === 'function') {
       return saveWithElectronChunks(blob, safeFilename, window.dioramaDesktop, onProgress);
+    }
+    if (blob.size > LEGACY_ELECTRON_MAX_BYTES) {
+      throw new Error(`Bu Windows uygulaması eski dışa aktarma köprüsünü kullanıyor; ${Math.floor(LEGACY_ELECTRON_MAX_BYTES / (1024 * 1024))} MB üzerindeki dosyalar desteklenmiyor. Uygulamayı güncelleyin veya dosyayı küçültün.`);
     }
     reportProgress(onProgress, 'waiting-for-destination', 0, blob.size);
     const response = await window.dioramaDesktop.saveGeneratedFile({

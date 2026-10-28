@@ -13,10 +13,11 @@ export class Door {
    * @param {CollisionManager} collisionManager - Çarpışma yöneticisi
    * @param {Function} onStateChange - Kapı durumu değişim bildirim işlevi
    */
-  constructor(scene, collisionManager = null, onStateChange = () => {}) {
+  constructor(scene, collisionManager = null, onStateChange = () => {}, { enabled = true } = {}) {
     this.scene = scene;
     this.collisionManager = collisionManager;
     this.onStateChange = onStateChange;
+    this.enabled = enabled !== false;
 
     this.isOpen = false;
     this.doorWidth = 1.3;
@@ -37,6 +38,10 @@ export class Door {
 
     // Ana Mimari Grubu
     this.roomGroup = new THREE.Group();
+    if (!this.enabled) {
+      this.interiorBounds = null;
+      return;
+    }
     this.scene.add(this.roomGroup);
 
     // Menteşeli Kapı ve İç Mekan Yapısını İnşa Et
@@ -51,6 +56,14 @@ export class Door {
       new THREE.Vector3(-4.0, 0, -11.5),
       new THREE.Vector3(4.0, 4.0, -4.2)
     );
+    let editorIndex = 0;
+    this.roomGroup.traverse((object) => {
+      if (!object.isMesh) return;
+      if (!object.name) object.name = `Oda nesnesi ${editorIndex + 1}`;
+      object.userData.sceneEditorId = `demo-room:${object.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+      object.userData.sceneEditorLabel = object.name.replaceAll('_', ' ');
+      editorIndex++;
+    });
   }
 
   setCollisionManager(collisionManager) {
@@ -218,6 +231,7 @@ export class Door {
    * Kapıyı açar veya kapatır, CollisionManager üzerindeki kapı engelini günceller
    */
   toggle() {
+    if (!this.enabled) return false;
     if (this.isOpen) {
       this.close();
     } else {
@@ -226,6 +240,7 @@ export class Door {
   }
 
   open() {
+    if (!this.enabled) return false;
     if (!this.isOpen) {
       this.isOpen = true;
       this.targetAngle = -Math.PI / 2;
@@ -239,6 +254,7 @@ export class Door {
   }
 
   close() {
+    if (!this.enabled) return false;
     if (this.isOpen) {
       this.isOpen = false;
       this.targetAngle = 0;
@@ -299,6 +315,7 @@ export class Door {
    * @param {THREE.Vector3} characterPos - Karakterin güncel konumu
    */
   update(delta, characterPos) {
+    if (!this.enabled) return;
     const doorWorldCenter = new THREE.Vector3(0, 1.0, -3.8);
     const distToCharacter = characterPos ? characterPos.distanceTo(doorWorldCenter) : 999;
     const isCharacterNear = distToCharacter < 2.6;

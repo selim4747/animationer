@@ -8,6 +8,8 @@ function recordFingerprint(record, mapRevision = 0) {
   return JSON.stringify({
     projectId: record.projectId,
     name: record.name,
+    projectTemplate: record.projectTemplate,
+    sceneEdits: record.sceneEdits,
     timeline: [record.timeline.playMode, record.timeline.steps],
     sprites: record.sprites.map(({ id, name, columns, rows, fps, x, y, displayHeight, fileName, blob, data }) => [id, name, columns, rows, fps, x, y, displayHeight, fileName, assetSize({ blob, data })]),
     map: record.mapAsset ? [mapRevision, record.mapAsset.fileName, assetSize(record.mapAsset), record.mapAsset.scale, record.mapAsset.opacity, record.mapAsset.groundOrientation] : null,
@@ -25,17 +27,19 @@ function recordFingerprint(record, mapRevision = 0) {
 
 /** Coalesces and serializes durable project changes into IndexedDB. */
 export class AutosaveCoordinator {
-  constructor({ timeline, sprites, characters = null, mapLoader = null, worldSprites = null, cameraManager = null, scene = null, projectStore, projectId = '', projectName = 'Yeni Proje', worldSpriteReady = Promise.resolve(), onStatus = () => {}, onError = () => {} }) {
+  constructor({ timeline, sprites, characters = null, mapLoader = null, worldSprites = null, cameraManager = null, sceneEditor = null, scene = null, projectStore, projectId = '', projectName = 'Yeni Proje', projectTemplate = 'demo', worldSpriteReady = Promise.resolve(), onStatus = () => {}, onError = () => {} }) {
     this.timeline = timeline;
     this.sprites = sprites;
     this.characters = characters;
     this.mapLoader = mapLoader;
     this.worldSprites = worldSprites;
     this.cameraManager = cameraManager;
+    this.sceneEditor = sceneEditor;
     this.scene = scene;
     this.projectStore = projectStore;
     this.projectId = projectId;
     this.projectName = projectName;
+    this.projectTemplate = projectTemplate === 'blank' ? 'blank' : 'demo';
     this.worldSpriteReady = worldSpriteReady;
     this.onStatus = onStatus;
     this.onError = onError;
@@ -116,6 +120,8 @@ export class AutosaveCoordinator {
       cameraStations: cameraState?.stations || [],
       activeCameraStationId: this.cameraManager?.activeStationId || null,
       cameraFollowCharacter: cameraState?.followCharacter !== false,
+      projectTemplate: this.projectTemplate,
+      sceneEdits: this.sceneEditor?.exportProjectState?.() || [],
       viewport: { width: globalThis.window?.innerWidth || 1, height: globalThis.window?.innerHeight || 1 },
       projectId: this.projectId,
       name: this.projectName,
@@ -161,6 +167,7 @@ export class AutosaveCoordinator {
     if (!this.projectStore) return;
     this._restoring = true;
     this.onStatus('Otomatik kayıt ve karakter kitaplığı yükleniyor…');
+    let previous = null;
     try {
       await this.worldSpriteReady;
       const record = this.projectId && this.projectStore.loadProject
@@ -172,6 +179,7 @@ export class AutosaveCoordinator {
         this.onStatus('Otomatik kayıt yok.');
         return;
       }
+      previous = await this._buildRecord();
       const candidate = new this.timeline.constructor({});
       candidate.importSequence(record.timeline);
       const spriteIds = new Set(record.sprites.map((asset) => asset.id));
@@ -184,6 +192,7 @@ export class AutosaveCoordinator {
       await this.mapLoader?.restoreProjectState?.(record.mapAsset);
       await this.mapLoader?.restoreWallBoxes?.(record.wallBoxes || []);
       await this.characters?.restoreProjectState?.({ actors: record.characters3d, selectedId: record.selectedCharacter3dId });
+      this.sceneEditor?.restoreProjectState?.(record.sceneEdits || []);
       if (this.scene?.background?.set && record.skyColor) this.scene.background.set(`#${record.skyColor}`);
       this.cameraManager?.restoreProjectState?.({ stations: record.cameraStations || [], activeStationId: record.activeCameraStationId, followCharacter: record.cameraFollowCharacter });
       this.timeline.steps = candidate.steps;
@@ -192,6 +201,26 @@ export class AutosaveCoordinator {
       this._lastFingerprint = recordFingerprint(record, this.mapLoader?.stateRevision);
       this.onStatus('Proje geri yüklendi · harita, karakterler ve reji.');
     } catch (error) {
+      // Apply managers sequentially; best-effort restore the captured state if a later step fails.
+      try {
+        if (previous) {
+          await this.worldSprites?.importProjectState?.({ templates: previous.worldCharacterTemplates, actors: previous.worldCharacters }, { replaceTemplates: true });
+          await this.sprites.importAssets(previous.sprites);
+          await this.mapLoader?.restoreProjectState?.(previous.mapAsset);
+          await this.mapLoader?.restoreWallBoxes?.(previous.wallBoxes || []);
+          await this.characters?.restoreProjectState?.({ actors: previous.characters3d, selectedId: previous.selectedCharacter3dId });
+          this.sceneEditor?.restoreProjectState?.(previous.sceneEdits || []);
+          if (this.scene?.background?.set) this.scene.background.set(`#${previous.skyColor}`);
+          this.cameraManager?.restoreProjectState?.({ stations: previous.cameraStations || [], activeStationId: previous.activeCameraStationId, followCharacter: previous.cameraFollowCharacter });
+          const priorTimeline = new this.timeline.constructor({});
+          priorTimeline.importSequence(previous.timeline);
+          this.timeline.steps = priorTimeline.steps;
+          this.timeline.playMode = priorTimeline.playMode;
+          this.timeline._notify();
+        }
+      } catch (rollbackError) {
+        this.onError(`Geri yükleme başarısız oldu; önceki durumu geri alma da tamamlanamadı: ${rollbackError.message}`);
+      }
       this.onStatus(`Otomatik kayıt geri yüklenemedi: ${error.message}`);
       this.onError(`Otomatik kayıt açılamadı: ${error.message}`);
       throw error;

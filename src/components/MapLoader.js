@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { validateTextureDimensions } from '../utils/device-profile.js';
 import { getDeviceMemoryGiB, getDevicePerformanceProfile } from '../utils/device-profile.js';
+import { parseImageDimensions } from '../utils/image-dimensions.js';
 
 const MAX_MAP_IMAGE_BYTES = 50 * 1024 * 1024;
 
@@ -32,6 +33,7 @@ export class MapLoader {
     this.currentSourceFile = null;
     this.currentFileName = null;
     this.stateRevision = 0;
+    this.loadRequestId = 0;
 
     // Bu modelle yüklenen nesnelerin takibi
     this.registeredObstacles = [];
@@ -56,6 +58,7 @@ export class MapLoader {
    * Sahnede var olan haritayı/modeli, mobilya engellerini ve yürünebilir yüzeyleri temizler
    */
   clear({ notify = true } = {}) {
+    this.loadRequestId++;
     if (this.collisionManager) {
       if (this.registeredObstacles.length > 0) {
         this.registeredObstacles.forEach((obj) => this.collisionManager.unregisterObstacle(obj));
@@ -114,91 +117,81 @@ export class MapLoader {
    * @param {string} fileName - Dosya adı
    */
   loadGLTF(url, fileName = 'Model.glb', sourceFile = null) {
-    this.clear();
+    if (!/\.glb$/i.test(fileName)) {
+      URL.revokeObjectURL(url);
+      const error = new Error('.gltf desteklenmiyor; dosyayı tek dosyalı .glb olarak paketleyip yeniden deneyin.');
+      this.onStatusChange({ type: 'error', message: error.message });
+      return Promise.reject(error);
+    }
+    const requestId = ++this.loadRequestId;
     this.onStatusChange({ type: 'loading', name: fileName });
+    const disposeModel = (model) => {
+      const disposed = new Set();
+      model?.traverse((node) => {
+        if (!node.isMesh) return;
+        node.geometry?.dispose();
+        for (const material of (Array.isArray(node.material) ? node.material : [node.material])) {
+          if (!material) continue;
+          for (const value of Object.values(material)) if (value?.isTexture && !disposed.has(value)) { value.dispose(); disposed.add(value); }
+          material.dispose();
+        }
+      });
+    };
     return new Promise((resolve, reject) => {
       this.gltfLoader.load(url, (gltf) => {
         URL.revokeObjectURL(url);
         const model = gltf.scene;
+        if (requestId !== this.loadRequestId) { disposeModel(model); resolve(null); return; }
+
+        // Stage all metadata and collision classifications before touching the active environment.
+        const box = new THREE.Box3().setFromObject(model);
+        const center = box.getCenter(new THREE.Vector3());
+        model.position.x -= center.x;
+        model.position.z -= center.z;
+        model.position.y -= box.min.y;
+        model.updateMatrixWorld(true);
+        const walkables = [];
+        const obstacles = [];
+        const editorMeshes = new Map();
+        const walkableRegex = /stairs|merdiven|step|basamak|floor|zemin|ground|walkable|ramp|rampa|platform|kat|deck/i;
+        let meshIndex = 0;
+        model.traverse((node) => {
+          if (!node.isMesh) return;
+          node.userData.editorMeshId = `mesh-${meshIndex++}`;
+          editorMeshes.set(node.userData.editorMeshId, node);
+          node.castShadow = true;
+          node.receiveShadow = true;
+          node.frustumCulled = true;
+          if (node.geometry) { node.geometry.computeBoundingBox(); node.geometry.computeBoundingSphere(); }
+          const meshBox = new THREE.Box3().setFromObject(node);
+          const sizeX = meshBox.max.x - meshBox.min.x;
+          const sizeZ = meshBox.max.z - meshBox.min.z;
+          const sizeY = meshBox.max.y - meshBox.min.y;
+          const walkable = walkableRegex.test(node.name || '') || (sizeY < 0.35 && (sizeX > 0.8 || sizeZ > 0.8));
+          node.userData.editorCollisionKind = walkable ? 'walkable' : 'obstacle';
+          (walkable ? walkables : obstacles).push(node);
+        });
+        if (requestId !== this.loadRequestId) { disposeModel(model); resolve(null); return; }
+
+        this.clear({ notify: false });
         this.currentLoadedObject = model;
         this.currentObjectType = '3d';
         this.currentSourceFile = sourceFile ? sourceFile.slice(0, sourceFile.size, sourceFile.type || 'model/gltf-binary') : null;
         this.currentFileName = fileName;
-
-        // BoundingBox hesapla: X ve Z ekseninde ortala, tabanı Y = 0 zeminine oturt
-        const modelBox = new THREE.Box3().setFromObject(model);
-        const center = modelBox.getCenter(new THREE.Vector3());
-        model.position.x -= center.x;
-        model.position.z -= center.z;
-        model.position.y -= modelBox.min.y;
-
-        model.updateMatrixWorld(true);
-
-        // Yürünebilir zemin & merdiven regex tanımı
-        const walkableRegex = /stairs|merdiven|step|basamak|floor|zemin|ground|walkable|ramp|rampa|platform|kat|deck/i;
-
-        let meshIndex = 0;
-        model.traverse((node) => {
-          if (node.isMesh) {
-            node.userData.editorMeshId = `mesh-${meshIndex++}`;
-            this.meshesByEditorId.set(node.userData.editorMeshId, node);
-            node.castShadow = true;
-            node.receiveShadow = true;
-
-            // BÜYÜK HARİTA PERFORMANS OPTİMİZASYONU:
-            // Kamera görüş alanı dışında kalan parçaların CPU/GPU yükü oluşturmaması için Frustum Culling aktif edilir
-            node.frustumCulled = true;
-            if (node.geometry) {
-              node.geometry.computeBoundingBox();
-              node.geometry.computeBoundingSphere();
-            }
-
-            const name = node.name || '';
-            const isExplicitWalkable = walkableRegex.test(name);
-
-            // Geometrik eğim ve yükseklik analizi
-            const meshBox = new THREE.Box3().setFromObject(node);
-            const sizeX = meshBox.max.x - meshBox.min.x;
-            const sizeZ = meshBox.max.z - meshBox.min.z;
-            const sizeY = meshBox.max.y - meshBox.min.y;
-
-            // Geniş ve yatay yüzeyler (katlar/döşemeler) veya adı merdiven/zemin olanlar
-            const isHorizontalSurface = sizeY < 0.35 && (sizeX > 0.8 || sizeZ > 0.8);
-
-            if (isExplicitWalkable || isHorizontalSurface) {
-              node.userData.editorCollisionKind = 'walkable';
-              // Yürünebilir Zemin veya Merdiven Basamağı olarak kaydet
-              if (this.collisionManager) {
-                this.collisionManager.registerWalkableSurface(node);
-                this.registeredWalkableSurfaces.push(node);
-              }
-            } else {
-              node.userData.editorCollisionKind = 'obstacle';
-              // Mobilya, korkuluk veya duvar engeli olarak kaydet
-              if (this.collisionManager) {
-                this.collisionManager.registerObstacle(node);
-                this.registeredObstacles.push(node);
-              }
-            }
-          }
-        });
-
+        this.meshesByEditorId = editorMeshes;
+        this.registeredWalkableSurfaces = walkables;
+        this.registeredObstacles = obstacles;
+        if (this.collisionManager) {
+          walkables.forEach((node) => this.collisionManager.registerWalkableSurface(node));
+          obstacles.forEach((node) => this.collisionManager.registerObstacle(node));
+        }
         this.scene.add(model);
-        this.onStatusChange({
-          type: 'loaded',
-          category: '3d',
-          name: fileName,
-          object: model,
-          box: new THREE.Box3().setFromObject(model),
-          walkableCount: this.registeredWalkableSurfaces.length,
-          obstacleCount: this.registeredObstacles.length,
-        });
+        this.onStatusChange({ type: 'loaded', category: '3d', name: fileName, object: model, box: new THREE.Box3().setFromObject(model), walkableCount: walkables.length, obstacleCount: obstacles.length });
         this.onStateChange({ type: 'map-loaded' });
         resolve(model);
       }, undefined, (error) => {
         URL.revokeObjectURL(url);
-        console.error('GLTF Yükleme Hatası:', error);
-        this.onStatusChange({ type: 'error', message: '3D Model yüklenemedi!' });
+        if (requestId === this.loadRequestId) this.onStatusChange({ type: 'error', message: '3D Model yüklenemedi!' });
         reject(error || new Error('3D model yüklenemedi.'));
       });
     });
@@ -213,10 +206,13 @@ export class MapLoader {
     this.onStatusChange({ type: 'loading', name: fileName });
     let texture;
     try {
+      const imageBlob = sourceFile || await (await fetch(url)).blob();
+      const dimensions = parseImageDimensions(await imageBlob.arrayBuffer());
+      validateTextureDimensions(dimensions.width, dimensions.height);
       texture = await this.textureLoader.loadAsync(url);
       texture.colorSpace = THREE.SRGBColorSpace;
-      const width = texture.image?.naturalWidth || texture.image?.width || 0;
-      const height = texture.image?.naturalHeight || texture.image?.height || 0;
+      const width = texture.image?.naturalWidth || texture.image?.width || dimensions.width;
+      const height = texture.image?.naturalHeight || texture.image?.height || dimensions.height;
       validateTextureDimensions(width, height);
       const aspect = width / height;
       const geometry = new THREE.PlaneGeometry(this.currentScale, this.currentScale / aspect);
@@ -316,11 +312,16 @@ export class MapLoader {
     return [...this.meshesByEditorId.entries()].map(([id, object], index) => ({
       id, name: object.name || `Mesh ${index + 1}`, visible: object.visible !== false,
       kind: object.userData.editorCollisionKind || 'none',
+      transform: {
+        position: { x: object.position.x, y: object.position.y, z: object.position.z },
+        rotation: { x: object.rotation.x, y: object.rotation.y, z: object.rotation.z },
+        scale: { x: object.scale.x, y: object.scale.y, z: object.scale.z },
+      },
     }));
   }
 
   exportMeshOverrides() {
-    return this.getEditableMeshes().map(({ id, kind, visible }) => ({ id, kind, visible }));
+    return this.getEditableMeshes().map(({ id, kind, visible, transform }) => ({ id, kind, visible, transform }));
   }
 
   applyMeshOverrides(overrides = [], { notify = true } = {}) {
@@ -329,6 +330,18 @@ export class MapLoader {
       const object = this.meshesByEditorId.get(override.id);
       if (['walkable', 'obstacle', 'none'].includes(override.kind)) object.userData.editorCollisionKind = override.kind;
       if (typeof override.visible === 'boolean') object.visible = override.visible;
+      const transform = override.transform;
+      if (transform && ['position', 'rotation', 'scale'].every((key) => transform[key]
+        && ['x', 'y', 'z'].every((axis) => Number.isFinite(Number(transform[key][axis]))))) {
+        object.position.set(transform.position.x, transform.position.y, transform.position.z);
+        object.rotation.set(transform.rotation.x, transform.rotation.y, transform.rotation.z);
+        object.scale.set(
+          THREE.MathUtils.clamp(Number(transform.scale.x), 0.01, 1000),
+          THREE.MathUtils.clamp(Number(transform.scale.y), 0.01, 1000),
+          THREE.MathUtils.clamp(Number(transform.scale.z), 0.01, 1000),
+        );
+        object.updateMatrixWorld(true);
+      }
       this._syncMeshCollision(object);
     }
     if (notify) {
@@ -355,6 +368,14 @@ export class MapLoader {
     this._syncMeshCollision(object);
     this.stateRevision++;
     this.onStateChange({ type: 'map-mesh-settings-changed' });
+    return true;
+  }
+
+  syncEditedMesh(object) {
+    if (![...this.meshesByEditorId.values()].includes(object)) return false;
+    this._syncMeshCollision(object);
+    this.stateRevision++;
+    this.onStateChange({ type: 'map-mesh-transform-changed' });
     return true;
   }
 
@@ -431,9 +452,14 @@ export class MapLoader {
       const limit = Math.floor(Math.min(MAX_MAP_IMAGE_BYTES, getDevicePerformanceProfile(getDeviceMemoryGiB()).maxProjectAssetExportBytes) / (1024 * 1024));
       throw new Error(`2D ortam görseli bu cihazda en fazla ${limit} MiB olabilir.`);
     }
+    if (name.endsWith('.gltf')) {
+      const error = new Error('.gltf desteklenmiyor; harici .bin/görsel bağımlılıkları tek dosyada saklanamaz. Dosyayı .glb olarak paketleyip yeniden deneyin.');
+      this.onStatusChange({ type: 'error', message: error.message });
+      throw error;
+    }
     const url = URL.createObjectURL(file);
 
-    if (name.endsWith('.glb') || name.endsWith('.gltf')) {
+    if (name.endsWith('.glb')) {
       try { return await this.loadGLTF(url, file.name, file); }
       finally { URL.revokeObjectURL(url); }
     } else if (
@@ -448,9 +474,9 @@ export class MapLoader {
       URL.revokeObjectURL(url);
       this.onStatusChange({
         type: 'error',
-        message: 'Desteklenmeyen dosya türü! (.glb, .gltf, .png, .jpg, .webp)',
+        message: 'Desteklenmeyen dosya türü! (.glb, .png, .jpg, .webp)',
       });
-      throw new Error('Desteklenmeyen dosya türü! (.glb, .gltf, .png, .jpg, .webp)');
+      throw new Error('Desteklenmeyen dosya türü! (.glb, .png, .jpg, .webp)');
     }
   }
 

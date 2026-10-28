@@ -221,6 +221,31 @@
           <div id="studio-wall-box-list" class="studio-camera-list-box" aria-live="polite"></div>
           <div class="studio-sub-header" style="margin-top: 12px;">ORTAM NESNELERİ:</div>
           <div id="studio-map-object-list" class="studio-camera-list-box" aria-live="polite"></div>
+          <div class="scene-editor-panel">
+            <div class="studio-sub-header">SAHNE DÜZENLEME ARACI:</div>
+            <button id="btn-scene-editor-toggle" type="button" class="hud-btn flex-grow" aria-pressed="false">Sahne seçimi: Kapalı</button>
+            <p class="scene-editor-help">Açın, sonra sahnedeki bir nesneye dokunun. Sayısal konum, dönüş ve ölçek değerlerini uygulayın.</p>
+            <label class="timeline-field">Seçili nesne
+              <select id="scene-editor-object"><option value="">Nesne seçin…</option></select>
+            </label>
+            <label class="timeline-field">Düzenleme türü
+              <select id="scene-editor-mode">
+                <option value="translate">Konum (X / Y / Z)</option>
+                <option value="rotate">Dönüş (derece)</option>
+                <option value="scale">Ölçek (X / Y / Z)</option>
+              </select>
+            </label>
+            <div class="scene-editor-transform-grid">
+              <label>X<input id="scene-editor-x" type="number" step="0.1" inputmode="decimal" value="0" /></label>
+              <label>Y<input id="scene-editor-y" type="number" step="0.1" inputmode="decimal" value="0" /></label>
+              <label>Z<input id="scene-editor-z" type="number" step="0.1" inputmode="decimal" value="0" /></label>
+            </div>
+            <div class="studio-ctrl-row">
+              <button id="btn-scene-editor-apply" type="button" class="hud-btn primary flex-grow">Değişikliği Uygula</button>
+              <button id="btn-scene-editor-reset" type="button" class="hud-btn subtle">İlk Hâline Döndür</button>
+            </div>
+            <p id="scene-editor-status" class="scene-editor-help" aria-live="polite">Düzenlenebilir nesne bulunamadı.</p>
+          </div>
           <div class="studio-sub-header" style="margin-top: 12px;">GÖKYÜZÜ RENGİ:</div>
           <label class="timeline-field">Sahne arka planı
             <input id="scene-sky-color" type="color" value="#080808" aria-label="Gökyüzü rengi" />

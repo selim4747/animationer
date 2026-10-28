@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { Character } from './Character.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
@@ -5,7 +6,7 @@ const COLORS = [0xf4f4f4, 0xc9c9c9, 0x9e9e9e, 0x777777, 0xffffff];
 
 /** Manages selectable procedural actors while preserving a selected-character facade. */
 export class CharacterRoster {
-  constructor(scene, collisionManager, onChange = () => {}, store = null) {
+  constructor(scene, collisionManager, onChange = () => {}, store = null, { initialCharacter = true } = {}) {
     this.scene = scene;
     this.collisionManager = collisionManager;
     this.onChange = onChange;
@@ -13,7 +14,7 @@ export class CharacterRoster {
     this.actors = [];
     this.selectedId = null;
     this.nextId = 1;
-    this.addCharacter('Karakter 1', { x: 0, y: 0, z: 0 });
+    if (initialCharacter) this.addCharacter('Karakter 1', { x: 0, y: 0, z: 0 });
   }
 
   get selectedCharacter() {
@@ -157,7 +158,11 @@ export class CharacterRoster {
     const actors = Array.isArray(state.actors) ? state.actors : [];
     if (actors.length > 20) throw new Error('Projede 20’den fazla 3D karakter var.');
     if (!actors.length) {
-      if (!this.actors.length) this.addCharacter('Karakter 1', { x: 0, y: 0, z: 0 });
+      for (const actor of [...this.actors]) this._disposeActor(actor);
+      this.actors = [];
+      this.selectedId = null;
+      this.nextId = 1;
+      this.onChange({ type: 'restored', actors: [] });
       return this.list();
     }
     const stagingScene = new this.scene.constructor();
@@ -242,12 +247,11 @@ export class CharacterRoster {
   }
 
   removeCharacter(id = this.selectedId) {
-    if (this.actors.length <= 1) return false;
     const index = this.actors.findIndex((actor) => actor.id === id);
     if (index < 0) return false;
     const [actor] = this.actors.splice(index, 1);
     this._disposeActor(actor);
-    if (this.selectedId === id) this.selectedId = this.actors[Math.max(0, index - 1)].id;
+    if (this.selectedId === id) this.selectedId = this.actors[Math.max(0, index - 1)]?.id || null;
     this._syncSelectedAppearance();
     this.onChange({ type: 'removed', id, actors: this.list() });
     return true;
@@ -265,14 +269,14 @@ export class CharacterRoster {
     }
   }
 
-  getPosition() { return this.selectedCharacter.getPosition(); }
-  moveTo(point) { return this.selectedCharacter.moveTo(point); }
-  moveToPromise(point, options) { return this.selectedCharacter.moveToPromise(point, options); }
-  playEmotePromise(type) { return this.selectedCharacter.playEmotePromise(type); }
-  setSpeed(speed) { return this.selectedCharacter.setSpeed(speed); }
-  setWobbleIntensity(value) { return this.selectedCharacter.setWobbleIntensity(value); }
-  teleportTo(x, y, z) { return this.selectedCharacter.teleportTo(x, y, z); }
-  setControlVector(x, z) { return this.selectedCharacter.setControlVector(x, z); }
+  getPosition() { return this.selectedCharacter?.getPosition() || new THREE.Vector3(); }
+  moveTo(point) { return this.selectedCharacter?.moveTo(point) ?? Promise.resolve(false); }
+  moveToPromise(point, options) { return this.selectedCharacter?.moveToPromise(point, options) ?? Promise.resolve(false); }
+  playEmotePromise(type) { return this.selectedCharacter?.playEmotePromise(type) ?? Promise.resolve(false); }
+  setSpeed(speed) { return this.selectedCharacter?.setSpeed(speed) ?? false; }
+  setWobbleIntensity(value) { return this.selectedCharacter?.setWobbleIntensity(value) ?? false; }
+  teleportTo(x, y, z) { return this.selectedCharacter?.teleportTo(x, y, z) ?? false; }
+  setControlVector(x, z) { return this.selectedCharacter?.setControlVector(x, z) ?? false; }
 
   followCharacter(followerId, targetId, options) {
     const follower = this.getCharacter(followerId);
@@ -294,8 +298,8 @@ export class CharacterRoster {
   _syncSelectedAppearance() {
     for (const actor of this.actors) {
       const active = actor.id === this.selectedId;
-      actor.character.bodyMesh.material.emissive?.setHex(active ? 0x252525 : 0x000000);
-      actor.character.targetMarker.material.color.setHex(active ? 0xffffff : 0x888888);
+      actor.character.bodyMesh?.material?.emissive?.setHex(active ? 0x252525 : 0x000000);
+      actor.character.targetMarker?.material?.color?.setHex(active ? 0xffffff : 0x888888);
     }
   }
 

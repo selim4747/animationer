@@ -98,29 +98,52 @@ test('applies the low-memory device recording profile and prevents selecting 60 
   }
 }));
 
-test('stops automatically when the configured byte limit is reached', async () => withFakeMediaRecorder(async () => {
+test('rejects an oversized data chunk without downloading a partial file', async () => withFakeMediaRecorder(async () => {
   const { canvas } = makeCanvas();
   const states = [];
   const manager = new RecorderManager(canvas, {
     maxRecordingBytes: 3,
     onStateChange: (state) => states.push(state),
   });
-  manager._downloadBlob = async (_blob, filename) => ({ saved: true, filename });
+  let downloadCalled = false;
+  manager._downloadBlob = async () => { downloadCalled = true; return { saved: true }; };
   assert.equal(manager.startRecording(), true);
 
   FakeMediaRecorder.latest.ondataavailable({ data: new Blob(['limit'], { type: 'video/webm' }) });
-  await manager._stopPromise;
+  const result = await manager._stopPromise;
 
-  const finalState = states.findLast((state) => state.filename);
+  const finalState = states.findLast((state) => state.limitExceeded);
+  assert.equal(result, null);
+  assert.equal(downloadCalled, false);
   assert.equal(finalState.stopReason, 'size-limit');
+  assert.match(finalState.error, /sınırı aşıldı/i);
   assert.equal(manager.isRecording, false);
   assert.equal(manager.recordedChunks.length, 0);
 }));
 
-test('stops an automatic timeline at the byte cap and reports its saved partial recording', async () => withFakeMediaRecorder(async () => {
+test('rejects a stop-event tail that would push the final blob over the byte cap', async () => withFakeMediaRecorder(async () => {
+  const { canvas } = makeCanvas();
+  const states = [];
+  const manager = new RecorderManager(canvas, { maxRecordingBytes: 4, onStateChange: (state) => states.push(state) });
+  let downloadCalled = false;
+  manager._downloadBlob = async () => { downloadCalled = true; return { saved: true }; };
+  assert.equal(manager.startRecording(), true);
+
+  // The first chunk fills the cap and triggers stop; FakeMediaRecorder emits "tail" from stop().
+  FakeMediaRecorder.latest.ondataavailable({ data: new Blob(['1234'], { type: 'video/webm' }) });
+  const result = await manager._stopPromise;
+
+  assert.equal(result, null);
+  assert.equal(downloadCalled, false);
+  assert(states.some((state) => state.limitExceeded && state.sizeBytes <= state.maxRecordingBytes));
+  assert.equal(manager.lastDownloadResult.limitExceeded, true);
+}));
+
+test('stops an automatic timeline at the byte cap and reports that no file was produced', async () => withFakeMediaRecorder(async () => {
   const { canvas } = makeCanvas();
   const manager = new RecorderManager(canvas, { maxRecordingBytes: 1 });
-  manager._downloadBlob = async (_blob, filename) => ({ saved: true, filename });
+  let downloadCalled = false;
+  manager._downloadBlob = async (_blob, filename) => { downloadCalled = true; return { saved: true, filename }; };
   let releasePlayback;
   const timeline = {
     steps: [{ type: 'WAIT' }],
@@ -146,8 +169,10 @@ test('stops an automatic timeline at the byte cap and reports its saved partial 
 
   assert.equal(result.success, false);
   assert.match(result.error, /sınırına ulaşıldı.*kısmi/i);
-  assert(result.blob instanceof Blob);
-  assert.equal(result.downloadResult.saved, true);
+  assert.equal(result.blob, null);
+  assert.equal(result.downloadResult.saved, false);
+  assert.equal(result.downloadResult.limitExceeded, true);
+  assert.equal(downloadCalled, false);
   assert.equal(timeline.isPlaying, false);
 }));
 

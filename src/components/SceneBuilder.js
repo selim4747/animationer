@@ -6,6 +6,17 @@
 
 import * as THREE from 'three';
 
+function markSceneEditable(root, prefix) {
+  let index = 0;
+  root.traverse((object) => {
+    if (!object.isMesh) return;
+    if (!object.name) object.name = `${prefix} ${index + 1}`;
+    object.userData.sceneEditorId = `${prefix.toLowerCase().replace(/[^a-z0-9]+/g, '-')}:${object.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+    object.userData.sceneEditorLabel = object.name.replaceAll('_', ' ');
+    index++;
+  });
+}
+
 export class SceneBuilder {
   /**
    * @param {THREE.Scene} scene
@@ -135,6 +146,7 @@ export class SceneBuilder {
     this.collisionManager.registerObstacle(railRight);
 
     this.scene.add(multiStoryGroup);
+    markSceneEditable(multiStoryGroup, 'demo-architecture');
     return multiStoryGroup;
   }
 
@@ -153,6 +165,7 @@ export class SceneBuilder {
 
     const tableTopGeo = new THREE.BoxGeometry(2.2, 0.1, 1.2);
     const tableTop = new THREE.Mesh(tableTopGeo, furnitureMat);
+    tableTop.name = 'Table Top';
     tableTop.position.set(4.2, 0.55, 1.0);
     tableTop.castShadow = true;
     tableTop.receiveShadow = true;
@@ -162,6 +175,7 @@ export class SceneBuilder {
     [-0.95, 0.95].forEach((lx) => {
       [-0.45, 0.45].forEach((lz) => {
         const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.5, 16), tableLegMat);
+        leg.name = `Table Leg ${lx < 0 ? 'L' : 'R'} ${lz < 0 ? 'Front' : 'Back'}`;
         leg.position.set(4.2 + lx, 0.25, 1.0 + lz);
         leg.castShadow = true;
         furnitureGroup.add(leg);
@@ -172,6 +186,7 @@ export class SceneBuilder {
       new THREE.BoxGeometry(2.6, 0.45, 1.0),
       new THREE.MeshStandardMaterial({ color: 0x1f1f1f, roughness: 0.6 })
     );
+    sofaBase.name = 'Sofa Base';
     sofaBase.position.set(4.2, 0.225, 2.5);
     sofaBase.castShadow = true;
     furnitureGroup.add(sofaBase);
@@ -180,6 +195,7 @@ export class SceneBuilder {
       new THREE.BoxGeometry(2.6, 0.5, 0.25),
       new THREE.MeshStandardMaterial({ color: 0x171717, roughness: 0.6 })
     );
+    sofaBack.name = 'Sofa Back';
     sofaBack.position.set(4.2, 0.6, 2.88);
     sofaBack.castShadow = true;
     furnitureGroup.add(sofaBack);
@@ -189,6 +205,7 @@ export class SceneBuilder {
     this.collisionManager.registerObstacle(tableTop);
     this.collisionManager.registerObstacle(sofaBase);
     this.collisionManager.registerObstacle(sofaBack);
+    markSceneEditable(furnitureGroup, 'demo-furniture');
 
     return furnitureGroup;
   }

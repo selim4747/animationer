@@ -88,13 +88,13 @@ const v2 = (updatedAt = '2026-01-01T00:00:00.000Z') => ({
   viewport: { width: 320, height: 568 },
 });
 
-test('migrates legacy portable project v1 to explicit v4 storage schema', () => {
+test('migrates legacy portable project v1 to explicit v5 storage schema', () => {
   const migrated = migrateProjectRecord({
     format: 'animationer-project', projectVersion: 1, version: '1.0.0', playMode: 'scheduled',
     timestamp: '2025-01-01T00:00:00.000Z', steps: [{ type: 'WAIT', data: { duration: 1 } }],
     sprites: [{ id: 'sprite-1', data: 'AQID', name: 'Sheet' }],
   });
-  assert.equal(migrated.schemaVersion, 4);
+  assert.equal(migrated.schemaVersion, 5);
   assert.equal(migrated.timeline.playMode, 'scheduled');
   assert.equal(migrated.timeline.steps.length, 1);
   assert.equal(migrated.scope.mapAssets, false);
@@ -105,10 +105,24 @@ test('migrates legacy portable project v1 to explicit v4 storage schema', () => 
 
 test('migrates v2 autosaves without losing timeline and sprite data', () => {
   const migrated = migrateProjectRecord({ ...v2(), schemaVersion: 2, scope: { timeline: true, sprites2d: true }, projectVersion: 2 });
-  assert.equal(migrated.schemaVersion, 4);
+  assert.equal(migrated.schemaVersion, 5);
   assert.equal(migrated.sprites.length, 1);
   assert.deepEqual(migrated.worldCharacterTemplates, []);
   assert.deepEqual(migrated.worldCharacters, []);
+});
+
+test('imports v4 project backups into v5 without losing scene data', () => {
+  const current = createAutosaveRecord({
+    timeline: { version: '1.0.0', playMode: 'sequential', steps: [] },
+    sprites: [{ id: 'sprite-v4', blob: new Blob(['sprite'], { type: 'image/png' }), fileName: 'sprite.png' }],
+    projectTemplate: 'demo',
+  });
+  const v4 = { ...current, schemaVersion: 4, projectVersion: 4 };
+  delete v4.sceneEdits;
+  const migrated = migrateProjectRecord(v4);
+  assert.equal(migrated.schemaVersion, PROJECT_SCHEMA_VERSION);
+  assert.equal(migrated.sprites[0].id, 'sprite-v4');
+  assert.deepEqual(migrated.sceneEdits, []);
 });
 
 test('rejects corrupt and unsupported project versions without changing the input', () => {
@@ -162,6 +176,22 @@ test('named projects can be created, renamed, duplicated, listed and deleted ind
   await store.deleteProject(second.projectId);
   assert.equal(await store.loadProject(second.projectId), null);
   assert.equal((await store.listProjects()).length, 2);
+});
+
+test('blank and demo project presets persist distinct initial contents', async () => {
+  const store = new IndexedProjectStore(new MemoryIndexedDB());
+  const blank = await store.createProject('Boş Sahne', { template: 'blank' });
+  const demo = await store.createProject('Deneme Sahnesi', { template: 'demo' });
+  const blankRecord = await store.loadProject(blank.projectId);
+  const demoRecord = await store.loadProject(demo.projectId);
+  assert.equal(blankRecord.projectTemplate, 'blank');
+  assert.deepEqual(blankRecord.characters3d, []);
+  assert.deepEqual(blankRecord.worldCharacters, []);
+  assert.deepEqual(blankRecord.timeline.steps, []);
+  assert.equal(blankRecord.selectedCharacter3dId, null);
+  assert.equal(demoRecord.projectTemplate, 'demo');
+  assert.equal(demoRecord.characters3d.length, 1);
+  assert.equal(demoRecord.timeline.steps.length, 9);
 });
 
 test('3D GLB models persist in the shared library and remain protected while a project uses them', async () => {

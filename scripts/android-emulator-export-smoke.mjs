@@ -242,12 +242,30 @@ async function main() {
     }
     assert(homeReady, 'Neither Project Home nor Studio finished initializing.');
     const homeVisible = await evaluate(devtools.command, `(() => { const home = document.querySelector('#home-screen'); return !!home && getComputedStyle(home).display !== 'none' && !home.hidden; })()`);
-    if (homeVisible) {
-      await tapSelector(devtools.command, '#home-create-project');
-      await evaluate(devtools.command, `(() => { const input = document.querySelector('#home-dialog-name'); if (!input) return false; input.value = 'Android Smoke Project'; input.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
-      await tapSelector(devtools.command, '#home-dialog-submit');
-      console.log('PASS: Project Home created an Android smoke project and opened it in Studio.');
+    assert.equal(homeVisible, true, 'Cold launch did not show Project Home.');
+    await tapSelector(devtools.command, '#home-create-project');
+    const projectDialogReady = await evaluate(devtools.command, `Boolean(document.querySelector('#home-dialog-name'))`);
+    assert.equal(projectDialogReady, true, 'Project Home did not open the create-project dialog.');
+    await evaluate(devtools.command, `(() => { const input = document.querySelector('#home-dialog-name'); input.value = 'Android Smoke Project'; input.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    await tapSelector(devtools.command, '#home-dialog-submit');
+    const studioDeadline = Date.now() + 30_000;
+    let createdProject;
+    while (Date.now() < studioDeadline) {
+      createdProject = await evaluate(devtools.command, `(() => ({
+        homeVisible: (() => { const home = document.querySelector('#home-screen'); return !!home && getComputedStyle(home).display !== 'none' && !home.hidden; })(),
+        appReady: Boolean(window.animationerApp && document.querySelector('#studio-panel')),
+        projectName: window.animationerApp?.projectName || '',
+        projectId: window.animationerApp?.projectId || null,
+        panelInert: document.querySelector('#panel-body-wrapper')?.inert ?? true,
+      }))()`);
+      if (!createdProject.homeVisible && createdProject.appReady && !createdProject.panelInert) break;
+      await sleep(500);
     }
+    assert.equal(createdProject?.homeVisible, false, `Creating a project did not navigate away from Project Home: ${JSON.stringify(createdProject)}`);
+    assert.equal(createdProject?.appReady, true, `Studio did not initialize for the newly created smoke project: ${JSON.stringify(createdProject)}`);
+    assert.equal(createdProject?.projectName, 'Android Smoke Project', `Studio opened a different project: ${JSON.stringify(createdProject)}`);
+    assert(createdProject?.projectId, 'The newly created smoke project has no project ID.');
+    console.log('PASS: Cold launch showed Project Home; Home created the smoke project and opened it in Studio.');
 
     const uiDeadline = Date.now() + 120_000;
     let uiState;
@@ -268,6 +286,22 @@ async function main() {
     assert(uiState.screenshotButton && uiState.canvas, `App UI did not become ready: ${JSON.stringify(uiState)}`);
     assert.equal(uiState.panelInert, false, 'Studio controls remained inert after project restoration.');
     console.log(`PASS: Android app UI loaded (${uiState.appTitle}; ${EXPECTED_TABS.length} tabs; canvas present).`);
+
+    // Exercise the control-mode selector after navigating to its character panel.
+    await tapSelector(devtools.command, '.studio-tab-btn[data-tab="tab-character"]');
+    await tapSelector(devtools.command, '#control-mode-select');
+    for (const mode of ['tap', 'joystick', 'arrows']) {
+      await evaluate(devtools.command, `(() => { const select = document.querySelector('#control-mode-select'); if (!select) return false; select.value = ${JSON.stringify(mode)}; select.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+      const controlState = await evaluate(devtools.command, `(() => ({
+        selected: document.querySelector('#control-mode-select')?.value,
+        joystick: getComputedStyle(document.querySelector('#joystick-controls')).display,
+        arrows: getComputedStyle(document.querySelector('#arrow-controls')).display,
+      }))()`);
+      assert.equal(controlState.selected, mode, `Control mode did not select ${mode}: ${JSON.stringify(controlState)}`);
+      assert.equal(controlState.joystick, mode === 'joystick' ? 'block' : 'none', `Unexpected joystick overlay for ${mode}: ${JSON.stringify(controlState)}`);
+      assert.equal(controlState.arrows, mode === 'arrows' ? 'grid' : 'none', `Unexpected arrow overlay for ${mode}: ${JSON.stringify(controlState)}`);
+    }
+    console.log('PASS: Android touch reached the control-mode selector; tap, joystick, and arrows states matched their overlays.');
 
     // Exercise every tab with Android touch input and verify the matching panel becomes active.
     for (const tabId of EXPECTED_TABS) {
