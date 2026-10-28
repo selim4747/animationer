@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { PROJECT_SCHEMA_VERSION } from '../src/components/ProjectStore.js';
 
 const DEVTOOLS_URL = 'http://127.0.0.1:9222';
 const EXPORT_DIRECTORY = '/sdcard/Documents/Animationer';
@@ -117,10 +118,11 @@ async function evaluate(command, expression) {
 }
 
 async function tapSelector(command, selector) {
-  const element = await evaluate(command, `(() => {
+  const element = await evaluate(command, `(async () => {
     const target = document.querySelector(${JSON.stringify(selector)});
     if (!target) return null;
     target.scrollIntoView({ block: 'center' });
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const rect = target.getBoundingClientRect();
     const style = getComputedStyle(target);
     const x = rect.left + rect.width / 2;
@@ -133,12 +135,16 @@ async function tapSelector(command, selector) {
       visible: rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.pointerEvents !== 'none',
       receivesTouch,
       coveredBy: receivesTouch ? null : [hit?.tagName || 'none', hit?.id || '', typeof hit?.className === 'string' ? hit.className : ''].join('#'),
+      pointerEvents: style.pointerEvents,
+      rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      ancestors: (() => { const result = []; for (let node = target; node && result.length < 6; node = node.parentElement) { const current = getComputedStyle(node); result.push({ tag: node.tagName, id: node.id, pointerEvents: current.pointerEvents, inert: node.inert === true }); } return result; })(),
     };
   })()`);
-  assert(element?.visible, `Touch target is not visible: ${selector}`);
-  assert(element.receivesTouch, `Touch target is covered by ${element.coveredBy}: ${selector}`);
+  assert(element?.visible, `Touch target is not visible: ${selector}; details=${JSON.stringify(element)}`);
+  assert(element.receivesTouch, `Touch target is covered by ${element.coveredBy}: ${selector}; details=${JSON.stringify(element)}`);
   const point = { x: Math.round(element.x), y: Math.round(element.y), id: 0, radiusX: 1, radiusY: 1, force: 1 };
   await command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+  await sleep(75);
   await command('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await sleep(250);
 }
@@ -227,6 +233,22 @@ async function main() {
   globalThis.__devtoolsCommand = devtools.command;
 
   try {
+    const homeReadyDeadline = Date.now() + 120_000;
+    let homeReady = false;
+    while (Date.now() < homeReadyDeadline) {
+      homeReady = await evaluate(devtools.command, `Boolean(window.animationerHome || window.animationerApp)`);
+      if (homeReady) break;
+      await sleep(500);
+    }
+    assert(homeReady, 'Neither Project Home nor Studio finished initializing.');
+    const homeVisible = await evaluate(devtools.command, `(() => { const home = document.querySelector('#home-screen'); return !!home && getComputedStyle(home).display !== 'none' && !home.hidden; })()`);
+    if (homeVisible) {
+      await tapSelector(devtools.command, '#home-create-project');
+      await evaluate(devtools.command, `(() => { const input = document.querySelector('#home-dialog-name'); if (!input) return false; input.value = 'Android Smoke Project'; input.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+      await tapSelector(devtools.command, '#home-dialog-submit');
+      console.log('PASS: Project Home created an Android smoke project and opened it in Studio.');
+    }
+
     const uiDeadline = Date.now() + 120_000;
     let uiState;
     while (Date.now() < uiDeadline) {
@@ -234,15 +256,17 @@ async function main() {
         tabs: Array.from(document.querySelectorAll('.studio-tab-btn')).map((button) => button.dataset.tab),
         screenshotButton: !!document.querySelector('#btn-take-screenshot'),
         canvas: !!document.querySelector('canvas'),
+        panelInert: document.querySelector('#panel-body-wrapper')?.inert ?? true,
         appTitle: document.title,
         readyState: document.readyState,
         bodyText: document.body?.innerText?.slice(0, 300) || '',
       }))()`);
-      if (uiState.tabs?.length === EXPECTED_TABS.length && uiState.screenshotButton && uiState.canvas) break;
+      if (uiState.tabs?.length === EXPECTED_TABS.length && uiState.screenshotButton && uiState.canvas && !uiState.panelInert) break;
       await sleep(1_000);
     }
     assert.deepEqual(uiState?.tabs, EXPECTED_TABS, `Expected all six tabs; got ${JSON.stringify(uiState?.tabs)}`);
     assert(uiState.screenshotButton && uiState.canvas, `App UI did not become ready: ${JSON.stringify(uiState)}`);
+    assert.equal(uiState.panelInert, false, 'Studio controls remained inert after project restoration.');
     console.log(`PASS: Android app UI loaded (${uiState.appTitle}; ${EXPECTED_TABS.length} tabs; canvas present).`);
 
     // Exercise every tab with Android touch input and verify the matching panel becomes active.
@@ -312,24 +336,25 @@ async function main() {
 
     // Add a safe sample action, then export and validate the actual device JSON file.
     await tapSelector(devtools.command, '.studio-tab-btn[data-tab="tab-timeline"]');
-    const stepCountBefore = await evaluate(devtools.command, `document.querySelector('#timeline-steps-list').children.length`);
+    const stepCountBefore = await evaluate(devtools.command, `document.querySelectorAll('#timeline-steps-list .timeline-step-card').length`);
     await tapSelector(devtools.command, '#btn-add-wait-step');
     const stepDeadline = Date.now() + 5_000;
     let stepCountAfter = stepCountBefore;
     while (Date.now() < stepDeadline && stepCountAfter === stepCountBefore) {
       await sleep(200);
-      stepCountAfter = await evaluate(devtools.command, `document.querySelector('#timeline-steps-list').children.length`);
+      stepCountAfter = await evaluate(devtools.command, `document.querySelectorAll('#timeline-steps-list .timeline-step-card').length`);
     }
-    assert.equal(stepCountAfter, stepCountBefore + 1, 'Adding the quick wait step did not update the timeline.');
+    const waitButtonState = await evaluate(devtools.command, `(() => ({ managerStepCount: window.animationerApp?.uiManager?.timeline?.steps?.length, stepCards: document.querySelectorAll('#timeline-steps-list .timeline-step-card').length, buttonDisabled: document.querySelector('#btn-add-wait-step')?.disabled, panelInert: document.querySelector('#panel-body-wrapper')?.inert, panelHidden: document.querySelector('#studio-panel')?.classList.contains('hidden-cinematic'), toast: document.querySelector('#toast-message')?.textContent || '' }))()`);
+    assert.equal(stepCountAfter, stepCountBefore + 1, `Adding the quick wait step did not update the timeline: ${JSON.stringify(waitButtonState)}`);
+    assert.equal(waitButtonState.managerStepCount, stepCountAfter, 'Timeline UI and manager step counts diverged.');
     await tapSelector(devtools.command, '#btn-export-timeline-json');
     const jsonPath = await waitForExportedFile('animationer-project.json');
     const project = JSON.parse(readDeviceFile(jsonPath).toString('utf8'));
     assert.equal(project.format, 'animationer-project');
-    assert.equal(project.schemaVersion, 2);
-    assert.equal(project.scope?.timeline, true);
-    assert(Array.isArray(project.steps));
-    assert.equal(project.steps.length, stepCountAfter);
-    console.log(`PASS: Timeline accepted a new step and saved valid project JSON (${jsonPath}; ${project.steps.length} steps).`);
+    assert.equal(project.schemaVersion, PROJECT_SCHEMA_VERSION);
+    assert(Array.isArray(project.timeline?.steps));
+    assert.equal(project.timeline.steps.length, stepCountAfter);
+    console.log(`PASS: Timeline accepted a new step and saved valid project JSON (${jsonPath}; ${project.timeline.steps.length} steps).`);
 
     const shareActionVisible = await waitForShareAction(devtools.command);
     assert.equal(shareActionVisible, true, 'Saved Android project did not expose its Share action after the native save finished.');
@@ -406,7 +431,44 @@ async function main() {
     const previewDuration = Number.isFinite(preview.duration) ? `${preview.duration.toFixed(2)}s` : 'stream duration unavailable';
     console.log(`PASS: Manual Android video saved and played through the in-app preview (${videoPath}; ${video.length} bytes; ${preview.width}x${preview.height}; ${previewDuration}).`);
 
-    console.log('ANDROID USER TEST SUMMARY: 6 tabs, collapse/expand, touch-restorable full-screen mode, timeline edit, project JSON, Android Share sheet, PNG and playable manual video export exercised.');
+    // Verify the project can be renamed, duplicated, favorited, and deleted from Project Home.
+    await tapSelector(devtools.command, '#btn-home-screen');
+    let homeState;
+    const homeDeadline = Date.now() + 30_000;
+    while (Date.now() < homeDeadline) {
+      homeState = await evaluate(devtools.command, `(() => ({ visible: !document.querySelector('#home-screen')?.hidden, cards: document.querySelectorAll('.home-project-card').length }))()`);
+      if (homeState.visible && homeState.cards) break;
+      await sleep(500);
+    }
+    assert(homeState?.visible && homeState.cards === 1, `Project Home did not return with the smoke project: ${JSON.stringify(homeState)}`);
+    let projectId = await evaluate(devtools.command, `document.querySelector('.home-project-card')?.dataset.projectId || null`);
+    assert(projectId, 'The smoke project has no project ID.');
+    const projectSelector = (action) => `.home-project-card[data-project-id="${projectId}"] [data-action="${action}"]`;
+    await tapSelector(devtools.command, projectSelector('rename'));
+    await evaluate(devtools.command, `(() => { const input = document.querySelector('#home-dialog-name'); input.value = 'Android Smoke Renamed'; input.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    await tapSelector(devtools.command, '#home-dialog-submit');
+    await sleep(300);
+    let renamed = await evaluate(devtools.command, `document.querySelector('.home-project-card h3')?.textContent || ''`);
+    assert.equal(renamed, 'Android Smoke Renamed', `Project rename failed: ${renamed}`);
+    await tapSelector(devtools.command, projectSelector('favorite'));
+    let favorite = await evaluate(devtools.command, `document.querySelector(${JSON.stringify(projectSelector('favorite'))})?.getAttribute('aria-pressed')`);
+    assert.equal(favorite, 'true', 'Project favorite toggle did not persist.');
+    await tapSelector(devtools.command, projectSelector('duplicate'));
+    await evaluate(devtools.command, `(() => { const input = document.querySelector('#home-dialog-name'); input.value = 'Android Smoke Copy'; input.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+    await tapSelector(devtools.command, '#home-dialog-submit');
+    await sleep(400);
+    homeState = await evaluate(devtools.command, `(() => ({ cards: document.querySelectorAll('.home-project-card').length, copy: [...document.querySelectorAll('.home-project-card h3')].some((item) => item.textContent === 'Android Smoke Copy') }))()`);
+    assert.deepEqual(homeState, { cards: 2, copy: true }, `Project duplicate failed: ${JSON.stringify(homeState)}`);
+    projectId = await evaluate(devtools.command, `[...document.querySelectorAll('.home-project-card')].find((card) => card.querySelector('h3')?.textContent === 'Android Smoke Copy')?.dataset.projectId || null`);
+    assert(projectId, 'The duplicate project card was not found.');
+    await tapSelector(devtools.command, projectSelector('delete'));
+    await tapSelector(devtools.command, '#home-dialog-submit');
+    await sleep(300);
+    homeState = await evaluate(devtools.command, `(() => ({ cards: document.querySelectorAll('.home-project-card').length, name: document.querySelector('.home-project-card h3')?.textContent || '' }))()`);
+    assert.deepEqual(homeState, { cards: 1, name: 'Android Smoke Renamed' }, `Project deletion failed: ${JSON.stringify(homeState)}`);
+    console.log('PASS: Project Home rename, favorite, duplicate, and delete touch flows.');
+
+    console.log('ANDROID USER TEST SUMMARY: Project Home create/rename/favorite/duplicate/delete; 6 studio tabs, collapse/expand, full-screen mode, timeline edit, JSON backup, Android Share sheet, PNG, and playable video export exercised.');
   } finally {
     delete globalThis.__devtoolsCommand;
     devtools.socket.close();

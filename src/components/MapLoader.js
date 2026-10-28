@@ -36,6 +36,7 @@ export class MapLoader {
     // Bu modelle yüklenen nesnelerin takibi
     this.registeredObstacles = [];
     this.registeredWalkableSurfaces = [];
+    this.meshesByEditorId = new Map();
 
     this.imageAspectRatio = 1.0;
     this.isGroundOrientation = true;
@@ -97,6 +98,7 @@ export class MapLoader {
     this.currentSourceFile = null;
     this.currentFileName = null;
     this.currentObjectType = 'none';
+    this.meshesByEditorId.clear();
     this.stateRevision++;
     this.onStatusChange({ type: 'cleared', name: null });
     if (notify) this.onStateChange({ type: 'map-cleared' });
@@ -135,8 +137,11 @@ export class MapLoader {
         // Yürünebilir zemin & merdiven regex tanımı
         const walkableRegex = /stairs|merdiven|step|basamak|floor|zemin|ground|walkable|ramp|rampa|platform|kat|deck/i;
 
+        let meshIndex = 0;
         model.traverse((node) => {
           if (node.isMesh) {
+            node.userData.editorMeshId = `mesh-${meshIndex++}`;
+            this.meshesByEditorId.set(node.userData.editorMeshId, node);
             node.castShadow = true;
             node.receiveShadow = true;
 
@@ -161,12 +166,14 @@ export class MapLoader {
             const isHorizontalSurface = sizeY < 0.35 && (sizeX > 0.8 || sizeZ > 0.8);
 
             if (isExplicitWalkable || isHorizontalSurface) {
+              node.userData.editorCollisionKind = 'walkable';
               // Yürünebilir Zemin veya Merdiven Basamağı olarak kaydet
               if (this.collisionManager) {
                 this.collisionManager.registerWalkableSurface(node);
                 this.registeredWalkableSurfaces.push(node);
               }
             } else {
+              node.userData.editorCollisionKind = 'obstacle';
               // Mobilya, korkuluk veya duvar engeli olarak kaydet
               if (this.collisionManager) {
                 this.collisionManager.registerObstacle(node);
@@ -264,21 +271,21 @@ export class MapLoader {
       if (!/\.glb$/i.test(this.currentFileName || '')) {
         throw new Error('Kayıtlı projelerde 3D ortam için tek dosyalı .glb kullanın; .gltf harici kaynakları projeye dahil edemiyor.');
       }
-      return { kind: 'model', fileName: this.currentFileName, mimeType: this.currentSourceFile.type, blob: this.currentSourceFile.slice(0, this.currentSourceFile.size, this.currentSourceFile.type) };
+      return { kind: 'model', fileName: this.currentFileName, mimeType: this.currentSourceFile.type, blob: this.currentSourceFile.slice(0, this.currentSourceFile.size, this.currentSourceFile.type), meshOverrides: this.exportMeshOverrides() };
     }
     if (this.currentObjectType === '3d' && this.currentLoadedObject && this.currentFileName === '3D Galeri (Örnek)') {
-      return { kind: 'demo-gallery', fileName: this.currentFileName };
+      return { kind: 'demo-gallery', fileName: this.currentFileName, meshOverrides: this.exportMeshOverrides() };
     }
     return null;
   }
 
   async restoreProjectState(mapAsset) {
     if (!mapAsset) { this.clear(); return null; }
-    if (mapAsset.kind === 'demo-gallery') { this.loadDemo3DGallery(); return true; }
+    if (mapAsset.kind === 'demo-gallery') { this.loadDemo3DGallery(); this.applyMeshOverrides(mapAsset.meshOverrides || [], { notify: false }); return true; }
     if (!(mapAsset.blob instanceof Blob)) throw new Error('Kayıtlı 2D ortam görseli okunamıyor.');
     const url = URL.createObjectURL(mapAsset.blob);
     try {
-      if (mapAsset.kind === 'model') await this.loadGLTF(url, mapAsset.fileName, mapAsset.blob);
+      if (mapAsset.kind === 'model') { await this.loadGLTF(url, mapAsset.fileName, mapAsset.blob); this.applyMeshOverrides(mapAsset.meshOverrides || [], { notify: false }); }
       else {
         await this.loadImage(url, mapAsset.fileName, mapAsset.blob);
         this.setScale(mapAsset.scale);
@@ -303,6 +310,60 @@ export class MapLoader {
     this.clearAllWallBoxes();
     for (const box of boxes) this.createWallBox(box.x, box.z, box.width, box.depth, box.height);
     return this.exportWallBoxesForStorage();
+  }
+
+  getEditableMeshes() {
+    return [...this.meshesByEditorId.entries()].map(([id, object], index) => ({
+      id, name: object.name || `Mesh ${index + 1}`, visible: object.visible !== false,
+      kind: object.userData.editorCollisionKind || 'none',
+    }));
+  }
+
+  exportMeshOverrides() {
+    return this.getEditableMeshes().map(({ id, kind, visible }) => ({ id, kind, visible }));
+  }
+
+  applyMeshOverrides(overrides = [], { notify = true } = {}) {
+    for (const override of overrides) {
+      if (!override || !this.meshesByEditorId.has(override.id)) continue;
+      const object = this.meshesByEditorId.get(override.id);
+      if (['walkable', 'obstacle', 'none'].includes(override.kind)) object.userData.editorCollisionKind = override.kind;
+      if (typeof override.visible === 'boolean') object.visible = override.visible;
+      this._syncMeshCollision(object);
+    }
+    if (notify) {
+      this.stateRevision++;
+      this.onStateChange({ type: 'map-mesh-settings-changed' });
+    }
+    this.onStatusChange({ type: 'mesh-settings-updated' });
+  }
+
+  setMeshCollisionKind(id, kind) {
+    const object = this.meshesByEditorId.get(id);
+    if (!object || !['walkable', 'obstacle', 'none'].includes(kind)) return false;
+    object.userData.editorCollisionKind = kind;
+    this._syncMeshCollision(object);
+    this.stateRevision++;
+    this.onStateChange({ type: 'map-mesh-settings-changed' });
+    return true;
+  }
+
+  setMeshVisible(id, visible) {
+    const object = this.meshesByEditorId.get(id);
+    if (!object || typeof visible !== 'boolean') return false;
+    object.visible = visible;
+    this._syncMeshCollision(object);
+    this.stateRevision++;
+    this.onStateChange({ type: 'map-mesh-settings-changed' });
+    return true;
+  }
+
+  _syncMeshCollision(object) {
+    this.collisionManager?.unregisterObstacle(object);
+    this.collisionManager?.unregisterWalkableSurface(object);
+    if (object.visible === false) return;
+    if (object.userData.editorCollisionKind === 'walkable') this.collisionManager?.registerWalkableSurface(object);
+    else if (object.userData.editorCollisionKind === 'obstacle') this.collisionManager?.registerObstacle(object);
   }
 
   setOrientation(isGround) {
@@ -448,6 +509,29 @@ export class MapLoader {
     this.collisionManager.removeWallBox(box);
     this.onStatusChange({ type: 'wallBoxRemoved', count: this.collisionManager.wallBoxes.length });
     this.onStateChange({ type: 'wall-box-removed' });
+    return true;
+  }
+
+  updateWallBox(box, patch = {}) {
+    if (!this.collisionManager?.wallBoxes?.includes(box)) return false;
+    const old = box.userData || {};
+    const x = Number(patch.x ?? box.position.x);
+    const z = Number(patch.z ?? box.position.z);
+    const width = Number(patch.width ?? old.width);
+    const depth = Number(patch.depth ?? old.depth);
+    const height = Number(patch.height ?? old.height);
+    if (![x, z, width, depth, height].every(Number.isFinite) || Math.abs(x) > 1000 || Math.abs(z) > 1000
+      || width < 0.1 || depth < 0.1 || height < 0.1 || width > 1000 || depth > 1000 || height > 1000) return false;
+    box.geometry.dispose();
+    const edgeMesh = box.children.find((child) => child.isLineSegments);
+    const geometry = new THREE.BoxGeometry(width, height, depth);
+    box.geometry = geometry;
+    if (edgeMesh) { edgeMesh.geometry.dispose(); edgeMesh.geometry = new THREE.EdgesGeometry(geometry); }
+    box.position.set(x, height / 2, z);
+    box.userData = { ...old, width, depth, height, isWallBox: true };
+    this.collisionManager.registerObstacle(box);
+    this.stateRevision++;
+    this.onStateChange({ type: 'wall-box-updated' });
     return true;
   }
 

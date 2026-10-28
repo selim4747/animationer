@@ -91,6 +91,7 @@ export class HomeScreen {
         return;
       }
       const card = button.closest('[data-character-id]');
+      if (card && ['asset-rename','asset-edit','asset-replace','asset-delete'].includes(button.dataset.action)) { void this._assetAction(button.dataset.action, card.dataset.characterId); return; }
       if (button.dataset.action === 'use-character' && card) return this._showDialog('use-character', card.dataset.characterId);
       if (card) return void this._selectCharacter(card.dataset.characterId);
       const projectCard = button.closest('[data-project-id]');
@@ -100,8 +101,10 @@ export class HomeScreen {
       if (button.dataset.action === 'rename') return this._showDialog('rename', projectId);
       if (button.dataset.action === 'duplicate') return this._showDialog('duplicate', projectId);
       if (button.dataset.action === 'delete') return this._showDialog('delete', projectId);
+      if (button.dataset.action === 'favorite') { void this.store.setProjectFavorite(projectId, button.getAttribute('aria-pressed') !== 'true').then(() => this.refresh()).catch((error) => this._setError(this.dom.projectError, error.message)); return; }
     });
 
+    this._ensureProjectControls();
     this.dom.dialogCancel.addEventListener('click', () => this.dom.dialog.close('cancel'));
     this.dom.dialogForm.addEventListener('submit', (event) => { event.preventDefault(); void this._submitDialog(); });
     this.dom.modelPicker.addEventListener('change', (event) => { void this._add3dModel(event.target.files?.[0]); });
@@ -136,9 +139,14 @@ export class HomeScreen {
   _renderProjects() {
     const { projectList, projectCount, projectEmpty } = this.dom;
     projectList.replaceChildren();
-    projectCount.textContent = `${this.projects.length} ${this.projects.length === 1 ? 'PROJE' : 'PROJE'}`;
-    projectEmpty.hidden = this.projects.length > 0;
-    for (const project of this.projects) {
+    const query=(this.projectQuery||'').trim().toLocaleLowerCase('tr');
+    const projects=this.projects.filter((p)=>p.name.toLocaleLowerCase('tr').includes(query));
+    if (this.projectSort==='name') projects.sort((a,b)=>a.name.localeCompare(b.name,'tr'));
+    if (this.projectSort==='favorite') projects.sort((a,b)=>Number(b.favorite===true)-Number(a.favorite===true) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    projectCount.textContent = projects.length === this.projects.length ? `${projects.length} PROJE` : `${projects.length}/${this.projects.length} PROJE`;
+    projectEmpty.hidden = projects.length > 0;
+    projectEmpty.textContent = query && this.projects.length ? 'Aramanızla eşleşen proje bulunamadı.' : 'Henüz kayıtlı projen yok. “Yeni Proje” ile bir sahne oluştur.';
+    for (const project of projects) {
       const card = element('article', 'home-project-card');
       card.dataset.projectId = project.id;
       const open = element('button', 'home-project-open');
@@ -157,6 +165,7 @@ export class HomeScreen {
       );
       if (project.wallBoxCount) metrics.append(element('span', 'home-project-metric', `${project.wallBoxCount} · ENGEL`));
       const actions = element('div', 'home-project-actions');
+      const favorite = element('button', '', project.favorite ? '★ Favori' : '☆ Favorile'); favorite.type = 'button'; favorite.dataset.action = 'favorite'; favorite.setAttribute('aria-pressed', String(project.favorite === true)); actions.append(favorite);
       for (const [action, label] of [['rename', 'Adını değiştir'], ['duplicate', 'Kopyala'], ['delete', 'Sil']]) {
         const button = element('button', '', label);
         button.type = 'button';
@@ -167,6 +176,17 @@ export class HomeScreen {
       card.append(open, metrics, actions);
       projectList.append(card);
     }
+  }
+
+  _ensureProjectControls() {
+    if (this.dom.projectList.parentElement.querySelector('[data-home-project-controls]')) return;
+    const controls = element('div', 'home-project-controls'); controls.dataset.homeProjectControls = 'true';
+    const search = element('input'); search.type='search'; search.placeholder='Projelerde ara'; search.setAttribute('aria-label','Projelerde ara');
+    const sort = element('select'); sort.setAttribute('aria-label','Projeleri sırala');
+    for (const [value,label] of [['recent','En yeni'],['name','Ada göre'],['favorite','Favoriler önce']]) { const option=element('option','',label); option.value=value; sort.append(option); }
+    search.addEventListener('input',()=>{ this.projectQuery=search.value; this._renderProjects(); });
+    sort.addEventListener('change',()=>{ this.projectSort=sort.value; this._renderProjects(); });
+    controls.append(search,sort); this.dom.projectList.parentElement.insertBefore(controls,this.dom.projectList);
   }
 
   _currentAssets() { return this.activeKind === '2d' ? this.templates : this.models; }
@@ -191,6 +211,10 @@ export class HomeScreen {
       use.dataset.action = 'use-character';
       use.setAttribute('aria-label', `${asset.name} karakterini bir projeye ekle`);
       item.append(card, use);
+      const actions = element('div', 'home-character-actions');
+      const actionDefs = this.activeKind === '2d' ? [['asset-rename','Ad'],['asset-edit','Grid/FPS'],['asset-replace','Dosya'],['asset-delete','Sil']] : [['asset-rename','Ad'],['asset-replace','Dosya'],['asset-delete','Sil']];
+      for (const [action,label] of actionDefs) { const button = element('button','',label); button.type='button'; button.dataset.action=action; actions.append(button); }
+      item.append(actions);
       this.dom.characterList.append(item);
     }
   }
@@ -381,6 +405,44 @@ export class HomeScreen {
     } catch (error) {
       this._setError(this.dom.projectError, error.message || 'İşlem tamamlanamadı.');
     }
+  }
+
+  async _assetAction(action, id) {
+    const kind=this.activeKind; const is2d=kind==='2d'; const store=this.store;
+    try {
+      if (action==='asset-rename') {
+        const asset=(is2d?this.templates:this.models).find((a)=>a.id===id); const name=globalThis.prompt?.('Yeni ad',asset?.name||'');
+        if (name == null) return; if (is2d) await store.renameCharacterTemplate(id,name); else await store.renameCharacterModel(id,name);
+      } else if (action==='asset-edit' && is2d) {
+        const a=await store.getCharacterTemplate(id); const columns=Number(globalThis.prompt?.('Sütun sayısı',String(a.columns))); if (!Number.isFinite(columns)) return;
+        const rows=Number(globalThis.prompt?.('Satır sayısı',String(a.rows))); if (!Number.isFinite(rows)) return;
+        const fps=Number(globalThis.prompt?.('FPS',String(a.fps))); if (!Number.isFinite(fps)) return;
+        const url=URL.createObjectURL(a.blob);
+        try { const image=await loadImage(url); if (image.naturalWidth % columns || image.naturalHeight % rows) throw new Error('Görsel boyutları seçilen kolon ve satır sayısına tam bölünmeli.'); }
+        finally { URL.revokeObjectURL(url); }
+        await store.updateCharacterTemplateMetadata(id,{columns,rows,fps});
+      } else if (action==='asset-replace') {
+        const input=element('input'); input.type='file'; input.accept=is2d?'.png,.webp,.jpg,.jpeg':'.glb';
+        const file=await new Promise((resolve)=>{input.onchange=()=>resolve(input.files?.[0]||null);input.oncancel=()=>resolve(null);input.click();}); if (!file) return;
+        if (is2d) {
+          const old=await store.getCharacterTemplate(id); const url=URL.createObjectURL(file);
+          try { const image=await loadImage(url); if (image.naturalWidth % old.columns || image.naturalHeight % old.rows) throw new Error(`Yeni görsel mevcut ${old.columns}×${old.rows} ızgaraya tam bölünmüyor.`); }
+          finally { URL.revokeObjectURL(url); }
+          await store.replaceCharacterTemplate(id,file);
+        } else {
+          if (!/\.glb$/i.test(file.name||'') || !file.size || file.size>MAX_CHARACTER_MODEL_BYTES) throw new Error('50 MB’a kadar geçerli bir .glb dosyası seçin.');
+          const loader=new GLTFLoader(); const buffer=await file.arrayBuffer(); const gltf=await new Promise((resolve,reject)=>loader.parse(buffer,'',resolve,reject));
+          if (!gltf?.scene) throw new Error('GLB dosyası çözümlenemedi.');
+          disposeObject(gltf.scene); await store.replaceCharacterModel(id,file);
+        }
+      } else if (action==='asset-delete') {
+        const usages=is2d?await store.getCharacterTemplateUsages(id):await store.getCharacterModelUsages(id);
+        const detail = usages.length ? `\nKullanım: ${usages.map((u) => `${u.projectName} (${u.count}: ${u.characters.join(', ')})`).join('; ')}` : '\nKullanılmıyor.';
+        if (!globalThis.confirm?.(`Bu kitaplık varlığı silinsin mi?${detail}`)) return;
+        if (is2d) await store.deleteCharacterTemplate(id); else await store.deleteCharacterModel(id);
+      }
+      await this.refresh(); this._showToast('Karakter kitaplığı güncellendi.');
+    } catch(error) { this._setError(this.dom.libraryError,error.message||'Kitaplık işlemi tamamlanamadı.'); }
   }
 
   async _add3dModel(file) {

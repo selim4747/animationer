@@ -83,6 +83,10 @@
               Boş Akışa Geç
             </button>
           </div>
+          <div class="studio-ctrl-row" style="margin-top: 6px;">
+            <button id="btn-timeline-undo" class="hud-btn flex-grow" type="button" title="Son düzenlemeyi geri al" disabled>Geri Al</button>
+            <button id="btn-timeline-redo" class="hud-btn flex-grow" type="button" title="Geri alınan düzenlemeyi yinele" disabled>Yinele</button>
+          </div>
 
           <!-- Manuel Adım Ekleme Kısayolları -->
           <div class="studio-sub-header">HIZLI ADIM EKLE:</div>
@@ -118,17 +122,17 @@
 
           <!-- JSON Dışa / İçe Aktarma -->
           <div class="studio-ctrl-row" style="margin-top: 10px;">
-            <button id="btn-export-timeline-json" class="hud-btn flex-grow" title="Zaman çizelgesi ve 2D spritesheet görsellerini JSON olarak indir">
-              Reji + 2D Projesini İndir
+            <button id="btn-export-timeline-json" class="hud-btn flex-grow" title="Harita, karakterler, kamera ve reji dahil tam proje yedeğini indir">
+              Tam Proje Yedeğini İndir
             </button>
             <button id="btn-import-timeline-json" class="hud-btn flex-grow" title="Kayıtlı JSON dosyasını yükle">
               JSON Yükle (İçe Aktar)
             </button>
             <input type="file" id="file-picker-timeline-json" accept=".json" style="display: none;" />
           </div>
-          <p class="step-meta" style="white-space: normal; margin-top: 6px;">Dışa aktarma reji ayarlarıyla birlikte 2D spritesheet görsellerini içerir. 3D karakter modelleri, harita dosyaları ve kamera/scene tercihleri dahil değildir.</p>
+          <p class="step-meta" style="white-space: normal; margin-top: 6px;">Yedek; proje sahnesini, ortamı, karakter kaynaklarını, kamera istasyonlarını ve reji akışını içerir.</p>
           <div id="autosave-status" class="autosave-status" role="status" aria-live="polite">Otomatik kayıt kontrol ediliyor…</div>
-          <p class="step-meta" style="white-space: normal; margin-top: 4px;">Otomatik kayıt cihazda IndexedDB kullanır (toplam 100 MB; timeline + 2D sprite dosyaları). Bu kapsam sınırı otomatik kayıt ve JSON dışa aktarma için geçerlidir.</p>
+          <p class="step-meta" style="white-space: normal; margin-top: 4px;">Otomatik kayıt bu cihazın yerel IndexedDB alanında saklanır; indirilen JSON yedeğini ayrıca güvenli bir yerde tutun.</p>
         </div>
 
         <!-- ==========================================
@@ -140,7 +144,7 @@
           <div id="studio-drop-zone" class="studio-drop-zone" title="Dosyayı buraya sürükleyin veya tıklayın">
             <div class="drop-icon">📁</div>
             <div class="drop-title">Harita / Zemin / Model Yükle</div>
-            <div class="drop-desc">.glb, .gltf (3D) veya .png, .jpg (2D Görsel)</div>
+            <div class="drop-desc">.glb, .gltf (3D) veya .png, .jpg, .webp (2D Görsel)</div>
             <button id="btn-trigger-file-pick" class="hud-btn primary small-btn" style="margin-top: 6px;">
               Cihazdan Dosya Seç
             </button>
@@ -201,7 +205,7 @@
             <button id="btn-focus-map" class="hud-btn flex-grow" title="Kamerayı haritaya odakla">
               Haritaya Odaklan
             </button>
-            <button id="btn-clear-map" class="hud-btn subtle flex-grow" title="Yüklü haritayı kaldır">
+            <button id="btn-clear-map" class="hud-btn subtle flex-grow" title="Onayla; son harita kaldırma işlemini toast üzerinden geri alabilirsiniz">
               Haritayı Kaldır
             </button>
           </div>
@@ -210,11 +214,17 @@
             <button id="btn-add-wall-box" class="hud-btn small-btn flex-grow" title="Karakterin geçemeyeceği tel kafes engel ekle">
               + Engel Kutusu Ekle
             </button>
-            <button id="btn-clear-wall-boxes" class="hud-btn small-btn subtle" title="Eklenen tüm tel engelleri temizle">
+            <button id="btn-clear-wall-boxes" class="hud-btn small-btn subtle" title="Onayla; silinen engel kutularını toast üzerinden geri alabilirsiniz">
               Engelleri Temizle
             </button>
           </div>
           <div id="studio-wall-box-list" class="studio-camera-list-box" aria-live="polite"></div>
+          <div class="studio-sub-header" style="margin-top: 12px;">ORTAM NESNELERİ:</div>
+          <div id="studio-map-object-list" class="studio-camera-list-box" aria-live="polite"></div>
+          <div class="studio-sub-header" style="margin-top: 12px;">GÖKYÜZÜ RENGİ:</div>
+          <label class="timeline-field">Sahne arka planı
+            <input id="scene-sky-color" type="color" value="#080808" aria-label="Gökyüzü rengi" />
+          </label>
         </div>
 
         <!-- ==========================================

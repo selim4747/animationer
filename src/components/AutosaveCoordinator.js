@@ -15,18 +15,24 @@ function recordFingerprint(record, mapRevision = 0) {
     actors: record.worldCharacters.map(({ id, name, templateId, x, y, z }) => [id, name, templateId, x, y, z]),
     characters3d: record.characters3d.map(({ id, name, modelId, position, rotationY, walkSpeed, wobbleIntensity, visible }) => [id, name, modelId, position.x, position.y, position.z, rotationY, walkSpeed, wobbleIntensity, visible]),
     wallBoxes: record.wallBoxes.map(({ x, z, width, depth, height }) => [x, z, width, depth, height]),
+    skyColor: record.skyColor,
+    cameras: record.cameraStations.map((station) => [station.id, station.name, station.position.x, station.position.y, station.position.z, station.target.x, station.target.y, station.target.z, station.isAutoTrigger]),
+    activeCameraStationId: record.activeCameraStationId,
+    cameraFollowCharacter: record.cameraFollowCharacter,
     selectedCharacter3dId: record.selectedCharacter3dId,
   });
 }
 
 /** Coalesces and serializes durable project changes into IndexedDB. */
 export class AutosaveCoordinator {
-  constructor({ timeline, sprites, characters = null, mapLoader = null, worldSprites = null, projectStore, projectId = '', projectName = 'Yeni Proje', worldSpriteReady = Promise.resolve(), onStatus = () => {}, onError = () => {} }) {
+  constructor({ timeline, sprites, characters = null, mapLoader = null, worldSprites = null, cameraManager = null, scene = null, projectStore, projectId = '', projectName = 'Yeni Proje', worldSpriteReady = Promise.resolve(), onStatus = () => {}, onError = () => {} }) {
     this.timeline = timeline;
     this.sprites = sprites;
     this.characters = characters;
     this.mapLoader = mapLoader;
     this.worldSprites = worldSprites;
+    this.cameraManager = cameraManager;
+    this.scene = scene;
     this.projectStore = projectStore;
     this.projectId = projectId;
     this.projectName = projectName;
@@ -75,7 +81,7 @@ export class AutosaveCoordinator {
       const originalCharacterNotify = this.characters.onChange;
       this.characters.onChange = (state) => {
         originalCharacterNotify?.(state);
-        if (['added', 'removed', 'visibility', 'restored', 'actor-position'].includes(state?.type)) this.schedule();
+        if (['added', 'removed', 'visibility', 'restored', 'actor-position', 'selected'].includes(state?.type)) this.schedule();
       };
     }
 
@@ -96,6 +102,7 @@ export class AutosaveCoordinator {
       this.worldSprites?.exportProjectStateForStorage?.() || Promise.resolve({ templates: [], actors: [] }),
     ]);
     const characterState = this.characters?.exportProjectStateForStorage?.();
+    const cameraState = this.cameraManager?.exportProjectStateForStorage?.();
     return createAutosaveRecord({
       timeline: JSON.parse(this.timeline.exportSequence()),
       sprites,
@@ -105,6 +112,10 @@ export class AutosaveCoordinator {
       characters3d: characterState?.actors || [],
       selectedCharacter3dId: characterState?.selectedId || null,
       wallBoxes: this.mapLoader?.exportWallBoxesForStorage?.() || [],
+      skyColor: this.scene?.background?.getHexString?.() || '080808',
+      cameraStations: cameraState?.stations || [],
+      activeCameraStationId: this.cameraManager?.activeStationId || null,
+      cameraFollowCharacter: cameraState?.followCharacter !== false,
       viewport: { width: globalThis.window?.innerWidth || 1, height: globalThis.window?.innerHeight || 1 },
       projectId: this.projectId,
       name: this.projectName,
@@ -173,6 +184,8 @@ export class AutosaveCoordinator {
       await this.mapLoader?.restoreProjectState?.(record.mapAsset);
       await this.mapLoader?.restoreWallBoxes?.(record.wallBoxes || []);
       await this.characters?.restoreProjectState?.({ actors: record.characters3d, selectedId: record.selectedCharacter3dId });
+      if (this.scene?.background?.set && record.skyColor) this.scene.background.set(`#${record.skyColor}`);
+      this.cameraManager?.restoreProjectState?.({ stations: record.cameraStations || [], activeStationId: record.activeCameraStationId, followCharacter: record.cameraFollowCharacter });
       this.timeline.steps = candidate.steps;
       this.timeline.playMode = candidate.playMode;
       this.timeline._notify();
