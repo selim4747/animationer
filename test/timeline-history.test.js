@@ -95,3 +95,14 @@ test('a new edit after undo discards the redo branch; invalid imports do not ent
   assert.throws(() => timeline.importSequence({ steps: [{ type: 'BAD', data: {} }] }));
   assert.equal(timeline._undoStack.length, count);
 });
+
+
+test('per-step character assignment can be explicitly cleared to restore selected-character fallback', () => {
+  const timeline = new TimelineManager({});
+  assert.equal(timeline.updateStep(0, { actorId: 'character-2' }), true);
+  assert.equal(timeline.steps[0].actorId, 'character-2');
+  assert.equal(timeline.updateStep(0, { actorId: '' }), true);
+  assert.equal(Object.hasOwn(timeline.steps[0], 'actorId'), false);
+  assert.equal(timeline.undo(), true);
+  assert.equal(timeline.steps[0].actorId, 'character-2');
+});

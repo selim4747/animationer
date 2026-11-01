@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import * as THREE from 'three';
 import { CollisionManager } from '../src/components/CollisionManager.js';
 import { MapLoader } from '../src/components/MapLoader.js';
@@ -94,4 +95,76 @@ test('autosave project record stores and validates sky color and camera station 
   assert.equal(record.cameraStations[0].name, 'Exterior');
   assert.equal(record.activeCameraStationId, 'station-ext');
   assert.equal(record.cameraFollowCharacter, false);
+});
+
+
+test('scene transforms have bounded independent undo and redo history', () => {
+  const scene=new THREE.Scene(), mesh=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshBasicMaterial()); mesh.userData.sceneEditorId='edit-me';scene.add(mesh);const editor=new SceneEditor({scene});
+  editor.setTransform('edit-me',{position:{x:3,y:0,z:0}});assert.equal(editor.undo(),true);assert.equal(mesh.position.x,0);assert.equal(editor.redo(),true);assert.equal(mesh.position.x,3);assert.equal(editor.resetTransform('edit-me'),true);assert.equal(mesh.position.x,0);
+});
+
+test('selected color clones materials, preserving sibling materials and material properties', () => {
+  const scene=new THREE.Scene(), shared=new THREE.MeshStandardMaterial({color:'#112233',roughness:0.3});const a=new THREE.Mesh(new THREE.BoxGeometry(),shared),b=new THREE.Mesh(new THREE.BoxGeometry(),shared);a.userData.sceneEditorId='a';b.userData.sceneEditorId='b';scene.add(a,b);const editor=new SceneEditor({scene});editor.select('a');assert.equal(editor.getSelectedColor(),'#112233');assert.equal(editor.applySelectedColor('#ff0000'),true);assert.equal(a.material.color.getHexString(),'ff0000');assert.equal(b.material.color.getHexString(),'112233');assert.equal(a.material.roughness,0.3);
+});
+
+test('validated primitives expose visual-only meshes and persist descriptor plus transform and color', () => {
+  const scene=new THREE.Scene(),editor=new SceneEditor({scene});assert.throws(()=>editor.createPrimitive('box',{width:Infinity}));const box=editor.createPrimitive('box',{id:'primitive:box',width:2,color:'#abcdef'});editor.setTransform(box.userData.sceneEditorId,{position:{x:2,y:3,z:4}});const state=editor.exportProjectState().find(x=>x.id==='primitive:box');assert.deepEqual(state.primitive.type,'box');assert.equal(state.color,'#abcdef');assert.deepEqual(state.position,{x:2,y:3,z:4});assert.equal(editor.removePrimitive('primitive:box'),true);assert.equal(editor.list().some(x=>x.id==='primitive:box'),false);
+});
+
+test('v5 scene records migrate to v6 while keeping scene edits backward compatible', async () => {
+  const current=createAutosaveRecord({timeline:{steps:[]},sprites:[],sceneEdits:[{id:'s',position:{x:0,y:0,z:0},rotation:{x:0,y:0,z:0},scale:{x:1,y:1,z:1},color:'#aabbcc'}]});const prior={...current,schemaVersion:5,projectVersion:5};const migrated=(await import('../src/components/ProjectStore.js')).migrateProjectRecord(prior);assert.equal(migrated.schemaVersion,6);assert.equal(migrated.sceneEdits[0].color,'#aabbcc');
+});
+
+test('scene colors persist across restore without recoloring shared siblings', () => {
+  const scene = new THREE.Scene();
+  const shared = new THREE.MeshStandardMaterial({ color: '#102030', roughness: 0.4 });
+  const target = new THREE.Mesh(new THREE.BoxGeometry(), shared);
+  const sibling = new THREE.Mesh(new THREE.BoxGeometry(), shared);
+  target.userData.sceneEditorId = 'color:target';
+  sibling.userData.sceneEditorId = 'color:sibling';
+  scene.add(target, sibling);
+  const editor = new SceneEditor({ scene });
+  assert.equal(editor.setColor('color:target', '#abcdef'), true);
+  const saved = editor.exportProjectState();
+  assert.equal(saved.find((edit) => edit.id === 'color:target').color, '#abcdef');
+  assert.equal(target.material.color.getHexString(), 'abcdef');
+  assert.equal(sibling.material.color.getHexString(), '102030');
+  assert.equal(target.material.roughness, 0.4);
+  editor.restoreProjectState(saved);
+  assert.equal(editor.getObjectColor(target), '#abcdef');
+  assert.equal(editor.setColor('color:target', 'invalid'), false);
+  editor.restoreProjectState([]);
+  assert.equal(target.material, shared);
+  target.geometry.dispose(); sibling.geometry.dispose(); editor.dispose(); shared.dispose();
+});
+
+test('primitive scene edits reconstruct names and colors, clear stale primitives, and reset history on restore', () => {
+  const scene = new THREE.Scene();
+  const editor = new SceneEditor({ scene });
+  const object = editor.createPrimitive('box', { id: 'primitive:test', name: 'Test block', width: 2, color: '#667788' });
+  editor.setTransform('primitive:test', { position: { x: 2, y: 1, z: -1 } });
+  const saved = editor.exportProjectState();
+  assert.equal(editor.undo(), true);
+  editor.restoreProjectState(saved);
+  const restored = editor.list().find((entry) => entry.id === 'primitive:test');
+  assert.equal(restored.label, 'Test block');
+  assert.equal(editor.getSelectedColor(), null);
+  let restoredMesh = null;
+  scene.traverse((o) => { if (o.userData?.sceneEditorId === 'primitive:test') restoredMesh = o; });
+  assert.equal(editor.getObjectColor(restoredMesh), '#667788');
+  assert.equal(editor.canUndo, false);
+  assert.equal(editor.canRedo, false);
+  editor.restoreProjectState([]);
+  assert.equal(editor.list().some((entry) => entry.id === 'primitive:test'), false);
+  editor.dispose();
+  assert.ok(object.geometry); // the removed geometry was disposed during reconciliation
+});
+
+test('scene panel exposes color, primitive creation and separate scene history controls', async () => {
+  const html = await readFile(new URL('../src/ui/studio-panel.html', import.meta.url), 'utf8');
+  for (const id of ['scene-editor-color', 'scene-editor-primitive-type', 'btn-scene-editor-add-primitive', 'btn-scene-editor-remove-primitive', 'btn-scene-editor-undo', 'btn-scene-editor-redo']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(html, /Nesne rengi/);
+  assert.match(html, /Düzenleme türü/);
 });

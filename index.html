@@ -123,12 +123,20 @@
         <section class="home-projects" aria-labelledby="home-project-heading">
           <div class="home-welcome">
             <div>
-              <p class="home-eyebrow">ANIMATIONER · PROJE MERKEZİ</p>
+              <p class="home-eyebrow">ANIMATIONER · PROJEK MERKEZİ</p>
               <h1>Sahnelerin burada.</h1>
               <p>Haritalarını, karakterlerini ve reji akışlarını tek bir yerden aç.</p>
             </div>
             <button id="home-create-project" class="home-primary-button" type="button">＋ Yeni Proje</button>
           </div>
+
+          <div class="home-archive-controls" aria-label="Yedekleme ve içe aktarma">
+            <button id="home-import-project" class="home-small-button" type="button">Proje yedeğini yeni proje olarak içe aktar</button>
+            <button id="home-export-workspace" class="home-small-button" type="button">Tüm çalışma alanını dışa aktar</button>
+            <button id="home-import-workspace" class="home-small-button" type="button">Çalışma alanı arşivini içe aktar</button>
+          </div>
+          <p id="home-archive-status" role="status" aria-live="polite" hidden></p>
+          <p id="home-archive-error" role="alert" hidden></p>
 
           <div class="home-section-heading">
             <div><p class="home-eyebrow">ÇALIŞMA ALANI</p><h2 id="home-project-heading">Projelerin</h2></div>
@@ -173,6 +181,8 @@
 
       <input id="home-model-picker" type="file" accept=".glb,model/gltf-binary" hidden />
       <input id="home-sprite-picker" type="file" accept="image/png,image/webp,image/jpeg" hidden />
+      <input id="home-project-backup-picker" type="file" accept=".json,application/json" aria-label="Animationer proje yedeği seç" hidden />
+      <input id="home-workspace-archive-picker" type="file" accept=".json,application/json" aria-label="Animationer çalışma alanı arşivi seç" hidden />
       <dialog id="home-dialog" class="home-dialog">
         <form id="home-dialog-form" method="dialog">
           <p id="home-dialog-eyebrow" class="home-eyebrow">PROJE</p>

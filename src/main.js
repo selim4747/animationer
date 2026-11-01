@@ -63,7 +63,7 @@ class App {
       worldSprites: this.worldSpriteCharacterManager,
       onChange: (state) => {
         this.uiManager?.updateSceneEditorUI(state);
-        if (state?.type === 'transform' || state?.type === 'restored') this.uiManager?.autosave?.schedule();
+        if (['transform', 'color', 'primitive-added', 'primitive-removed', 'restored'].includes(state?.type)) this.uiManager?.autosave?.schedule();
       },
     });
 

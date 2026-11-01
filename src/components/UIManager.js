@@ -165,6 +165,9 @@ export class UIManager {
 
       // Sekme 1: REJİ / TIMELINE
       timelineListContainer: document.getElementById('timeline-steps-list'),
+      timelineRuler: document.getElementById('timeline-ruler'),
+      timelineViewList: document.getElementById('timeline-view-list'),
+      timelineViewRuler: document.getElementById('timeline-view-ruler'),
       autosaveStatus: document.getElementById('autosave-status'),
       btnTimelinePlay: document.getElementById('btn-timeline-play'),
       btnTimelinePause: document.getElementById('btn-timeline-pause'),
@@ -217,6 +220,12 @@ export class UIManager {
       sceneEditorZ: document.getElementById('scene-editor-z'),
       sceneEditorApply: document.getElementById('btn-scene-editor-apply'),
       sceneEditorReset: document.getElementById('btn-scene-editor-reset'),
+      sceneEditorUndo: document.getElementById('btn-scene-editor-undo'),
+      sceneEditorRedo: document.getElementById('btn-scene-editor-redo'),
+      sceneEditorColor: document.getElementById('scene-editor-color'),
+      sceneEditorPrimitiveType: document.getElementById('scene-editor-primitive-type'),
+      sceneEditorAddPrimitive: document.getElementById('btn-scene-editor-add-primitive'),
+      sceneEditorRemovePrimitive: document.getElementById('btn-scene-editor-remove-primitive'),
       sceneEditorStatus: document.getElementById('scene-editor-status'),
 
       // Sekme 3: KAMERALAR
@@ -326,11 +335,18 @@ export class UIManager {
 
     // --- SEKME GEÇİŞLERİ ---
     d.tabButtons.forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const targetId = btn.getAttribute('data-tab');
-        this.switchTab(targetId);
+      btn.addEventListener('click', () => this.switchTab(btn.getAttribute('data-tab'), true));
+      btn.addEventListener('keydown', (event) => {
+        const buttons = [...d.tabButtons]; const index = buttons.indexOf(btn); let next = null;
+        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = buttons[(index + 1) % buttons.length];
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = buttons[(index - 1 + buttons.length) % buttons.length];
+        if (event.key === 'Home') next = buttons[0]; if (event.key === 'End') next = buttons.at(-1);
+        if (next) { event.preventDefault(); this.switchTab(next.dataset.tab, true); }
       });
     });
+    d.timelineViewList?.addEventListener('click', () => this.setTimelineView('list'));
+    d.timelineViewRuler?.addEventListener('click', () => this.setTimelineView('ruler'));
+    this.timelineView = 'list';
 
     // --- PANEL KATLAMA / GİZLEME ---
     if (d.btnCollapseHeader) {
@@ -820,6 +836,39 @@ export class UIManager {
     d.sceneEditorReset?.addEventListener('click', () => {
       if (!this.sceneEditor?.resetTransform()) return this.showToast('İlk dönüşüm bilgisi bulunamadı.');
       this.showToast('Nesne ilk dönüşümüne döndürüldü.');
+    });
+    d.sceneEditorUndo?.addEventListener('click', () => {
+      if (!this.sceneEditor?.undo()) return this.showToast('Geri alınacak sahne dönüşümü yok.');
+      this.updateSceneEditorUI();
+    });
+    d.sceneEditorRedo?.addEventListener('click', () => {
+      if (!this.sceneEditor?.redo()) return this.showToast('Yinelenecek sahne dönüşümü yok.');
+      this.updateSceneEditorUI();
+    });
+    d.sceneEditorColor?.addEventListener('input', () => {
+      const selection = this.sceneEditor?.getSelection();
+      if (selection && this.sceneEditor.setColor(selection.id, d.sceneEditorColor.value)) {
+        if (this.dom.sceneEditorStatus) this.dom.sceneEditorStatus.textContent = `“${selection.label}” rengi güncellendi · otomatik kaydedilir.`;
+      }
+    });
+    d.sceneEditorAddPrimitive?.addEventListener('click', () => {
+      if (!this.sceneEditor || !d.sceneEditorPrimitiveType) return;
+      const type = d.sceneEditorPrimitiveType.value;
+      const selected = this.sceneEditor.getSelection();
+      const index = this.sceneEditor.list().filter((item) => item.kind === 'primitive').length;
+      const position = selected?.transform?.position
+        ? { x: selected.transform.position.x + 2, y: selected.transform.position.y, z: selected.transform.position.z }
+        : { x: (index % 5) * 1.5, y: 0.5, z: Math.floor(index / 5) * 1.5 };
+      try {
+        const object = this.sceneEditor.createPrimitive(type, { name: `${type} ${index + 1}`, position, width: 1.2, height: 1.2, depth: 1.2, radius: 0.65, color: '#b8b8b8' });
+        this.sceneEditor.select(object.userData.sceneEditorId);
+        this.showToast('Yeni sahne nesnesi eklendi.');
+      } catch (error) { this.showToast(error.message || 'Sahne nesnesi eklenemedi.'); }
+    });
+    d.sceneEditorRemovePrimitive?.addEventListener('click', () => {
+      const selection = this.sceneEditor?.getSelection();
+      if (!selection || selection.kind !== 'primitive' || !this.sceneEditor.removePrimitive(selection.id)) return this.showToast('Önce silinebilir bir şekil seçin.');
+      this.showToast(`“${selection.label}” silindi.`);
     });
 
     // 2D Yönelim Değiştirme
@@ -1355,21 +1404,14 @@ export class UIManager {
    */
   _initShortcuts() {
     window.addEventListener('keydown', (e) => {
-      // Eğer kullanıcı metin kutusuna yazmıyorsa
-      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
-
-      if (e.key === 'h' || e.key === 'H') {
-        this.togglePanelVisibility();
-      } else if (e.key === ' ' || e.code === 'Space') {
-        // Space tuşu ile Reji Play/Pause
+      if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target;
+      if (target?.isContentEditable || target?.closest?.('[contenteditable="true"], input, textarea, select, button, a, [role="button"], [role="tab"], [tabindex]:not([tabindex="-1"])')) return;
+      if (e.key === 'h' || e.key === 'H') this.togglePanelVisibility();
+      else if (e.key === ' ' || e.code === 'Space') {
         e.preventDefault();
-        if (this.timeline.isPlaying) {
-          this.timeline.pause();
-          this.showToast('Reji Duraklatıldı ⏸');
-        } else {
-          this.timeline.play();
-          this.showToast('Reji Oynatılıyor ▶');
-        }
+        if (this.timeline.isPlaying) { this.timeline.pause(); this.showToast('Reji Duraklatıldı ⏸'); }
+        else { this.timeline.play(); this.showToast('Reji Oynatılıyor ▶'); }
       }
     });
   }
@@ -1378,16 +1420,30 @@ export class UIManager {
    * Sekme değiştirme
    * @param {string} tabId
    */
-  switchTab(tabId) {
+  switchTab(tabId, focus = false) {
     this.activeTab = tabId;
     this.dom.tabButtons.forEach((btn) => {
       const isMatch = btn.getAttribute('data-tab') === tabId;
       btn.classList.toggle('active', isMatch);
+      btn.setAttribute('aria-selected', String(isMatch));
+      btn.tabIndex = isMatch ? 0 : -1;
+      if (isMatch && focus) btn.focus();
     });
     this.dom.tabPanes.forEach((pane) => {
       const isMatch = pane.id === tabId;
       pane.style.display = isMatch ? 'block' : 'none';
+      pane.setAttribute('aria-hidden', String(!isMatch));
     });
+  }
+
+  setTimelineView(view) {
+    this.timelineView = view === 'ruler' ? 'ruler' : 'list';
+    if (this.dom.timelineListContainer) this.dom.timelineListContainer.hidden = this.timelineView !== 'list';
+    if (this.dom.timelineRuler) this.dom.timelineRuler.hidden = this.timelineView !== 'ruler';
+    for (const [button, active] of [[this.dom.timelineViewList, this.timelineView === 'list'], [this.dom.timelineViewRuler, this.timelineView === 'ruler']]) {
+      button?.classList.toggle('active', active); button?.setAttribute('aria-pressed', String(active));
+    }
+    this.updateTimelineUI();
   }
 
   /**
@@ -1599,11 +1655,30 @@ export class UIManager {
     list.innerHTML = '';
 
     if (this.timeline.steps.length === 0) {
+      this.dom.timelineRuler?.replaceChildren();
       const emptyMsg = document.createElement('div');
       emptyMsg.className = 'timeline-empty-msg';
       emptyMsg.textContent = 'Kuyruk boş. Kayıt modunu açıp sahneye tıklayın veya "+ Adım Ekle" butonlarını kullanın.';
       list.appendChild(emptyMsg);
       return;
+    }
+
+    const ruler = this.dom.timelineRuler;
+    if (ruler) {
+      ruler.replaceChildren();
+      const steps = this.timeline.steps;
+      const starts = steps.map((step, i) => Number.isFinite(step.startAt) ? step.startAt : steps.slice(0, i).reduce((sum, prev) => sum + (Number(prev.duration) || Number(prev.data?.duration) || 1), 0));
+      const ends = steps.map((step, i) => starts[i] + (Number(step.duration) || Number(step.data?.duration) || 1));
+      const total = Math.max(1, ...ends);
+      steps.forEach((step, index) => {
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'timeline-ruler-step';
+        button.textContent = `${index + 1}. ${step.title || step.type}`; button.style.left = `${starts[index] / total * 100}%`; button.style.width = `${Math.max(5, (ends[index] - starts[index]) / total * 100)}%`;
+        button.setAttribute('aria-label', `Zaman cetveli, ${index + 1}. adım: ${step.title || step.type}, ${starts[index].toFixed(1)} saniye`);
+        button.disabled = this.timeline.isPlaying;
+        button.addEventListener('click', () => { if (!this.timeline.isPlaying) { this.timeline.currentStepIndex = index; this.updateTimelineUI(); } });
+        button.addEventListener('keydown', (event) => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const target = event.key === 'Home' ? 0 : event.key === 'End' ? steps.length - 1 : Math.max(0, Math.min(steps.length - 1, index + (event.key === 'ArrowRight' ? 1 : -1))); ruler.children[target]?.focus(); } });
+        ruler.appendChild(button);
+      });
     }
 
     this.timeline.steps.forEach((step, idx) => {
@@ -1675,6 +1750,9 @@ export class UIManager {
         for (const [optionValue, optionLabel] of options) { const option = document.createElement('option'); option.value = optionValue; option.textContent = optionLabel; select.appendChild(option); }
         select.value = String(value ?? ''); select.addEventListener('change', () => this.timeline.updateStep(idx, patch(select.value))); editRow.appendChild(select);
       };
+      if (['MOVE_TO', 'PLAY_EMOTE', 'FOLLOW', 'SET_VISIBILITY'].includes(step.type)) {
+        addSelect('Karakter (boş = seçili karakter)', [['', 'Seçili karakter (varsayılan)'], ...(this.characters?.list?.() || []).map((actor) => [actor.id, actor.name])], step.actorId || '', (value) => ({ actorId: value }));
+      }
       if (step.type === 'MOVE_TO') {
         for (const axis of ['x', 'y', 'z']) addNumber(axis.toUpperCase(), step.data?.[axis] ?? 0, -1000, 1000, 0.1, (value) => ({ data: { [axis]: value } }));
       } else if (step.type === 'WAIT') addNumber('Bekleme süresi (sn)', step.data?.duration ?? 1, 0.01, 3600, 0.1, (value) => ({ data: { duration: value } }));
@@ -1698,6 +1776,7 @@ export class UIManager {
       if (Number.isFinite(step.duration)) meta.push(`süre ${step.duration}s`);
       item.querySelector('.step-meta').textContent = meta.join(' · ');
 
+      for (const button of item.querySelectorAll('.step-actions button')) button.type = 'button';
       item.querySelector('.btn-step-up').addEventListener('click', (e) => {
         e.stopPropagation();
         this.timeline.moveStep(idx, idx - 1);
@@ -1718,6 +1797,7 @@ export class UIManager {
       const runButton = item.querySelector('.step-run-button');
       runButton.setAttribute('aria-label', `Çalıştır: ${idx + 1}. adım, ${step.title || 'Adım'}`);
       runButton.addEventListener('click', () => {
+        if (this.timeline.isPlaying) return;
         this.timeline.currentStepIndex = idx;
         this.timeline._executeStep(step);
         this.showToast(`${idx + 1}. Adım Çalıştırıldı: ${step.title}`);
@@ -1853,6 +1933,14 @@ export class UIManager {
     });
     if (d.sceneEditorApply) d.sceneEditorApply.disabled = !selection;
     if (d.sceneEditorReset) d.sceneEditorReset.disabled = !selection;
+    if (d.sceneEditorUndo) d.sceneEditorUndo.disabled = !(this.sceneEditor.undoStack?.length);
+    if (d.sceneEditorRedo) d.sceneEditorRedo.disabled = !(this.sceneEditor.redoStack?.length);
+    const selectedColor = this.sceneEditor.getSelectedColor?.();
+    if (d.sceneEditorColor) {
+      d.sceneEditorColor.disabled = !selection || !selectedColor;
+      if (selectedColor) d.sceneEditorColor.value = selectedColor;
+    }
+    if (d.sceneEditorRemovePrimitive) d.sceneEditorRemovePrimitive.disabled = selection?.kind !== 'primitive';
     if (d.sceneEditorStatus) {
       d.sceneEditorStatus.textContent = !this.sceneEditor.active
         ? `${objects.length} nesne düzenlenebilir. Seçim modunu açın.`

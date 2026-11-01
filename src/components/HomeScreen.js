@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { IndexedProjectStore, MAX_CHARACTER_MODEL_BYTES, MAX_CHARACTER_TEMPLATE_BYTES } from './ProjectStore.js';
 import { loadImage } from '../utils/load-image.js';
+import { saveGeneratedFile } from '../utils/FileExportManager.js';
+import { createWorkspaceArchive, importProjectAsNew, importWorkspaceArchive, parseWorkspaceArchive, MAX_WORKSPACE_ARCHIVE_BYTES } from './WorkspaceArchive.js';
 
 function element(tag, className, text = '') {
   const node = document.createElement(tag);
@@ -74,6 +76,8 @@ export class HomeScreen {
       dialogTargetLabel: byId('home-dialog-target-label'), dialogTarget: byId('home-dialog-target'), dialogSubmit: byId('home-dialog-submit'), dialogCancel: byId('home-dialog-cancel'),
       createProject: byId('home-create-project'), spriteSettings: byId('home-sprite-settings'),
       columns: byId('home-sprite-columns'), rows: byId('home-sprite-rows'), fps: byId('home-sprite-fps'),
+      importProject: byId('home-import-project'), exportWorkspace: byId('home-export-workspace'), importWorkspace: byId('home-import-workspace'),
+      projectBackupPicker: byId('home-project-backup-picker'), workspacePicker: byId('home-workspace-archive-picker'), archiveStatus: byId('home-archive-status'), archiveError: byId('home-archive-error'),
     };
   }
 
@@ -110,6 +114,11 @@ export class HomeScreen {
     this.dom.dialogForm.addEventListener('submit', (event) => { event.preventDefault(); void this._submitDialog(); });
     this.dom.modelPicker.addEventListener('change', (event) => { void this._add3dModel(event.target.files?.[0]); });
     this.dom.spritePicker.addEventListener('change', (event) => { void this._add2dTemplate(event.target.files?.[0]); });
+    this.dom.importProject.addEventListener('click', () => this.dom.projectBackupPicker.click());
+    this.dom.importWorkspace.addEventListener('click', () => this.dom.workspacePicker.click());
+    this.dom.exportWorkspace.addEventListener('click', () => void this._exportWorkspace());
+    this.dom.projectBackupPicker.addEventListener('change', (event) => { void this._importProjectBackup(event.target.files?.[0]); });
+    this.dom.workspacePicker.addEventListener('change', (event) => { void this._importWorkspace(event.target.files?.[0]); });
   }
 
   async init() {
@@ -135,6 +144,55 @@ export class HomeScreen {
     this._renderProjects();
     this._renderCharacters();
     this._syncLibraryControls();
+  }
+
+  _archiveMessage(message, error = false) {
+    const target = error ? this.dom.archiveError : this.dom.archiveStatus;
+    const other = error ? this.dom.archiveStatus : this.dom.archiveError;
+    other.hidden = true; other.textContent = '';
+    target.textContent = message; target.hidden = !message;
+  }
+
+  async _withArchiveBusy(operation) {
+    const buttons = [this.dom.importProject, this.dom.exportWorkspace, this.dom.importWorkspace];
+    buttons.forEach((button) => { button.disabled = true; });
+    try { await operation(); }
+    catch (error) { this._archiveMessage(error.message || 'Yedekleme işlemi başarısız oldu.', true); }
+    finally { buttons.forEach((button) => { button.disabled = false; }); }
+  }
+
+  async _exportWorkspace() {
+    await this._withArchiveBusy(async () => {
+      this._archiveMessage('Tüm projeler ve kitaplık varlıkları hazırlanıyor…');
+      const blob = await createWorkspaceArchive(this.store, { onProgress: (p) => this._archiveMessage(`Projeler okunuyor: ${p.current}/${p.total}`) });
+      await saveGeneratedFile(blob, 'animationer-workspace.json');
+      this._archiveMessage(`Çalışma alanı arşivi kaydedildi (${formatBytes(blob.size)}).`);
+    });
+  }
+
+  async _importProjectBackup(file) {
+    this.dom.projectBackupPicker.value = '';
+    if (!file) return;
+    await this._withArchiveBusy(async () => {
+      if (file.size > 140 * 1024 * 1024) throw new Error('Proje yedeği 140 MiB dosya sınırını aşıyor.');
+      this._archiveMessage('Proje yedeği doğrulanıyor ve yeni proje oluşturuluyor…');
+      const project = await importProjectAsNew(this.store, await file.text(), { name: `${file.name.replace(/\.json$/i, '').slice(0, 48)} (içe aktarıldı)`, onProgress: (p) => this._archiveMessage(`Varlıklar hazırlanıyor: ${p.current}/${p.total}`) });
+      await this.refresh();
+      this._archiveMessage(`“${project.name}” yeni proje olarak içe aktarıldı; açık sahne değiştirilmedi.`);
+    });
+  }
+
+  async _importWorkspace(file) {
+    this.dom.workspacePicker.value = '';
+    if (!file) return;
+    await this._withArchiveBusy(async () => {
+      if (file.size > MAX_WORKSPACE_ARCHIVE_BYTES) throw new Error('Workspace arşivi 1 GiB dosya sınırını aşıyor.');
+      this._archiveMessage('Arşiv okunuyor; tüm kayıtlar yazmadan önce doğrulanacak…');
+      const archive = parseWorkspaceArchive(await file.text());
+      const result = await importWorkspaceArchive(this.store, archive, { onProgress: (p) => this._archiveMessage(`${p.phase} içe aktarılıyor: ${p.current}/${p.total}`) });
+      await this.refresh();
+      this._archiveMessage(`Tamamlandı: ${result.imported.projects} proje, ${result.imported.templates} 2D ve ${result.imported.models} 3D kitaplık varlığı eklendi. Mevcut kayıtlar korundu.`);
+    });
   }
 
   _renderProjects() {

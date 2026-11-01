@@ -20,3 +20,27 @@ test('reorder, delete and inline editor controls are siblings of the run button 
   assert.match(uiSource, /control\.addEventListener\('click', \(event\) => event\.stopPropagation\(\)\)/);
   assert.match(uiSource, /item\.querySelector\('\.btn-step-delete'\)\.addEventListener\('click', \(e\) => \{\s*e\.stopPropagation\(\)/);
 });
+
+test('studio tabs expose tab semantics and keyboard roving navigation', async () => {
+  const html = await readFile(new URL('../src/ui/studio-panel.html', import.meta.url), 'utf8');
+  assert.equal((html.match(/role="tab"/g) || []).length, 6);
+  assert.equal((html.match(/role="tabpanel"/g) || []).length, 6);
+  assert.match(html, /role="tablist"/);
+  assert.match(uiSource, /event\.key === 'ArrowRight'/);
+  assert.match(uiSource, /event\.key === 'Home'/);
+  assert.match(uiSource, /aria-selected/);
+});
+
+test('global shortcuts ignore editable and interactive targets, composition, and modifiers', () => {
+  assert.match(uiSource, /e\.isComposing \|\| e\.ctrlKey \|\| e\.metaKey \|\| e\.altKey/);
+  assert.match(uiSource, /target\?\.closest\?\.\('[^']*button/);
+  assert.match(uiSource, /e\.preventDefault\(\)/);
+});
+
+test('timeline alternate ruler and per-step character assignments are present and derived', () => {
+  assert.match(uiSource, /timeline\.steps\.forEach/);
+  assert.match(uiSource, /this\.timeline\.updateStep\(idx, patch/);
+  assert.match(uiSource, /Karakter \(boş = seçili karakter\)/);
+  assert.match(uiSource, /timeline\.isPlaying\) return/);
+  assert.match(cssSource, /\.timeline-ruler-step:focus-visible/);
+});
