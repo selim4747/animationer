@@ -88,13 +88,13 @@ const v2 = (updatedAt = '2026-01-01T00:00:00.000Z') => ({
   viewport: { width: 320, height: 568 },
 });
 
-test('migrates legacy portable project v1 to explicit v5 storage schema', () => {
+test('migrates legacy portable project v1 to explicit v6 storage schema', () => {
   const migrated = migrateProjectRecord({
     format: 'animationer-project', projectVersion: 1, version: '1.0.0', playMode: 'scheduled',
     timestamp: '2025-01-01T00:00:00.000Z', steps: [{ type: 'WAIT', data: { duration: 1 } }],
     sprites: [{ id: 'sprite-1', data: 'AQID', name: 'Sheet' }],
   });
-  assert.equal(migrated.schemaVersion, 5);
+  assert.equal(migrated.schemaVersion, 6);
   assert.equal(migrated.timeline.playMode, 'scheduled');
   assert.equal(migrated.timeline.steps.length, 1);
   assert.equal(migrated.scope.mapAssets, false);
@@ -105,13 +105,13 @@ test('migrates legacy portable project v1 to explicit v5 storage schema', () => 
 
 test('migrates v2 autosaves without losing timeline and sprite data', () => {
   const migrated = migrateProjectRecord({ ...v2(), schemaVersion: 2, scope: { timeline: true, sprites2d: true }, projectVersion: 2 });
-  assert.equal(migrated.schemaVersion, 5);
+  assert.equal(migrated.schemaVersion, 6);
   assert.equal(migrated.sprites.length, 1);
   assert.deepEqual(migrated.worldCharacterTemplates, []);
   assert.deepEqual(migrated.worldCharacters, []);
 });
 
-test('imports v4 project backups into v5 without losing scene data', () => {
+test('imports v4 project backups into v6 without losing scene data', () => {
   const current = createAutosaveRecord({
     timeline: { version: '1.0.0', playMode: 'sequential', steps: [] },
     sprites: [{ id: 'sprite-v4', blob: new Blob(['sprite'], { type: 'image/png' }), fileName: 'sprite.png' }],

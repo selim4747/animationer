@@ -1,6 +1,6 @@
 import { getDeviceMemoryGiB, getDevicePerformanceProfile } from '../utils/device-profile.js';
 
-export const PROJECT_SCHEMA_VERSION = 5;
+export const PROJECT_SCHEMA_VERSION = 6;
 export const MAX_PROJECT_BYTES = 100 * 1024 * 1024;
 export const MAX_CHARACTER_TEMPLATE_BYTES = 50 * 1024 * 1024;
 export const MAX_CHARACTER_LIBRARY_BYTES = 250 * 1024 * 1024;
@@ -115,6 +115,7 @@ function normalized3dActors(value) {
 export function migrateProjectRecord(input) {
   if (!input || typeof input !== 'object') throw new Error('Kayıtlı proje bozuk.');
   if (input.schemaVersion === PROJECT_SCHEMA_VERSION) return validateProjectRecord(input);
+  if (input.schemaVersion === 5) return validateProjectRecord({ ...input, schemaVersion: PROJECT_SCHEMA_VERSION, projectVersion: PROJECT_SCHEMA_VERSION, sceneEdits: Array.isArray(input.sceneEdits) ? input.sceneEdits : [] });
   if (input.schemaVersion === 4) {
     return validateProjectRecord({
       ...input,
@@ -214,6 +215,8 @@ export function validateProjectRecord(input) {
     position: { x: Number(edit?.position?.x), y: Number(edit?.position?.y), z: Number(edit?.position?.z) },
     rotation: { x: Number(edit?.rotation?.x), y: Number(edit?.rotation?.y), z: Number(edit?.rotation?.z) },
     scale: { x: Number(edit?.scale?.x), y: Number(edit?.scale?.y), z: Number(edit?.scale?.z) },
+    ...(typeof edit?.color === 'string' && /^#?[0-9a-f]{6}$/i.test(edit.color) ? { color: `#${edit.color.replace(/^#/, '').toLowerCase()}` } : {}),
+    ...(edit?.primitive && ['box','sphere','cylinder','cone'].includes(edit.primitive.type) ? { primitive: { ...edit.primitive } } : {}),
   })) : [];
   if (!Array.isArray(worldCharacterTemplates) || worldCharacterTemplates.length > 50) throw new Error('2D karakter kaynak listesi geçersiz.');
   if (!Array.isArray(worldCharacters) || worldCharacters.length > 50) throw new Error('Sahnedeki 2D karakter listesi geçersiz.');
@@ -227,7 +230,7 @@ export function validateProjectRecord(input) {
   }
   if (sceneEdits.length > 500 || sceneEdits.some((edit) => !edit.id
     || ![edit.position.x, edit.position.y, edit.position.z, edit.rotation.x, edit.rotation.y, edit.rotation.z, edit.scale.x, edit.scale.y, edit.scale.z].every(Number.isFinite)
-    || [edit.scale.x, edit.scale.y, edit.scale.z].some((value) => value <= 0 || value > 1000))) {
+    || [edit.scale.x, edit.scale.y, edit.scale.z].some((value) => value <= 0 || value > 1000) || (edit.color && !/^#[0-9a-f]{6}$/i.test(edit.color)))) {
     throw new Error('Sahne düzenleme kaydı geçersiz.');
   }
   if (mapAsset && mapAsset.kind === 'image'

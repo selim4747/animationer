@@ -74,6 +74,7 @@ export class AutosaveCoordinator {
         this.schedule();
       };
     }
+    if (this.sceneEditor) { const original = this.sceneEditor.onChange; this.sceneEditor.onChange = (state) => { original?.(state); if (['transform','color','primitive-added','primitive-removed','restored'].includes(state?.type)) this.schedule(); }; }
     if (this.worldSprites) {
       const originalWorldNotify = this.worldSprites.onStateChange;
       this.worldSprites.onStateChange = (state) => {

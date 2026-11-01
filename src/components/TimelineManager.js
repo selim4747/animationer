@@ -253,7 +253,7 @@ export class TimelineManager {
       if (!title) return false;
       next.title = title;
     }
-    if (typeof patch.actorId === 'string') next.actorId = patch.actorId.slice(0, 128);
+    if (typeof patch.actorId === 'string') { if (patch.actorId) next.actorId = patch.actorId.slice(0, 128); else delete next.actorId; }
     if (patch.data && typeof patch.data === 'object' && !Array.isArray(patch.data)) {
       const data = { ...current.data, ...patch.data };
       if (current.type === ACTION_TYPES.WAIT && (!Number.isFinite(Number(data.duration)) || Number(data.duration) <= 0 || Number(data.duration) > 3600)) return false;

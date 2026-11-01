@@ -17,24 +17,24 @@
 
       <!-- Panel İçeriği (Katlanabilir Gövde) -->
       <div id="panel-body-wrapper" class="studio-panel-body" aria-hidden="false">
-        <!-- Sekme Düğmeleri (5 Sekme) -->
-        <nav class="studio-tabs-nav">
-          <button class="studio-tab-btn active" data-tab="tab-timeline" title="Zaman Çizelgesi & Reji">
+        <!-- Sekme Düğmeleri -->
+        <nav class="studio-tabs-nav" role="tablist" aria-label="Stüdyo bölümleri">
+          <button class="studio-tab-btn active" id="studio-tab-timeline-tab" role="tab" aria-controls="tab-timeline" aria-selected="true" tabindex="0" data-tab="tab-timeline" title="Zaman Çizelgesi & Reji">
             🎬 REJİ
           </button>
-          <button class="studio-tab-btn" data-tab="tab-scene" title="Sahne & Harita Yükleyici">
+          <button class="studio-tab-btn" id="studio-tab-scene-tab" role="tab" aria-controls="tab-scene" aria-selected="false" tabindex="-1" data-tab="tab-scene" title="Sahne & Harita Yükleyici">
             📁 SAHNE
           </button>
-          <button class="studio-tab-btn" data-tab="tab-camera" title="Kameralar & CCTV">
+          <button class="studio-tab-btn" id="studio-tab-camera-tab" role="tab" aria-controls="tab-camera" aria-selected="false" tabindex="-1" data-tab="tab-camera" title="Kameralar & CCTV">
             🎥 KAMERA
           </button>
-          <button class="studio-tab-btn" data-tab="tab-character" title="Karakter & Merdiven">
+          <button class="studio-tab-btn" id="studio-tab-character-tab" role="tab" aria-controls="tab-character" aria-selected="false" tabindex="-1" data-tab="tab-character" title="Karakter & Merdiven">
             🚶 KARAKTER
           </button>
-          <button class="studio-tab-btn" data-tab="tab-sprites" title="2D Spritesheet Animasyonu">
+          <button class="studio-tab-btn" id="studio-tab-sprites-tab" role="tab" aria-controls="tab-sprites" aria-selected="false" tabindex="-1" data-tab="tab-sprites" title="2D Spritesheet Animasyonu">
             ▦ 2D
           </button>
-          <button class="studio-tab-btn" data-tab="tab-render" title="Dışa Aktar / Render">
+          <button class="studio-tab-btn" id="studio-tab-render-tab" role="tab" aria-controls="tab-render" aria-selected="false" tabindex="-1" data-tab="tab-render" title="Dışa Aktar / Render">
             💾 RENDER
           </button>
         </nav>
@@ -42,7 +42,7 @@
         <!-- ==========================================
              SEKME 1: REJİ / TIMELINE
              ========================================== -->
-        <div id="tab-timeline" class="studio-tab-pane" style="display: block;">
+        <div id="tab-timeline" class="studio-tab-pane" role="tabpanel" aria-labelledby="studio-tab-timeline-tab" tabindex="0" style="display: block;">
           <div class="studio-ctrl-row timeline-schedule-controls">
             <label class="timeline-field">Oynatma
               <select id="timeline-play-mode" class="hud-select">
@@ -84,8 +84,8 @@
             </button>
           </div>
           <div class="studio-ctrl-row" style="margin-top: 6px;">
-            <button id="btn-timeline-undo" class="hud-btn flex-grow" type="button" title="Son düzenlemeyi geri al" disabled>Geri Al</button>
-            <button id="btn-timeline-redo" class="hud-btn flex-grow" type="button" title="Geri alınan düzenlemeyi yinele" disabled>Yinele</button>
+            <button id="btn-timeline-undo" class="hud-btn flex-grow" type="button" title="Zaman çizelgesindeki son düzenlemeyi geri al; sahne değişikliklerini geri almaz" disabled>Zaman Çizelgesi Geri Al</button>
+            <button id="btn-timeline-redo" class="hud-btn flex-grow" type="button" title="Zaman çizelgesi düzenlemesini yinele; sahne geçmişinden ayrıdır" disabled>Zaman Çizelgesi Yinele</button>
           </div>
 
           <!-- Manuel Adım Ekleme Kısayolları -->
@@ -116,6 +116,8 @@
 
           <!-- Kuyruk Listesi -->
           <div class="studio-sub-header">EYLEM SIRASI (ACTION QUEUE):</div>
+          <div class="timeline-view-controls" role="group" aria-label="Zaman çizelgesi görünümü"><button id="timeline-view-list" type="button" class="hud-btn small-btn active" aria-pressed="true">Liste</button><button id="timeline-view-ruler" type="button" class="hud-btn small-btn" aria-pressed="false">Zaman cetveli</button></div>
+          <div id="timeline-ruler" class="timeline-ruler" role="group" aria-label="Zaman cetveli" hidden></div>
           <div id="timeline-steps-list" class="timeline-queue-container">
             <!-- JavaScript ile dinamik render edilir -->
           </div>
@@ -138,7 +140,7 @@
         <!-- ==========================================
              SEKME 2: SAHNE / HARİTA
              ========================================== -->
-        <div id="tab-scene" class="studio-tab-pane" style="display: none;">
+        <div id="tab-scene" class="studio-tab-pane" role="tabpanel" aria-labelledby="studio-tab-scene-tab" tabindex="0" style="display: none;">
           <input type="file" id="file-picker" accept=".glb,.gltf,.png,.jpg,.jpeg,.webp" style="display: none;" />
 
           <div id="studio-drop-zone" class="studio-drop-zone" title="Dosyayı buraya sürükleyin veya tıklayın">
@@ -244,6 +246,26 @@
               <button id="btn-scene-editor-apply" type="button" class="hud-btn primary flex-grow">Değişikliği Uygula</button>
               <button id="btn-scene-editor-reset" type="button" class="hud-btn subtle">İlk Hâline Döndür</button>
             </div>
+            <div class="studio-ctrl-row">
+              <button id="btn-scene-editor-undo" type="button" class="hud-btn flex-grow" title="Sahne nesnesinin son dönüşümünü geri al" disabled>Sahne Geri Al</button>
+              <button id="btn-scene-editor-redo" type="button" class="hud-btn flex-grow" title="Geri alınan sahne dönüşümünü yinele" disabled>Sahne Yinele</button>
+            </div>
+            <label class="timeline-field">Nesne rengi
+              <input id="scene-editor-color" type="color" value="#ffffff" aria-label="Seçili nesnenin rengi" disabled />
+            </label>
+            <div class="studio-sub-header">YENİ NESNE EKLE:</div>
+            <div class="studio-ctrl-row">
+              <label class="timeline-field flex-grow">Şekil türü
+                <select id="scene-editor-primitive-type" class="hud-select">
+                  <option value="box">Kutu</option>
+                  <option value="sphere">Küre</option>
+                  <option value="cylinder">Silindir</option>
+                  <option value="cone">Koni</option>
+                </select>
+              </label>
+              <button id="btn-scene-editor-add-primitive" type="button" class="hud-btn primary">+ Ekle</button>
+            </div>
+            <button id="btn-scene-editor-remove-primitive" type="button" class="hud-btn subtle" disabled>Seçili şekli sil</button>
             <p id="scene-editor-status" class="scene-editor-help" aria-live="polite">Düzenlenebilir nesne bulunamadı.</p>
           </div>
           <div class="studio-sub-header" style="margin-top: 12px;">GÖKYÜZÜ RENGİ:</div>
@@ -255,7 +277,7 @@
         <!-- ==========================================
              SEKME 3: KAMERALAR
              ========================================== -->
-        <div id="tab-camera" class="studio-tab-pane" style="display: none;">
+        <div id="tab-camera" class="studio-tab-pane" role="tabpanel" aria-labelledby="studio-tab-camera-tab" tabindex="0" style="display: none;">
           <div class="studio-ctrl-row">
             <button id="btn-free-orbit" class="hud-btn flex-grow" title="Serbest döndürme moduna geç">
               Serbest Orbit Modu
@@ -296,7 +318,7 @@
         <!-- ==========================================
              SEKME 4: KARAKTER & MERDİVEN
              ========================================== -->
-        <div id="tab-character" class="studio-tab-pane" style="display: none;">
+        <div id="tab-character" class="studio-tab-pane" role="tabpanel" aria-labelledby="studio-tab-character-tab" tabindex="0" style="display: none;">
           <div class="character-roster-controls">
             <label class="timeline-field">Aktif karakter
               <select id="character-select" class="hud-select"></select>
@@ -361,7 +383,7 @@
         <!-- ==========================================
              SEKME 5: 2D SPRITESHEET ANİMASYONU
              ========================================== -->
-        <div id="tab-sprites" class="studio-tab-pane" style="display: none;">
+        <div id="tab-sprites" class="studio-tab-pane" role="tabpanel" aria-labelledby="studio-tab-sprites-tab" tabindex="0" style="display: none;">
           <div class="studio-info-text">Şeffaf PNG/WebP/JPEG sprite sheet yükleyin. Kareler eşit boyutlu, aralıksız bir satır-sütun ızgarasında olmalı. 2D katman ekran üzerinde kalır ve video kaydına dahil edilir.</div>
           <input id="file-picker-sprite-sheet" type="file" accept="image/png,image/webp,image/jpeg,.png,.webp,.jpg,.jpeg" style="display: none;" />
           <div class="studio-ctrl-row sprite-upload-row">
@@ -442,7 +464,7 @@
         <!-- ==========================================
              SEKME 6: DIŞA AKTAR / RENDER
              ========================================== -->
-        <div id="tab-render" class="studio-tab-pane" style="display: none;">
+        <div id="tab-render" class="studio-tab-pane" role="tabpanel" aria-labelledby="studio-tab-render-tab" tabindex="0" style="display: none;">
           <!-- Ekran Görüntüsü -->
           <div class="studio-sub-header">FOTOĞRAF / EKRAN GÖRÜNTÜSÜ:</div>
           <div class="studio-ctrl-row">
