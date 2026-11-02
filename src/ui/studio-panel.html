@@ -230,6 +230,14 @@
             <label class="timeline-field">Seçili nesne
               <select id="scene-editor-object"><option value="">Nesne seçin…</option></select>
             </label>
+            <div class="scene-editor-hierarchy-wrap">
+              <div class="scene-editor-hierarchy-heading">SAHNE HİYERARŞİSİ <span id="scene-editor-selection-count" aria-live="polite">0 seçili</span></div>
+              <div id="scene-editor-hierarchy" role="tree" aria-label="Sahne nesneleri" class="scene-editor-hierarchy"></div>
+              <div class="studio-ctrl-row">
+                <label class="timeline-field flex-grow">Nesne adı<input id="scene-editor-rename" type="text" maxlength="80" aria-label="Seçili nesnenin adı" /></label>
+                <button id="btn-scene-editor-rename" type="button" class="hud-btn">Adlandır</button>
+              </div>
+            </div>
             <label class="timeline-field">Düzenleme türü
               <select id="scene-editor-mode">
                 <option value="translate">Konum (X / Y / Z)</option>
@@ -237,10 +245,18 @@
                 <option value="scale">Ölçek (X / Y / Z)</option>
               </select>
             </label>
+            <p class="scene-editor-help">Değerler nesnenin yerel koordinatıdır. Çoklu seçimde taşıma ortak dünya yönünde uygulanır.</p>
             <div class="scene-editor-transform-grid">
               <label>X<input id="scene-editor-x" type="number" step="0.1" inputmode="decimal" value="0" /></label>
               <label>Y<input id="scene-editor-y" type="number" step="0.1" inputmode="decimal" value="0" /></label>
               <label>Z<input id="scene-editor-z" type="number" step="0.1" inputmode="decimal" value="0" /></label>
+            </div>
+            <label class="timeline-field">Dokunmatik adım
+              <select id="scene-editor-touch-step" class="hud-select"><option value="0.1">Hassas</option><option value="0.5" selected>Normal</option><option value="1">Büyük</option></select>
+            </label>
+            <div class="scene-editor-touch-controls" aria-label="Dokunmatik dönüşüm kısayolları">
+              <button type="button" data-scene-nudge="x,-1" aria-label="X azalt">X−</button><button type="button" data-scene-nudge="y,1" aria-label="Y artır">Y+</button><button type="button" data-scene-nudge="z,-1" aria-label="Z azalt">Z−</button>
+              <button type="button" data-scene-nudge="x,1" aria-label="X artır">X+</button><button type="button" data-scene-nudge="y,-1" aria-label="Y azalt">Y−</button><button type="button" data-scene-nudge="z,1" aria-label="Z artır">Z+</button>
             </div>
             <div class="studio-ctrl-row">
               <button id="btn-scene-editor-apply" type="button" class="hud-btn primary flex-grow">Değişikliği Uygula</button>

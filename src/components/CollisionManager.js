@@ -8,6 +8,13 @@
 
 import * as THREE from 'three';
 
+const isWorldVisible = (object) => {
+  for (let current = object; current; current = current.parent) {
+    if (current.visible === false) return false;
+  }
+  return Boolean(object);
+};
+
 export class CollisionManager {
   /**
    * @param {THREE.Scene} scene - Three.js sahnesi
@@ -179,7 +186,7 @@ export class CollisionManager {
   updateObstacleBoxes() {
     for (let i = 0; i < this.registeredObstacles.length; i++) {
       const entry = this.registeredObstacles[i];
-      if (entry.object && entry.object.visible !== false) {
+      if (entry.object && isWorldVisible(entry.object)) {
         entry.box.setFromObject(entry.object);
         entry.box.getCenter(entry.center);
       }
@@ -205,7 +212,7 @@ export class CollisionManager {
     this._downOrigin.set(pos.x, rayCastHeight, pos.z);
     this.downRaycaster.set(this._downOrigin, this._downDir);
 
-    const activeSurfaces = this.walkableSurfaces.filter((s) => s && s.visible !== false);
+    const activeSurfaces = this.walkableSurfaces.filter((s) => isWorldVisible(s));
     const hits = this.downRaycaster.intersectObjects(activeSurfaces, true);
 
     if (hits.length > 0) {
@@ -249,7 +256,7 @@ export class CollisionManager {
 
     for (let i = 0; i < this.registeredObstacles.length; i++) {
       const { object, box } = this.registeredObstacles[i];
-      if (!object || object.visible === false) continue;
+      if (!isWorldVisible(object)) continue;
 
       // Yükseklik Kontrolü: Engel karakterin hedef Y kotunda değilse pas geç
       if (box.max.y < targetY + 0.1 || box.min.y > targetY + 1.5) {
@@ -333,7 +340,7 @@ export class CollisionManager {
     const nearbyObstacles = [];
     for (let i = 0; i < this.registeredObstacles.length; i++) {
       const entry = this.registeredObstacles[i];
-      if (!entry.object || entry.object === ignoreObject || entry.object.visible === false) continue;
+      if (!entry.object || entry.object === ignoreObject || !isWorldVisible(entry.object)) continue;
 
       const dx = posX - entry.center.x;
       const dz = posZ - entry.center.z;

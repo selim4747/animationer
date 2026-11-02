@@ -28,6 +28,7 @@ export class SceneEditor {
     this.active = false;
     this.mode = 'translate';
     this.selectedId = null;
+    this.selectedIds = [];
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
     this.undoStack = [];
@@ -58,9 +59,24 @@ export class SceneEditor {
   _entries() {
     const entries = [];
     const push = (id, object, label, kind = 'scene', raycastRoot = object) => {
-      if (!id || !object?.isObject3D || object.visible === false) return;
+      if (!id || !object?.isObject3D) return;
       if (!object.userData.sceneEditorDefaultTransform) object.userData.sceneEditorDefaultTransform = objectTransform(object);
-      entries.push({ id, object, raycastRoot, label, kind });
+      if (object.userData.sceneEditorDefaultVisible === undefined) object.userData.sceneEditorDefaultVisible = object.visible !== false;
+      if (object.userData.sceneEditorDefaultLocked === undefined) object.userData.sceneEditorDefaultLocked = object.userData.sceneEditorLocked === true;
+      if (object.userData.sceneEditorDefaultLabel === undefined) object.userData.sceneEditorDefaultLabel = object.userData.sceneEditorLabel || object.name || id;
+      let depth = 0;
+      let parent = object.parent;
+      let parentId = null;
+      const ancestorIds = [];
+      while (parent) {
+        if (parent.userData?.sceneEditorId) {
+          depth += 1;
+          parentId ||= parent.userData.sceneEditorId;
+          ancestorIds.push(parent.userData.sceneEditorId);
+        }
+        parent = parent.parent;
+      }
+      entries.push({ id, object, raycastRoot, label: object.userData.sceneEditorLabel || label, kind, depth, parentId, ancestorIds, visible: object.visible !== false, locked: object.userData.sceneEditorLocked === true });
     };
 
     this.scene?.traverse?.((object) => {
@@ -83,7 +99,7 @@ export class SceneEditor {
     });
   }
 
-  list() { return this._entries().map(({ id, label, kind }) => ({ id, label, kind })); }
+  list() { return this._entries().map(({ id, label, kind, depth, parentId, visible, locked }) => ({ id, label, kind, depth, parentId, visible, locked })); }
 
   getObjectColor(object) {
     const materials = Array.isArray(object?.material) ? object.material : [object?.material];
@@ -97,7 +113,9 @@ export class SceneEditor {
   }
 
   getSelection() {
-    const entry = this._entries().find((item) => item.id === this.selectedId);
+    const entries = this._entries();
+    const entry = entries.find((item) => item.id === this.selectedId && !item.ancestorIds.some((id) => this.selectedIds.includes(id)))
+      || entries.find((item) => this.selectedIds.includes(item.id) && !item.ancestorIds.some((id) => this.selectedIds.includes(id)));
     return entry ? {
       id: entry.id,
       label: entry.label,
@@ -105,12 +123,32 @@ export class SceneEditor {
       transform: objectTransform(entry.object),
       color: this.getObjectColor(entry.object),
       mode: this.mode,
+      locked: entry.locked,
+      ids: [...this.selectedIds],
+      count: this.selectedIds.length,
     } : null;
   }
 
-  select(id) {
+  select(id, { additive = false, toggle = false } = {}) {
     const entry = this._entries().find((item) => item.id === id) || null;
-    this.selectedId = entry?.id || null;
+    if (additive && entry) {
+      const selected = new Set(this.selectedIds);
+      if (toggle && selected.has(entry.id)) selected.delete(entry.id);
+      else selected.add(entry.id);
+      this.selectedIds = [...selected];
+      this.selectedId = selected.has(entry.id) ? entry.id : (this.selectedIds.at(-1) || null);
+    } else {
+      this.selectedId = entry?.id || null;
+      this.selectedIds = entry ? [entry.id] : [];
+    }
+    this.onChange({ type: 'selection', active: this.active, objects: this.list(), selection: this.getSelection() });
+    return this.getSelection();
+  }
+
+  selectMany(ids = []) {
+    const available = new Set(this._entries().map((entry) => entry.id));
+    this.selectedIds = [...new Set(ids)].filter((id) => available.has(id));
+    this.selectedId = this.selectedIds.at(-1) || null;
     this.onChange({ type: 'selection', active: this.active, objects: this.list(), selection: this.getSelection() });
     return this.getSelection();
   }
@@ -121,7 +159,7 @@ export class SceneEditor {
     if (!rect.width || !rect.height) return false;
     this.pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const entries = this._entries();
+    const entries = this._entries().filter((entry) => entry.visible && !entry.locked);
     const hit = this.raycaster.intersectObjects(entries.map((entry) => entry.raycastRoot), true)[0];
     if (!hit) {
       this.select(null);
@@ -129,7 +167,7 @@ export class SceneEditor {
     }
     let match = entries.find((entry) => entry.object === hit.object || entry.object === hit.object.parent);
     if (!match) match = entries.find((entry) => entry.object === hit.object || entry.object.getObjectById?.(hit.object.id));
-    this.select(match?.id || null);
+    this.select(match?.id || null, { additive: false });
     return true;
   }
 
@@ -163,11 +201,11 @@ export class SceneEditor {
 
   setTransform(id, transform = {}) {
     const entry = this._entries().find((item) => item.id === (id || this.selectedId));
-    if (!entry) return false;
+    if (!entry || entry.locked) return false;
     const before = objectTransform(entry.object);
     this._applyTransform(entry, transform);
     const after = objectTransform(entry.object);
-    this._pushHistory({ id: entry.id, transform: before }, { id: entry.id, transform: after });
+    this._pushHistory([{ id: entry.id, transform: before }], [{ id: entry.id, transform: after }]);
     this.onChange({ type: 'transform', active: this.active, objects: this.list(), selection: this.getSelection() });
     return true;
   }
@@ -185,12 +223,96 @@ export class SceneEditor {
   _replayHistory(source, destination) {
     const snapshot = source.pop();
     if (!snapshot) return false;
-    const entry = this._entries().find((item) => item.id === snapshot.id);
-    if (!entry) { source.push(snapshot); return false; }
-    destination.push({ id: snapshot.id, transform: objectTransform(entry.object) });
+    const changes = Array.isArray(snapshot) ? snapshot : [{ id: snapshot.id, transform: snapshot.transform }];
+    const entries = this._entries();
+    const current = changes.map((change) => {
+      const entry = entries.find((item) => item.id === change.id);
+      return entry ? { id: entry.id, transform: objectTransform(entry.object) } : null;
+    });
+    if (current.some((item) => !item)) { source.push(snapshot); return false; }
+    destination.push(current);
     if (destination.length > this.historyLimit) destination.shift();
-    this._applyTransform(entry, snapshot.transform);
+    changes.forEach((change) => {
+      const entry = entries.find((item) => item.id === change.id);
+      this._applyTransform(entry, change.transform);
+    });
     this.onChange({ type: 'transform', active: this.active, objects: this.list(), selection: this.getSelection() });
+    return true;
+  }
+
+  setSelectionTransform(transform = {}) {
+    for (const key of ['position', 'rotation', 'scale']) {
+      if (transform[key] && !['x', 'y', 'z'].every((axis) => Number.isFinite(Number(transform[key][axis])))) return false;
+    }
+    const entries = this._entries().filter((entry) => this.selectedIds.includes(entry.id) && !entry.ancestorIds.some((id) => this.selectedIds.includes(id)));
+    if (!entries.length || entries.some((entry) => entry.locked)) return false;
+    const primary = entries.find((entry) => entry.id === this.selectedId) || entries[0];
+    const primaryBefore = objectTransform(primary.object);
+    const before = entries.map((entry) => ({ id: entry.id, transform: objectTransform(entry.object) }));
+    let worldPositionDelta = null;
+    if (transform.position) {
+      const localDelta = new THREE.Vector3(
+        Number(transform.position.x) - primaryBefore.position.x,
+        Number(transform.position.y) - primaryBefore.position.y,
+        Number(transform.position.z) - primaryBefore.position.z,
+      );
+      worldPositionDelta = localDelta.clone();
+      if (primary.object.parent) {
+        primary.object.parent.updateWorldMatrix(true, false);
+        const origin = primary.object.parent.localToWorld(new THREE.Vector3(0, 0, 0));
+        const endpoint = primary.object.parent.localToWorld(localDelta.clone());
+        worldPositionDelta = endpoint.sub(origin);
+      }
+    }
+    for (const entry of entries) {
+      const current = objectTransform(entry.object);
+      const next = { position: {}, rotation: {}, scale: {} };
+      for (const axis of ['x', 'y', 'z']) {
+        if (transform.rotation) next.rotation[axis] = current.rotation[axis] + (Number(transform.rotation[axis]) - primaryBefore.rotation[axis]);
+        if (transform.scale) next.scale[axis] = current.scale[axis] * (Number(transform.scale[axis]) / primaryBefore.scale[axis]);
+      }
+      if (worldPositionDelta) {
+        const worldPosition = entry.object.getWorldPosition(new THREE.Vector3()).add(worldPositionDelta);
+        if (entry.object.parent) {
+          entry.object.parent.updateWorldMatrix(true, false);
+          entry.object.parent.worldToLocal(worldPosition);
+        }
+        next.position = { x: worldPosition.x, y: worldPosition.y, z: worldPosition.z };
+      }
+      this._applyTransform(entry, next);
+    }
+    const after = entries.map((entry) => ({ id: entry.id, transform: objectTransform(entry.object) }));
+    this._pushHistory(before, after);
+    this.onChange({ type: 'transform', active: this.active, objects: this.list(), selection: this.getSelection() });
+    return true;
+  }
+
+  renameObject(id, label) {
+    const entry = this._entries().find((item) => item.id === id);
+    const clean = typeof label === 'string' ? label.trim().slice(0, 80) : '';
+    if (!entry || !clean) return false;
+    entry.object.userData.sceneEditorLabel = clean;
+    if (entry.kind === 'primitive') entry.object.userData.primitiveDescriptor.name = clean;
+    this.onChange({ type: 'object-renamed', objects: this.list(), selection: this.getSelection() });
+    return true;
+  }
+
+  setObjectVisible(id, visible) {
+    const entry = this._entries().find((item) => item.id === id);
+    if (!entry) return false;
+    const nextVisible = Boolean(visible);
+    if (entry.kind === 'map') this.mapLoader?.setMeshVisible?.(entry.id.slice('map:'.length), nextVisible);
+    else entry.object.visible = nextVisible;
+    this.collisionManager?.updateObstacleBoxes?.();
+    this.onChange({ type: 'object-visibility', objects: this.list(), selection: this.getSelection() });
+    return true;
+  }
+
+  setObjectLocked(id, locked) {
+    const entry = this._entries().find((item) => item.id === id);
+    if (!entry) return false;
+    entry.object.userData.sceneEditorLocked = Boolean(locked);
+    this.onChange({ type: 'object-lock', objects: this.list(), selection: this.getSelection() });
     return true;
   }
 
@@ -204,7 +326,7 @@ export class SceneEditor {
   setColor(id, color) {
     const entry = this._entries().find((item) => item.id === (id || this.selectedId));
     const normalized = normalizeColor(color);
-    if (!entry || !normalized) return false;
+    if (!entry || entry.locked || !normalized) return false;
     const object = entry.object;
     const current = Array.isArray(object.material) ? object.material : [object.material];
     if (!current.length || current.some((material) => !material?.color?.set)) return false;
@@ -281,16 +403,18 @@ export class SceneEditor {
 
   removePrimitive(id = this.selectedId) {
     const entry = this._entries().find((item) => item.id === id);
-    if (!entry || entry.object.userData.sceneEditorKind !== 'primitive') return false;
+    if (!entry || entry.locked || entry.object.userData.sceneEditorKind !== 'primitive') return false;
     entry.object.parent?.remove(entry.object);
     entry.object.geometry?.dispose?.();
     const materials = Array.isArray(entry.object.material) ? entry.object.material : [entry.object.material];
     materials.forEach((material) => material?.dispose?.());
     this._originalMaterials.delete(entry.object);
     this._colorOwnedObjects.delete(entry.object);
-    this.undoStack = this.undoStack.filter((item) => item.id !== id);
-    this.redoStack = this.redoStack.filter((item) => item.id !== id);
-    if (this.selectedId === id) this.selectedId = null;
+    const references = (snapshot) => Array.isArray(snapshot) ? snapshot.some((item) => item.id === id) : snapshot.id === id;
+    this.undoStack = this.undoStack.filter((snapshot) => !references(snapshot));
+    this.redoStack = this.redoStack.filter((snapshot) => !references(snapshot));
+    this.selectedIds = this.selectedIds.filter((selectedId) => selectedId !== id);
+    if (this.selectedId === id) this.selectedId = this.selectedIds.at(-1) || null;
     this.onChange({ type: 'primitive-removed', active: this.active, objects: this.list(), selection: this.getSelection() });
     return true;
   }
@@ -310,6 +434,9 @@ export class SceneEditor {
     return this._entries().map(({ id, object }) => ({
       id,
       ...objectTransform(object),
+      label: object.userData.sceneEditorLabel || object.name || id,
+      visible: object.visible !== false,
+      locked: object.userData.sceneEditorLocked === true,
       ...(object.userData.sceneEditorKind === 'primitive' ? { primitive: { ...object.userData.primitiveDescriptor } } : {}),
       ...(this.getObjectColor(object) ? { color: this.getObjectColor(object) } : {}),
     }));
@@ -348,6 +475,9 @@ export class SceneEditor {
       rotation: Object.fromEntries(['x', 'y', 'z'].map((axis) => [axis, Number(edit.rotation[axis])])),
       scale: Object.fromEntries(['x', 'y', 'z'].map((axis) => [axis, Number(edit.scale[axis])])),
       ...(color ? { color } : {}),
+      ...(typeof edit.label === 'string' ? { label: edit.label.trim().slice(0, 80) || edit.id } : {}),
+      ...(typeof edit.visible === 'boolean' ? { visible: edit.visible } : {}),
+      ...(typeof edit.locked === 'boolean' ? { locked: edit.locked } : {}),
       ...(primitive ? { primitive } : {}),
     };
   }
@@ -371,6 +501,11 @@ export class SceneEditor {
       if (!edit) {
         if (entry.object.userData.sceneEditorDefaultTransform) this._applyTransform(entry, entry.object.userData.sceneEditorDefaultTransform);
         this._restoreOriginalMaterial(entry.object);
+        const defaultVisible = entry.object.userData.sceneEditorDefaultVisible !== false;
+        if (entry.kind === 'map') this.mapLoader?.setMeshVisible?.(entry.id.slice('map:'.length), defaultVisible, { notify: false });
+        else entry.object.visible = defaultVisible;
+        entry.object.userData.sceneEditorLocked = entry.object.userData.sceneEditorDefaultLocked === true;
+        entry.object.userData.sceneEditorLabel = entry.object.userData.sceneEditorDefaultLabel;
         continue;
       }
       this._applyTransform(entry, edit);
@@ -381,10 +516,18 @@ export class SceneEditor {
         entry.object.userData.primitiveDescriptor = { ...edit.primitive, color: color || edit.primitive.color };
         entry.object.userData.sceneEditorLabel = edit.primitive.name;
       }
+      if (edit.label) entry.object.userData.sceneEditorLabel = edit.label;
+      if (edit.visible !== undefined) {
+        if (entry.kind === 'map') this.mapLoader?.setMeshVisible?.(entry.id.slice('map:'.length), edit.visible, { notify: false });
+        else entry.object.visible = edit.visible;
+      }
+      if (edit.locked !== undefined) entry.object.userData.sceneEditorLocked = edit.locked;
     }
     this.undoStack.length = 0;
     this.redoStack.length = 0;
     this.collisionManager?.updateObstacleBoxes?.();
+    this.selectedIds = this.selectedIds.filter((id) => this._entries().some((entry) => entry.id === id));
+    if (!this.selectedIds.includes(this.selectedId)) this.selectedId = this.selectedIds.at(-1) || null;
     this.onChange({ type: 'restored', objects: this.list(), selection: this.getSelection() });
     return this.exportProjectState();
   }

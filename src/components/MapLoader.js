@@ -361,13 +361,15 @@ export class MapLoader {
     return true;
   }
 
-  setMeshVisible(id, visible) {
+  setMeshVisible(id, visible, { notify = true } = {}) {
     const object = this.meshesByEditorId.get(id);
     if (!object || typeof visible !== 'boolean') return false;
     object.visible = visible;
     this._syncMeshCollision(object);
-    this.stateRevision++;
-    this.onStateChange({ type: 'map-mesh-settings-changed' });
+    if (notify) {
+      this.stateRevision++;
+      this.onStateChange({ type: 'map-mesh-settings-changed' });
+    }
     return true;
   }
 

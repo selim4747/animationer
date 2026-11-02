@@ -227,6 +227,11 @@ export class UIManager {
       sceneEditorAddPrimitive: document.getElementById('btn-scene-editor-add-primitive'),
       sceneEditorRemovePrimitive: document.getElementById('btn-scene-editor-remove-primitive'),
       sceneEditorStatus: document.getElementById('scene-editor-status'),
+      sceneEditorHierarchy: document.getElementById('scene-editor-hierarchy'),
+      sceneEditorSelectionCount: document.getElementById('scene-editor-selection-count'),
+      sceneEditorRename: document.getElementById('scene-editor-rename'),
+      sceneEditorRenameButton: document.getElementById('btn-scene-editor-rename'),
+      sceneEditorTouchStep: document.getElementById('scene-editor-touch-step'),
 
       // Sekme 3: KAMERALAR
       btnFreeOrbit: document.getElementById('btn-free-orbit'),
@@ -818,6 +823,48 @@ export class UIManager {
       this.showToast(active ? 'Düzenlemek için sahnedeki bir nesneye dokunun.' : 'Sahne seçim modu kapatıldı.');
     });
     d.sceneEditorObject?.addEventListener('change', () => this.sceneEditor?.select(d.sceneEditorObject.value));
+    d.sceneEditorHierarchy?.addEventListener('click', (event) => {
+      const action = event.target.closest('[data-scene-action]');
+      if (action) {
+        const id = action.dataset.sceneId;
+        if (action.dataset.sceneAction === 'visible') this.sceneEditor?.setObjectVisible(id, action.getAttribute('aria-pressed') !== 'true');
+        if (action.dataset.sceneAction === 'locked') this.sceneEditor?.setObjectLocked(id, action.getAttribute('aria-pressed') !== 'true');
+        return;
+      }
+      if (event.target.matches('input,button')) return;
+      const row = event.target.closest('[data-scene-select]');
+      if (row) this.sceneEditor?.select(row.dataset.sceneSelect, { additive: event.shiftKey || event.ctrlKey || event.metaKey, toggle: event.shiftKey || event.ctrlKey || event.metaKey });
+    });
+    d.sceneEditorHierarchy?.addEventListener('change', (event) => {
+      if (!event.target.matches('[data-scene-multiselect]')) return;
+      const ids = [...d.sceneEditorHierarchy.querySelectorAll('[data-scene-multiselect]:checked')].map((input) => input.value);
+      this.sceneEditor?.selectMany(ids);
+    });
+    d.sceneEditorRenameButton?.addEventListener('click', () => {
+      const selection = this.sceneEditor?.getSelection();
+      if (!selection || selection.count !== 1 || !this.sceneEditor.renameObject(selection.id, d.sceneEditorRename?.value)) return this.showToast('Ad vermek için tek bir nesne seçip geçerli bir ad girin.');
+      this.showToast('Sahne nesnesi yeniden adlandırıldı.');
+    });
+    d.sceneEditorHierarchy?.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      const row = event.target.closest('[data-scene-select]');
+      if (!row || event.target.matches('input,button')) return;
+      event.preventDefault();
+      this.sceneEditor?.select(row.dataset.sceneSelect, { additive: event.shiftKey || event.ctrlKey || event.metaKey, toggle: event.shiftKey || event.ctrlKey || event.metaKey });
+    });
+    document.querySelectorAll('[data-scene-nudge]').forEach((button) => button.addEventListener('click', () => {
+      const selection = this.sceneEditor?.getSelection();
+      if (!selection) return this.showToast('Önce sahne nesnesi seçin.');
+      const [axis, direction] = button.dataset.sceneNudge.split(',');
+      const mode = this.sceneEditor.mode;
+      const key = mode === 'rotate' ? 'rotation' : mode === 'scale' ? 'scale' : 'position';
+      const target = { ...selection.transform[key] };
+      const amount = Number(d.sceneEditorTouchStep?.value || 0.5);
+      if (mode === 'rotate') target[axis] += Number(direction) * Math.PI / 12;
+      else if (mode === 'scale') target[axis] *= Number(direction) > 0 ? 1 + amount / 10 : 1 / (1 + amount / 10);
+      else target[axis] += Number(direction) * amount;
+      if (!this.sceneEditor.setSelectionTransform({ [key]: target })) this.showToast('Seçimde kilitli nesne var veya dönüşüm uygulanamadı.');
+    }));
     d.sceneEditorMode?.addEventListener('change', () => {
       this.sceneEditor?.setMode(d.sceneEditorMode.value);
       this.updateSceneEditorUI();
@@ -831,7 +878,7 @@ export class UIManager {
       if (values.some((value) => !Number.isFinite(value))) return this.showToast('X, Y ve Z alanlarına geçerli sayılar girin.');
       const axes = ['x', 'y', 'z'];
       axes.forEach((axis, index) => { target[axis] = this.sceneEditor.mode === 'rotate' ? values[index] * Math.PI / 180 : values[index]; });
-      if (this.sceneEditor.setTransform(selection.id, transform)) this.showToast(`“${selection.label}” güncellendi.`);
+      if ((selection.count > 1 ? this.sceneEditor.setSelectionTransform(transform) : this.sceneEditor.setTransform(selection.id, transform))) this.showToast(selection.count > 1 ? `${selection.count} nesne güncellendi.` : `“${selection.label}” güncellendi.`);
     });
     d.sceneEditorReset?.addEventListener('click', () => {
       if (!this.sceneEditor?.resetTransform()) return this.showToast('İlk dönüşüm bilgisi bulunamadı.');
@@ -867,7 +914,7 @@ export class UIManager {
     });
     d.sceneEditorRemovePrimitive?.addEventListener('click', () => {
       const selection = this.sceneEditor?.getSelection();
-      if (!selection || selection.kind !== 'primitive' || !this.sceneEditor.removePrimitive(selection.id)) return this.showToast('Önce silinebilir bir şekil seçin.');
+      if (!selection || selection.kind !== 'primitive' || selection.locked || !this.sceneEditor.removePrimitive(selection.id)) return this.showToast('Önce kilidi açık, silinebilir bir şekil seçin.');
       this.showToast(`“${selection.label}” silindi.`);
     });
 
@@ -1904,6 +1951,46 @@ export class UIManager {
     if (!this.sceneEditor || !d.sceneEditorObject) return;
     const objects = this.sceneEditor.list();
     const selection = this.sceneEditor.getSelection();
+    const selectedIds = new Set(selection?.ids || []);
+    if (d.sceneEditorHierarchy) {
+      d.sceneEditorHierarchy.replaceChildren();
+      for (const item of objects) {
+        const row = document.createElement('div');
+        row.className = 'scene-editor-tree-row';
+        row.dataset.sceneSelect = item.id;
+        row.setAttribute('role', 'treeitem');
+        row.setAttribute('aria-level', String((item.depth || 0) + 1));
+        row.setAttribute('aria-selected', String(selectedIds.has(item.id)));
+        row.tabIndex = 0;
+        row.style.setProperty('--scene-depth', String(Math.min(item.depth || 0, 8)));
+        const checkLabel = document.createElement('label');
+        checkLabel.className = 'scene-editor-tree-check';
+        const check = document.createElement('input');
+        check.type = 'checkbox'; check.value = item.id; check.dataset.sceneMultiselect = 'true'; check.checked = selectedIds.has(item.id);
+        check.setAttribute('aria-label', `${item.label} seçime ekle`);
+        checkLabel.append(check);
+        const name = document.createElement('span');
+        name.className = 'scene-editor-tree-name';
+        name.textContent = item.label;
+        name.title = item.label;
+        name.dataset.sceneSelect = item.id;
+        name.setAttribute('role', 'button');
+        name.tabIndex = -1;
+        const visibility = document.createElement('button');
+        visibility.type = 'button'; visibility.className = 'scene-editor-tree-action';
+        visibility.dataset.sceneAction = 'visible'; visibility.dataset.sceneId = item.id;
+        visibility.setAttribute('aria-pressed', String(item.visible)); visibility.setAttribute('aria-label', `${item.visible ? 'Gizle' : 'Göster'}: ${item.label}`);
+        visibility.textContent = item.visible ? 'Gör' : 'Giz';
+        const lock = document.createElement('button');
+        lock.type = 'button'; lock.className = 'scene-editor-tree-action';
+        lock.dataset.sceneAction = 'locked'; lock.dataset.sceneId = item.id;
+        lock.setAttribute('aria-pressed', String(item.locked)); lock.setAttribute('aria-label', `${item.locked ? 'Kilidi aç' : 'Kilitle'}: ${item.label}`);
+        lock.textContent = item.locked ? 'Kilitli' : 'Açık';
+        row.append(checkLabel, name, visibility, lock);
+        d.sceneEditorHierarchy.appendChild(row);
+      }
+    }
+    if (d.sceneEditorSelectionCount) d.sceneEditorSelectionCount.textContent = `${selection?.count || 0} seçili`;
     d.sceneEditorObject.replaceChildren();
     const placeholder = document.createElement('option');
     placeholder.value = '';
@@ -1916,6 +2003,11 @@ export class UIManager {
       d.sceneEditorObject.appendChild(option);
     }
     d.sceneEditorObject.value = selection?.id || '';
+    if (d.sceneEditorRename) {
+      d.sceneEditorRename.disabled = !selection || selection.count !== 1;
+      if (document.activeElement !== d.sceneEditorRename) d.sceneEditorRename.value = selection?.label || '';
+    }
+    if (d.sceneEditorRenameButton) d.sceneEditorRenameButton.disabled = !selection || selection.count !== 1;
     if (d.sceneEditorToggle) {
       d.sceneEditorToggle.setAttribute('aria-pressed', String(this.sceneEditor.active));
       d.sceneEditorToggle.textContent = `Sahne seçimi: ${this.sceneEditor.active ? 'Açık' : 'Kapalı'}`;
@@ -1929,18 +2021,18 @@ export class UIManager {
       const raw = values?.[axes[index]];
       const value = mode === 'rotate' && Number.isFinite(raw) ? raw * 180 / Math.PI : raw;
       input.value = Number.isFinite(value) ? String(Number(value.toFixed(3))) : (mode === 'scale' ? '1' : '0');
-      input.disabled = !selection;
+      input.disabled = !selection || Boolean(selection.locked);
     });
-    if (d.sceneEditorApply) d.sceneEditorApply.disabled = !selection;
-    if (d.sceneEditorReset) d.sceneEditorReset.disabled = !selection;
+    if (d.sceneEditorApply) d.sceneEditorApply.disabled = !selection || Boolean(selection.locked);
+    if (d.sceneEditorReset) d.sceneEditorReset.disabled = !selection || Boolean(selection.locked) || selection.count > 1;
     if (d.sceneEditorUndo) d.sceneEditorUndo.disabled = !(this.sceneEditor.undoStack?.length);
     if (d.sceneEditorRedo) d.sceneEditorRedo.disabled = !(this.sceneEditor.redoStack?.length);
     const selectedColor = this.sceneEditor.getSelectedColor?.();
     if (d.sceneEditorColor) {
-      d.sceneEditorColor.disabled = !selection || !selectedColor;
+      d.sceneEditorColor.disabled = !selection || !selectedColor || Boolean(selection.locked);
       if (selectedColor) d.sceneEditorColor.value = selectedColor;
     }
-    if (d.sceneEditorRemovePrimitive) d.sceneEditorRemovePrimitive.disabled = selection?.kind !== 'primitive';
+    if (d.sceneEditorRemovePrimitive) d.sceneEditorRemovePrimitive.disabled = selection?.kind !== 'primitive' || Boolean(selection.locked);
     if (d.sceneEditorStatus) {
       d.sceneEditorStatus.textContent = !this.sceneEditor.active
         ? `${objects.length} nesne düzenlenebilir. Seçim modunu açın.`
