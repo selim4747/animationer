@@ -215,6 +215,9 @@ export function validateProjectRecord(input) {
     position: { x: Number(edit?.position?.x), y: Number(edit?.position?.y), z: Number(edit?.position?.z) },
     rotation: { x: Number(edit?.rotation?.x), y: Number(edit?.rotation?.y), z: Number(edit?.rotation?.z) },
     scale: { x: Number(edit?.scale?.x), y: Number(edit?.scale?.y), z: Number(edit?.scale?.z) },
+    ...(typeof edit?.label === 'string' ? { label: edit.label.trim().slice(0, 80) } : {}),
+    ...(typeof edit?.visible === 'boolean' ? { visible: edit.visible } : {}),
+    ...(typeof edit?.locked === 'boolean' ? { locked: edit.locked } : {}),
     ...(typeof edit?.color === 'string' && /^#?[0-9a-f]{6}$/i.test(edit.color) ? { color: `#${edit.color.replace(/^#/, '').toLowerCase()}` } : {}),
     ...(edit?.primitive && ['box','sphere','cylinder','cone'].includes(edit.primitive.type) ? { primitive: { ...edit.primitive } } : {}),
   })) : [];

@@ -1624,6 +1624,22 @@ input[type="range"]::-moz-range-thumb {
 #scene-editor-color { width: 100%; min-height: 38px; padding: 3px; border: 1px solid #3c3c3c; border-radius: 3px; background: #080808; }
 .scene-editor-panel button { min-height: 38px; }
 .scene-editor-panel button:focus-visible, .scene-editor-panel select:focus-visible, .scene-editor-panel input:focus-visible { outline: 2px solid #eee; outline-offset: 2px; }
+.scene-editor-hierarchy-wrap { display: grid; gap: 6px; min-width: 0; }
+.scene-editor-hierarchy-heading { display: flex; justify-content: space-between; color: #aaa; font: 10px monospace; }
+.scene-editor-hierarchy { display: grid; gap: 3px; max-height: 220px; overflow: auto; overscroll-behavior: contain; padding: 4px; border: 1px solid #303030; border-radius: 3px; background: #080808; }
+.scene-editor-tree-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto; align-items: center; gap: 4px; min-height: 40px; padding: 2px 3px 2px calc(3px + min(var(--scene-depth, 0), 8) * 12px); border-radius: 3px; color: #ddd; font: 10px monospace; }
+.scene-editor-tree-row[aria-selected="true"] { background: #292929; outline: 1px solid #666; }
+.scene-editor-tree-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.scene-editor-tree-check { display: grid; place-items: center; min-width: 28px; min-height: 36px; }
+.scene-editor-tree-check input { width: 18px; height: 18px; accent-color: #eee; }
+.scene-editor-tree-action { min-width: 44px; min-height: 36px !important; padding: 4px !important; font: 9px monospace !important; }
+.scene-editor-touch-controls { display: grid; grid-template-columns: repeat(3, minmax(44px, 1fr)); gap: 6px; touch-action: manipulation; }
+.scene-editor-touch-controls button { min-height: 44px !important; font: 700 12px monospace !important; }
+@media (max-width: 640px) {
+  .scene-editor-hierarchy { max-height: min(32vh, 240px); }
+  .scene-editor-tree-row { min-height: 44px; }
+  .scene-editor-tree-action { min-height: 40px !important; }
+}
 
 
 /* Alternate seekable timeline ruler; geometry is derived from canonical steps. */

@@ -160,6 +160,118 @@ test('primitive scene edits reconstruct names and colors, clear stale primitives
   assert.ok(object.geometry); // the removed geometry was disposed during reconciliation
 });
 
+test('scene hierarchy reports parent depth and supports persisted rename, visibility and lock state', () => {
+  const scene = new THREE.Scene();
+  const group = new THREE.Group(); group.userData.sceneEditorId = 'group:root'; group.name = 'Root'; scene.add(group);
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial()); mesh.userData.sceneEditorId = 'mesh:child'; mesh.name = 'Child'; group.add(mesh);
+  const editor = new SceneEditor({ scene });
+  assert.deepEqual(editor.list().map(({ id, depth, parentId }) => ({ id, depth, parentId })), [
+    { id: 'group:root', depth: 0, parentId: null },
+    { id: 'mesh:child', depth: 1, parentId: 'group:root' },
+  ]);
+  assert.equal(editor.renameObject('mesh:child', 'Renamed child'), true);
+  assert.equal(editor.setObjectVisible('mesh:child', false), true);
+  assert.equal(editor.setObjectLocked('mesh:child', true), true);
+  const saved = editor.exportProjectState().find((edit) => edit.id === 'mesh:child');
+  assert.equal(saved.label, 'Renamed child');
+  assert.equal(saved.visible, false);
+  assert.equal(saved.locked, true);
+  const record = createAutosaveRecord({ timeline: { steps: [] }, sprites: [], sceneEdits: [saved] });
+  assert.deepEqual(record.sceneEdits[0], saved);
+  editor.restoreProjectState(record.sceneEdits);
+  assert.equal(mesh.visible, false);
+  assert.equal(mesh.userData.sceneEditorLocked, true);
+  assert.equal(editor.list().find((item) => item.id === 'mesh:child').label, 'Renamed child');
+  editor.restoreProjectState([]);
+  assert.equal(mesh.visible, true);
+  assert.equal(mesh.userData.sceneEditorLocked, false);
+  assert.equal(editor.list().find((item) => item.id === 'mesh:child').label, 'Child');
+  mesh.geometry.dispose(); mesh.material.dispose();
+});
+
+test('multi-selection transforms preserve relative offsets and undo/redo atomically', () => {
+  const scene = new THREE.Scene();
+  const first = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial()); first.userData.sceneEditorId = 'first';
+  const second = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial()); second.userData.sceneEditorId = 'second'; second.position.x = 2;
+  scene.add(first, second);
+  const editor = new SceneEditor({ scene });
+  editor.selectMany(['first', 'second']);
+  assert.equal(editor.getSelection().count, 2);
+  assert.equal(editor.setSelectionTransform({ position: { x: 5, y: 0, z: 0 } }), true);
+  assert.equal(first.position.x, 3);
+  assert.equal(second.position.x, 5);
+  assert.equal(editor.undo(), true);
+  assert.equal(first.position.x, 0);
+  assert.equal(second.position.x, 2);
+  assert.equal(editor.redo(), true);
+  assert.equal(first.position.x, 3);
+  assert.equal(second.position.x, 5);
+  second.userData.sceneEditorLocked = true;
+  assert.equal(editor.setSelectionTransform({ position: { x: 7, y: 0, z: 0 } }), false);
+  assert.equal(first.position.x, 3);
+  first.geometry.dispose(); first.material.dispose(); second.geometry.dispose(); second.material.dispose();
+});
+
+test('multi-selection applies the same world translation under differently rotated parents', () => {
+  const scene = new THREE.Scene();
+  const parentA = new THREE.Group(); parentA.rotation.z = Math.PI / 3; scene.add(parentA);
+  const parentB = new THREE.Group(); parentB.position.set(4, 0, 0); parentB.rotation.z = -Math.PI / 4; scene.add(parentB);
+  const first = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial()); first.userData.sceneEditorId = 'nested:first'; parentA.add(first);
+  const second = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial()); second.userData.sceneEditorId = 'nested:second'; second.position.x = 2; parentB.add(second);
+  scene.updateMatrixWorld(true);
+  const beforeA = first.getWorldPosition(new THREE.Vector3());
+  const beforeB = second.getWorldPosition(new THREE.Vector3());
+  const editor = new SceneEditor({ scene }); editor.selectMany(['nested:first', 'nested:second']);
+  assert.equal(editor.setSelectionTransform({ position: { x: second.position.x + 1, y: second.position.y, z: second.position.z } }), true);
+  scene.updateMatrixWorld(true);
+  const deltaA = first.getWorldPosition(new THREE.Vector3()).sub(beforeA);
+  const deltaB = second.getWorldPosition(new THREE.Vector3()).sub(beforeB);
+  assert.ok(deltaA.distanceTo(deltaB) < 1e-8);
+  assert.ok(Math.abs(deltaA.length() - 1) < 1e-8);
+  first.geometry.dispose(); first.material.dispose(); second.geometry.dispose(); second.material.dispose();
+});
+
+test('hierarchy visibility keeps imported map mesh collision registration in sync', () => {
+  const scene = new THREE.Scene();
+  const collision = new CollisionManager(scene);
+  const map = new MapLoader(scene, collision);
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+  mesh.userData.editorCollisionKind = 'obstacle';
+  scene.add(mesh); map.meshesByEditorId.set('mesh-1', mesh);
+  map.setMeshCollisionKind('mesh-1', 'obstacle');
+  const editor = new SceneEditor({ scene, mapLoader: map, collisionManager: collision });
+  assert.equal(collision.registeredObstacles.some((entry) => entry.object === mesh), true);
+  assert.equal(editor.setObjectVisible('map:mesh-1', false), true);
+  assert.equal(mesh.visible, false);
+  assert.equal(collision.registeredObstacles.some((entry) => entry.object === mesh), false);
+  assert.equal(editor.setObjectVisible('map:mesh-1', true), true);
+  assert.equal(collision.registeredObstacles.some((entry) => entry.object === mesh), true);
+  const hiddenState = editor.exportProjectState().map((edit) => edit.id === 'map:mesh-1' ? { ...edit, visible: false } : edit);
+  editor.restoreProjectState(hiddenState);
+  assert.equal(mesh.visible, false);
+  assert.equal(collision.registeredObstacles.some((entry) => entry.object === mesh), false);
+  const shownState = hiddenState.map((edit) => edit.id === 'map:mesh-1' ? { ...edit, visible: true } : edit);
+  editor.restoreProjectState(shownState);
+  assert.equal(mesh.visible, true);
+  assert.equal(collision.registeredObstacles.some((entry) => entry.object === mesh), true);
+  map.clear(); mesh.geometry.dispose(); mesh.material.dispose();
+});
+
+test('hiding a hierarchy parent disables child obstacle collision until shown again', () => {
+  const scene = new THREE.Scene();
+  const collision = new CollisionManager(scene);
+  const group = new THREE.Group(); group.userData.sceneEditorId = 'group:collider'; scene.add(group);
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial());
+  mesh.userData.sceneEditorId = 'mesh:collider'; group.add(mesh); collision.registerObstacle(mesh);
+  const editor = new SceneEditor({ scene, collisionManager: collision });
+  assert.notEqual(collision.clampTargetOutsideObstacles(new THREE.Vector3(0, 0, 0), 0.25).x, 0);
+  assert.equal(editor.setObjectVisible('group:collider', false), true);
+  assert.equal(collision.clampTargetOutsideObstacles(new THREE.Vector3(0, 0, 0), 0.25).x, 0);
+  assert.equal(editor.setObjectVisible('group:collider', true), true);
+  assert.notEqual(collision.clampTargetOutsideObstacles(new THREE.Vector3(0, 0, 0), 0.25).x, 0);
+  mesh.geometry.dispose(); mesh.material.dispose();
+});
+
 test('scene panel exposes color, primitive creation and separate scene history controls', async () => {
   const html = await readFile(new URL('../src/ui/studio-panel.html', import.meta.url), 'utf8');
   for (const id of ['scene-editor-color', 'scene-editor-primitive-type', 'btn-scene-editor-add-primitive', 'btn-scene-editor-remove-primitive', 'btn-scene-editor-undo', 'btn-scene-editor-redo']) {
@@ -167,4 +279,6 @@ test('scene panel exposes color, primitive creation and separate scene history c
   }
   assert.match(html, /Nesne rengi/);
   assert.match(html, /Düzenleme türü/);
+  for (const id of ['scene-editor-hierarchy', 'scene-editor-rename', 'scene-editor-touch-step']) assert.match(html, new RegExp(`id="${id}"`));
+  assert.match(html, /data-scene-nudge=/);
 });
