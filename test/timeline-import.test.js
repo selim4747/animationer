@@ -22,6 +22,33 @@ test('imports valid timeline steps and normalizes data', () => {
   assert.equal(timeline.steps[1].title, '2 Saniye Bekle');
 });
 
+test('imports camera keyframes with bounded pose and supported easing, then exports them unchanged', () => {
+  const timeline = createTimeline();
+  timeline.importSequence({ steps: [{
+    type: ACTION_TYPES.CAMERA_KEYFRAME,
+    data: { position: { x: '1', y: 2, z: 3 }, target: { x: 0, y: 1, z: 0 }, easing: 'linear' },
+    duration: 1.25,
+  }] });
+  assert.deepEqual(timeline.steps[0].data, {
+    position: { x: 1, y: 2, z: 3 }, target: { x: 0, y: 1, z: 0 }, easing: 'linear',
+  });
+  assert.equal(timeline.steps[0].duration, 1.25);
+
+  const copy = createTimeline();
+  copy.importSequence(timeline.exportSequence());
+  assert.deepEqual(copy.steps[0].data, timeline.steps[0].data);
+});
+
+test('rejects malformed camera keyframe coordinates and easing without replacing the queue', () => {
+  const timeline = createTimeline();
+  timeline.addStep(ACTION_TYPES.WAIT, { duration: 1 });
+  const before = structuredClone(timeline.steps);
+  const validPose = { position: { x: 1, y: 2, z: 3 }, target: { x: 0, y: 1, z: 0 } };
+  assert.throws(() => timeline.importSequence({ steps: [{ type: ACTION_TYPES.CAMERA_KEYFRAME, data: { ...validPose, target: { ...validPose.target, z: 'NaN' } } }] }));
+  assert.throws(() => timeline.importSequence({ steps: [{ type: ACTION_TYPES.CAMERA_KEYFRAME, data: { ...validPose, easing: 'javascript' } }] }));
+  assert.deepEqual(timeline.steps, before);
+});
+
 test('rejects invalid actions without replacing the current queue', () => {
   const timeline = createTimeline();
   const before = structuredClone(timeline.steps);

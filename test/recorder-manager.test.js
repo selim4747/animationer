@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRecordingFilename, RecorderManager } from '../src/components/RecorderManager.js';
+import { createRecordingFilename, getExportDimensions, RecorderManager } from '../src/components/RecorderManager.js';
 
 class FakeMediaRecorder {
   static isTypeSupported(type) { return type === 'video/webm'; }
@@ -32,6 +32,8 @@ function makeCanvas() {
     track,
     frameRates,
     canvas: {
+      width: 640,
+      height: 480,
       captureStream(fps) {
         frameRates.push(fps);
         return { getTracks: () => [track] };
@@ -201,3 +203,79 @@ test('generates distinct video filenames for recordings created at the same inst
   assert.notEqual(first, second);
   assert.match(first, /^diorama_scene_.*\.webm$/);
 });
+
+test('computes aspect-preserving export dimensions and enforces the device pixel budget', () => {
+  assert.deepEqual(getExportDimensions(1600, 900, '720p'), { width: 1280, height: 720 });
+  assert.deepEqual(getExportDimensions(900, 1600, '720p'), { width: 720, height: 1280 });
+  assert.deepEqual(getExportDimensions(800, 600, 'current'), { width: 800, height: 600 });
+  const capped = getExportDimensions(1600, 900, '1080p', 1024 * 1024);
+  assert.ok(capped.width * capped.height <= 1024 * 1024);
+  assert.ok(Math.abs(capped.width / capped.height - 16 / 9) < 0.01);
+});
+
+test('records from the selected offscreen resolution canvas and locks settings while recording', async () => withFakeMediaRecorder(async () => {
+  const oldDocument = globalThis.document;
+  const drawCalls = [];
+  const outputRates = [];
+  const outputCanvas = {
+    width: 0,
+    height: 0,
+    getContext() {
+      return { fillRect() {}, drawImage(...args) { drawCalls.push(args); } };
+    },
+    captureStream(fps) {
+      outputRates.push(fps);
+      return { getTracks: () => [{ stop() {} }] };
+    },
+  };
+  globalThis.document = { createElement: () => outputCanvas };
+  try {
+    const { canvas } = makeCanvas();
+    canvas.width = 1600;
+    canvas.height = 900;
+    const manager = new RecorderManager(canvas);
+    assert.equal(manager.setResolutionPreset('720p'), true);
+    assert.deepEqual(manager.getOutputDimensions(), { width: 1280, height: 720 });
+    manager._downloadBlob = async (_blob, filename) => ({ saved: true, filename });
+    assert.equal(manager.startRecording(), true);
+    assert.deepEqual(outputRates, [30]);
+    assert.equal(outputCanvas.width, 1280);
+    assert.equal(outputCanvas.height, 720);
+    assert.equal(drawCalls.length, 1, 'the initial export frame is painted before capture starts');
+    assert.equal(manager.setResolutionPreset('1080p'), false);
+    await manager.stopRecording();
+    assert.equal(manager.captureCanvas, canvas);
+  } finally {
+    if (oldDocument === undefined) delete globalThis.document;
+    else globalThis.document = oldDocument;
+  }
+}));
+
+test('rejects screenshots while recording without replacing the active offscreen capture canvas', async () => withFakeMediaRecorder(async () => {
+  const oldDocument = globalThis.document;
+  const outputCanvas = {
+    width: 0,
+    height: 0,
+    getContext() { return { fillRect() {}, drawImage() {} }; },
+    captureStream() { return { getTracks: () => [{ stop() {} }] }; },
+  };
+  globalThis.document = { createElement: () => outputCanvas };
+  try {
+    const { canvas } = makeCanvas();
+    const manager = new RecorderManager(canvas);
+    assert.equal(manager.setResolutionPreset('720p'), true);
+    manager._downloadBlob = async (_blob, filename) => ({ saved: true, filename });
+    assert.equal(manager.startRecording(), true);
+    assert.equal(manager.captureCanvas, outputCanvas);
+
+    const screenshot = await manager.takeScreenshot();
+
+    assert.equal(screenshot.saved, false);
+    assert.match(screenshot.error, /Video kaydı sırasında/i);
+    assert.equal(manager.captureCanvas, outputCanvas);
+    await manager.stopRecording();
+  } finally {
+    if (oldDocument === undefined) delete globalThis.document;
+    else globalThis.document = oldDocument;
+  }
+}));

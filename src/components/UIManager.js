@@ -245,6 +245,7 @@ export class UIManager {
       // Sekme 3: KAMERALAR
       btnFreeOrbit: document.getElementById('btn-free-orbit'),
       btnAddCamera: document.getElementById('btn-add-camera'),
+      btnAddCameraKeyframe: document.getElementById('btn-add-camera-keyframe'),
       btnToggleFollow: document.getElementById('btn-toggle-follow'),
       btnToggleTour: document.getElementById('btn-toggle-tour'),
       labelTourBtn: document.getElementById('label-tour-btn'),
@@ -301,6 +302,10 @@ export class UIManager {
 
       // Sekme 5: DIŞA AKTAR / RENDER
       btnTakeScreenshot: document.getElementById('btn-take-screenshot'),
+      exportResolutionSelect: document.getElementById('export-resolution-select'),
+      labelExportResolution: document.getElementById('label-export-resolution'),
+      exportBackgroundMode: document.getElementById('export-background-mode'),
+      exportBackgroundColor: document.getElementById('export-background-color'),
       btnQuality720p: document.getElementById('btn-quality-720p'),
       btnQuality1080p: document.getElementById('btn-quality-1080p'),
       btnFrameRate30: document.getElementById('btn-fps-30'),
@@ -429,9 +434,18 @@ export class UIManager {
     }
 
     // --- SEKME 1: REJİ / TIMELINE ---
+    const playTimeline = () => {
+      const playback = this.timeline.play();
+      Promise.resolve(playback).then((result) => {
+        if (result === false && this.timeline.lastPlaybackError) {
+          this.showToast(this.timeline.lastPlaybackError);
+          this.timeline.lastPlaybackError = null;
+        }
+      });
+    };
     if (d.btnTimelinePlay) {
       d.btnTimelinePlay.addEventListener('click', () => {
-        this.timeline.play();
+        playTimeline();
         this.showToast('Reji Zaman Çizelgesi Oynatılıyor ▶');
       });
     }
@@ -442,7 +456,7 @@ export class UIManager {
           this.timeline.pause();
           this.showToast('Reji Duraklatıldı ⏸');
         } else {
-          this.timeline.play();
+          playTimeline();
           this.showToast('Reji Oynatılıyor ▶');
         }
       });
@@ -1103,6 +1117,17 @@ export class UIManager {
       });
     }
 
+    d.btnAddCameraKeyframe?.addEventListener('click', () => {
+      if (this.timeline.isPlaying) return this.showToast('Oynatma sırasında kamera ana karesi eklenemez.');
+      const pose = this.cameraManager.capturePose();
+      const options = this.getTimelineActionOptions('');
+      delete options.actorId;
+      options.duration ||= 2;
+      const ordinal = this.timeline.steps.filter((step) => step.type === 'CAMERA_KEYFRAME').length + 1;
+      this.timeline.addStep('CAMERA_KEYFRAME', { ...pose, easing: 'easeInOutCubic' }, `Kamera Ana Karesi ${ordinal}`, options);
+      this.showToast('Mevcut kamera açısı zaman çizelgesine 2 saniyelik ana kare olarak eklendi.');
+    });
+
     d.cameraPresetButtons?.forEach((button) => {
       button.addEventListener('click', () => {
         const target = this.characters.getPosition().clone();
@@ -1194,6 +1219,47 @@ export class UIManager {
     }
 
     // --- SEKME 5: DIŞA AKTAR / RENDER ---
+    const updateExportResolutionLabel = () => {
+      const size = this.recorder?.getOutputDimensions?.();
+      if (size && d.labelExportResolution) {
+        const mode = this.recorder.resolutionPreset === 'current' ? 'canlı canvas' : 'ölçekli çıktı';
+        d.labelExportResolution.textContent = `PNG / video: ${size.width} × ${size.height} px · ${mode}`;
+      }
+    };
+    window.addEventListener('resize', updateExportResolutionLabel, { passive: true });
+    if (d.exportResolutionSelect) {
+      d.exportResolutionSelect.value = this.recorder?.resolutionPreset || 'current';
+      d.exportResolutionSelect.disabled = !this.recorder;
+      updateExportResolutionLabel();
+      d.exportResolutionSelect.addEventListener('change', () => {
+        if (!this.recorder?.setResolutionPreset(d.exportResolutionSelect.value)) {
+          d.exportResolutionSelect.value = this.recorder?.resolutionPreset || 'current';
+          this.showToast('Çıktı boyutu kayıt sırasında değiştirilemez.');
+        } else {
+          updateExportResolutionLabel();
+          this.showToast('PNG ve sonraki video kayıtları için çıktı boyutu güncellendi.');
+        }
+      });
+    }
+    const syncExportBackgroundControls = () => {
+      if (!this.recorder) return;
+      d.exportBackgroundMode.value = this.recorder.backgroundMode;
+      d.exportBackgroundColor.value = this.recorder.backgroundColor;
+      d.exportBackgroundColor.disabled = this.recorder.backgroundMode !== 'solid' || this.recorder.isRecording || this.recorder.isFinalizing;
+    };
+    if (d.exportBackgroundMode && d.exportBackgroundColor) {
+      syncExportBackgroundControls();
+      d.exportBackgroundMode.disabled = !this.recorder;
+      d.exportBackgroundMode.addEventListener('change', () => {
+        if (!this.recorder?.setBackground(d.exportBackgroundMode.value, d.exportBackgroundColor.value)) this.showToast('Arka plan ayarı kayıt sırasında değiştirilemez.');
+        syncExportBackgroundControls();
+      });
+      d.exportBackgroundColor.addEventListener('input', () => {
+        if (!this.recorder?.setBackground('solid', d.exportBackgroundColor.value)) return;
+        d.exportBackgroundMode.value = 'solid';
+      });
+    }
+
     if (d.btnTakeScreenshot) {
       d.btnTakeScreenshot.addEventListener('click', async () => {
         if (!this.recorder || d.btnTakeScreenshot.disabled) return;
@@ -1373,6 +1439,9 @@ export class UIManager {
       }
     }
     if (d.btnRecordSequence) d.btnRecordSequence.disabled = isBusy;
+    if (d.exportResolutionSelect) d.exportResolutionSelect.disabled = isBusy || !this.recorder;
+    if (d.exportBackgroundMode) d.exportBackgroundMode.disabled = isBusy || !this.recorder;
+    if (d.exportBackgroundColor) d.exportBackgroundColor.disabled = isBusy || !this.recorder || this.recorder.backgroundMode !== 'solid';
     if (d.btnQuality720p) d.btnQuality720p.disabled = isBusy;
     if (d.btnQuality1080p) d.btnQuality1080p.disabled = isBusy;
     if (d.btnFrameRate30) d.btnFrameRate30.disabled = isBusy;
@@ -1792,6 +1861,7 @@ export class UIManager {
       else if (step.type === 'WAIT') typeBadge = 'BEKLE';
       else if (step.type === 'TRIGGER_DOOR') typeBadge = 'KAPI';
       else if (step.type === 'SWITCH_CAMERA') typeBadge = 'KAMERA';
+      else if (step.type === 'CAMERA_KEYFRAME') typeBadge = 'KAMERA ANA KARESİ';
       else if (step.type === 'PLAY_EMOTE') typeBadge = 'EMOTE';
       else if (step.type === 'FOLLOW') typeBadge = 'TAKİP';
       else if (step.type === 'SET_VISIBILITY') typeBadge = step.data.visible ? 'GÖSTER' : 'GİZLE';
@@ -1854,6 +1924,14 @@ export class UIManager {
       }
       if (step.type === 'MOVE_TO') {
         for (const axis of ['x', 'y', 'z']) addNumber(axis.toUpperCase(), step.data?.[axis] ?? 0, -1000, 1000, 0.1, (value) => ({ data: { [axis]: value } }));
+      } else if (step.type === 'CAMERA_KEYFRAME') {
+        for (const [field, label] of [['position', 'Kamera konumu'], ['target', 'Bakış hedefi']]) {
+          for (const axis of ['x', 'y', 'z']) {
+            const vector = step.data?.[field] || { x: 0, y: 0, z: 0 };
+            addNumber(`${label} ${axis.toUpperCase()}`, vector[axis], -10000, 10000, 0.1, (value) => ({ data: { [field]: { ...vector, [axis]: value } } }));
+          }
+        }
+        addSelect('Kamera geçiş eğrisi', [['easeInOutCubic', 'Yumuşak (ease-in-out)'], ['linear', 'Doğrusal']], step.data?.easing || 'easeInOutCubic', (value) => ({ data: { easing: value } }));
       } else if (step.type === 'WAIT') addNumber('Bekleme süresi (sn)', step.data?.duration ?? 1, 0.01, 3600, 0.1, (value) => ({ data: { duration: value } }));
       else if (step.type === 'TRIGGER_DOOR') addSelect('Kapı eylemi', [['open', 'Aç'], ['close', 'Kapat']], step.data?.action || 'open', (value) => ({ data: { action: value } }));
       else if (step.type === 'SWITCH_CAMERA') addSelect('Kamera istasyonu', (this.cameraManager?.stations || []).map((station) => [station.id, station.name]), step.data?.stationId, (value) => ({ data: { stationId: value } }));

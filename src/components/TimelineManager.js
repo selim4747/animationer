@@ -12,11 +12,25 @@ export const ACTION_TYPES = {
   WAIT: 'WAIT',
   TRIGGER_DOOR: 'TRIGGER_DOOR',
   SWITCH_CAMERA: 'SWITCH_CAMERA',
+  CAMERA_KEYFRAME: 'CAMERA_KEYFRAME',
   PLAY_EMOTE: 'PLAY_EMOTE',
   FOLLOW: 'FOLLOW',
   SET_VISIBILITY: 'SET_VISIBILITY',
   PLAY_SPRITE_ANIMATION: 'PLAY_SPRITE_ANIMATION',
 };
+
+const CAMERA_EASINGS = new Set(['linear', 'easeInOutCubic']);
+
+function normalizeCameraKeyframeData(data = {}) {
+  const normalizeVector = (vector, label) => {
+    const values = ['x', 'y', 'z'].map((axis) => Number(vector?.[axis]));
+    if (values.some((value) => !Number.isFinite(value) || Math.abs(value) > 10000)) throw new Error(`Kamera ana karesi ${label} koordinatları geçersiz.`);
+    return { x: values[0], y: values[1], z: values[2] };
+  };
+  const easing = data.easing ?? 'easeInOutCubic';
+  if (!CAMERA_EASINGS.has(easing)) throw new Error('Kamera ana karesi geçiş eğrisi geçersiz.');
+  return { position: normalizeVector(data.position, 'konum'), target: normalizeVector(data.target, 'hedef'), easing };
+}
 
 export class TimelineManager {
   /**
@@ -46,6 +60,7 @@ export class TimelineManager {
     this._abortPlayback = false;
     this._pausePromiseResolver = null;
     this._playbackId = 0;
+    this.lastPlaybackError = null;
 
     // Adım Kaydetme Modu
     this.isRecording = false;
@@ -274,7 +289,9 @@ export class TimelineManager {
       if (current.type === ACTION_TYPES.WAIT && (!Number.isFinite(Number(data.duration)) || Number(data.duration) <= 0 || Number(data.duration) > 3600)) return false;
       if (current.type === ACTION_TYPES.MOVE_TO && !['x', 'y', 'z'].every((axis) => Number.isFinite(Number(data[axis])) && Math.abs(Number(data[axis])) <= 1000)) return false;
       if (current.type === ACTION_TYPES.FOLLOW && data.offset && !['x', 'y', 'z'].every((axis) => Number.isFinite(Number(data.offset[axis])) && Math.abs(Number(data.offset[axis])) <= 100)) return false;
-      next.data = data;
+      if (current.type === ACTION_TYPES.CAMERA_KEYFRAME) {
+        try { next.data = normalizeCameraKeyframeData(data); } catch { return false; }
+      } else next.data = data;
     }
     for (const field of ['startAt', 'duration']) {
       if (!(field in patch)) continue;
@@ -317,6 +334,8 @@ export class TimelineManager {
         return data.action === 'close' ? 'Kapıyı Kapat' : 'Kapıyı Aç';
       case ACTION_TYPES.SWITCH_CAMERA:
         return 'Kameraya Geç';
+      case ACTION_TYPES.CAMERA_KEYFRAME:
+        return 'Kamera Ana Karesine Geç';
       case ACTION_TYPES.PLAY_EMOTE:
         return `Karakter Emote: ${data.emote || 'jump'}`;
       case ACTION_TYPES.FOLLOW:
@@ -384,6 +403,7 @@ export class TimelineManager {
       // Duraklatılmış yerden devam et
       this.isPaused = false;
       this.isPlaying = true;
+      this.cameraManager?.setTimelinePaused?.(false);
       this.character?.pauseAll?.(false);
       this.spriteAnimationManager?.pauseAll?.(false);
       if (this._pausePromiseResolver) {
@@ -437,6 +457,7 @@ export class TimelineManager {
       if (playbackId === this._playbackId) {
         this.isPlaying = false;
         this.isPaused = false;
+        this.cameraManager?.releaseTimelinePose?.();
         if (this.currentStepIndex >= this.steps.length) {
           this.currentStepIndex = -1; // Tamamlandı
         }
@@ -451,6 +472,7 @@ export class TimelineManager {
     if (this.isPaused) {
       this.isPaused = false;
       this.isPlaying = true;
+      this.cameraManager?.setTimelinePaused?.(false);
       this.character?.pauseAll?.(false);
       this.spriteAnimationManager?.pauseAll?.(false);
       this._pausePromiseResolver?.();
@@ -460,12 +482,6 @@ export class TimelineManager {
     }
     if (this.isPlaying) return false;
 
-    this.isPlaying = true;
-    this.isPaused = false;
-    this._abortPlayback = false;
-    const playbackId = ++this._playbackId;
-    this.character?.pauseAll?.(false);
-    this.spriteAnimationManager?.pauseAll?.(false);
     const schedule = this.steps
       .map((step, index) => ({
         step,
@@ -473,6 +489,24 @@ export class TimelineManager {
         startAt: Number.isFinite(step.startAt) ? step.startAt : index * 2,
       }))
       .sort((a, b) => a.startAt - b.startAt || a.index - b.index);
+    let previousCameraEnd = -Infinity;
+    for (const item of schedule) {
+      if (![ACTION_TYPES.CAMERA_KEYFRAME, ACTION_TYPES.SWITCH_CAMERA].includes(item.step.type)) continue;
+      const duration = item.step.type === ACTION_TYPES.CAMERA_KEYFRAME ? (item.step.duration || 2) : 0.9;
+      if (item.startAt < previousCameraEnd - 1e-9) {
+        this.lastPlaybackError = 'Zamanlı oynatmada kamera geçişleri çakışamaz. Kamera ana kareleri ve kamera istasyonları arasında yeterli süre bırakın.';
+        return false;
+      }
+      previousCameraEnd = item.startAt + duration;
+    }
+    this.lastPlaybackError = null;
+
+    this.isPlaying = true;
+    this.isPaused = false;
+    this._abortPlayback = false;
+    const playbackId = ++this._playbackId;
+    this.character?.pauseAll?.(false);
+    this.spriteAnimationManager?.pauseAll?.(false);
     this._notify();
 
     const runningActions = [];
@@ -504,6 +538,7 @@ export class TimelineManager {
         this.isPlaying = false;
         this.isPaused = false;
         this.character?.pauseAll?.(false);
+        this.cameraManager?.releaseTimelinePose?.();
         this.currentStepIndex = -1;
         this._notify();
       }
@@ -558,6 +593,15 @@ export class TimelineManager {
           if (this._abortPlayback || playbackId !== this._playbackId) break;
           await this._sleepWithAbort(500, playbackId);
         }
+        break;
+      }
+
+      case ACTION_TYPES.CAMERA_KEYFRAME: {
+        if (!this.cameraManager?.transitionToPosePromise) throw new Error('Kamera yöneticisi bulunamadı.');
+        await this.cameraManager.transitionToPosePromise(step.data, {
+          duration: step.duration || 2,
+          easing: step.data.easing || 'easeInOutCubic',
+        });
         break;
       }
 
@@ -646,6 +690,7 @@ export class TimelineManager {
   pause() {
     if (this.isPlaying && !this.isPaused) {
       this.isPaused = true;
+      this.cameraManager?.setTimelinePaused?.(true);
       this.character?.pauseAll?.(true);
       this.spriteAnimationManager?.pauseAll?.(true);
       this._notify();
@@ -761,6 +806,11 @@ export class TimelineManager {
               throw new Error(`${index + 1}. adımın kamera hedefi geçersiz.`);
             }
             cleanData = stationId ? { stationId } : { stationIndex };
+            break;
+          }
+          case ACTION_TYPES.CAMERA_KEYFRAME: {
+            try { cleanData = normalizeCameraKeyframeData(data); }
+            catch (error) { throw new Error(`${index + 1}. adım: ${error.message}`); }
             break;
           }
           case ACTION_TYPES.PLAY_EMOTE: {

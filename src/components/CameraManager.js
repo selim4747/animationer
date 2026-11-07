@@ -47,6 +47,10 @@ export class CameraManager {
     this.endPos = new THREE.Vector3();
     this.endTarget = new THREE.Vector3();
     this.transitionResolve = null;
+    this.transitionEasing = 'easeInOutCubic';
+    this._keyframeHold = false;
+    this._isTimelinePoseTransition = false;
+    this._transitionPausedAt = null;
 
     // Kamera Turu Durumu
     this.isTourActive = false;
@@ -97,7 +101,11 @@ export class CameraManager {
    * Serbest kamera moduna döner (OrbitControls açılır)
    */
   setFreeMode() {
+    this._resolveCurrentTransition();
     this.isTransitioning = false;
+    this._keyframeHold = false;
+    this._isTimelinePoseTransition = false;
+    this._transitionPausedAt = null;
     this.controls.enabled = true;
     this.activeStationId = null;
     this.activePresetId = null;
@@ -126,7 +134,14 @@ export class CameraManager {
     if (!station && typeof stationOrId === 'number') {
       station = this.stations[stationOrId];
     }
-    if (!station) return;
+    if (!station) return false;
+
+    this._resolveCurrentTransition();
+    this._keyframeHold = false;
+    this._isTimelinePoseTransition = false;
+    this._transitionPausedAt = null;
+    this.transitionDuration = 900;
+    this.transitionEasing = 'easeInOutCubic';
 
     this.activeStationId = station.id;
     this.activePresetId = null;
@@ -146,11 +161,18 @@ export class CameraManager {
       stations: this.stations,
       activeId: station.id,
     });
+    return true;
   }
 
   transitionToPreset(presetId, target = new THREE.Vector3()) {
     const preset = this.presets.find((item) => item.id === presetId);
     if (!preset || !target) return false;
+    this._resolveCurrentTransition();
+    this._keyframeHold = false;
+    this._isTimelinePoseTransition = false;
+    this._transitionPausedAt = null;
+    this.transitionDuration = 900;
+    this.transitionEasing = 'easeInOutCubic';
     this.activeStationId = `preset-${preset.id}`;
     this.activePresetId = preset.id;
     this.startPos.copy(this.camera.position);
@@ -170,9 +192,8 @@ export class CameraManager {
    * @returns {Promise<void>}
    */
   transitionToStationPromise(stationOrId) {
-    this.transitionToStation(stationOrId);
     return new Promise((resolve) => {
-      if (!this.isTransitioning) {
+      if (!this.transitionToStation(stationOrId) || !this.isTransitioning) {
         resolve();
       } else {
         this.transitionResolve = resolve;
@@ -180,15 +201,76 @@ export class CameraManager {
     });
   }
 
-  cancelTransition() {
-    if (!this.isTransitioning && !this.transitionResolve) return false;
-    this.isTransitioning = false;
-    this.controls.enabled = true;
+  capturePose() {
+    return {
+      position: { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z },
+      target: { x: this.controls.target.x, y: this.controls.target.y, z: this.controls.target.z },
+    };
+  }
+
+  transitionToPosePromise(pose, { duration = 2, easing = 'easeInOutCubic' } = {}) {
+    const values = [pose?.position, pose?.target].flatMap((vector) => ['x', 'y', 'z'].map((axis) => Number(vector?.[axis])));
+    const durationSeconds = Number(duration);
+    if (values.some((value) => !Number.isFinite(value) || Math.abs(value) > 10000)) return Promise.reject(new Error('Kamera ana karesi koordinatları geçersiz.'));
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > 3600) return Promise.reject(new Error('Kamera geçiş süresi 0–3600 saniye arasında olmalı.'));
+    if (!['linear', 'easeInOutCubic'].includes(easing)) return Promise.reject(new Error('Kamera geçiş eğrisi geçersiz.'));
+    this.stopTour();
+    this._resolveCurrentTransition();
     this.activeStationId = null;
     this.activePresetId = null;
+    this._keyframeHold = true;
+    this._isTimelinePoseTransition = true;
+    this._transitionPausedAt = null;
+    this.startPos.copy(this.camera.position);
+    this.startTarget.copy(this.controls.target);
+    this.endPos.set(Number(pose.position.x), Number(pose.position.y), Number(pose.position.z));
+    this.endTarget.set(Number(pose.target.x), Number(pose.target.y), Number(pose.target.z));
+    this.transitionStartTime = performance.now();
+    this.transitionDuration = durationSeconds * 1000;
+    this.transitionEasing = easing;
+    this.isTransitioning = true;
+    this.controls.enabled = false;
+    this.onStateChange({ mode: 'locked', stationName: 'Zaman çizelgesi kamera ana karesi', stations: this.stations, activeId: null });
+    return new Promise((resolve) => { this.transitionResolve = resolve; });
+  }
+
+  _resolveCurrentTransition() {
     const resolve = this.transitionResolve;
     this.transitionResolve = null;
     resolve?.();
+  }
+
+  setTimelinePaused(paused) {
+    if (!this._isTimelinePoseTransition || !this.isTransitioning) return;
+    if (paused && this._transitionPausedAt === null) this._transitionPausedAt = performance.now();
+    else if (!paused && this._transitionPausedAt !== null) {
+      this.transitionStartTime += performance.now() - this._transitionPausedAt;
+      this._transitionPausedAt = null;
+    }
+  }
+
+  releaseTimelinePose() {
+    if (!this._keyframeHold) return false;
+    this._keyframeHold = false;
+    this._isTimelinePoseTransition = false;
+    this._transitionPausedAt = null;
+    this.controls.enabled = true;
+    this.activeStationId = null;
+    this.activePresetId = null;
+    this.onStateChange({ mode: 'free', stationName: 'Serbest Orbit', stations: this.stations, activeId: null });
+    return true;
+  }
+
+  cancelTransition() {
+    if (!this.isTransitioning && !this.transitionResolve && !this._keyframeHold) return false;
+    this.isTransitioning = false;
+    this._keyframeHold = false;
+    this._isTimelinePoseTransition = false;
+    this._transitionPausedAt = null;
+    this.controls.enabled = true;
+    this.activeStationId = null;
+    this.activePresetId = null;
+    this._resolveCurrentTransition();
     this.onStateChange({ mode: 'free', stationName: 'Serbest Orbit', stations: this.stations, activeId: null });
     return true;
   }
@@ -390,14 +472,18 @@ export class CameraManager {
   update(delta, characterPos, roomBounds) {
     const now = performance.now();
 
-    // 1. Odaya Giriş / Çıkış BoundingBox Tetikleyicisini Denetle
-    this._checkRoomBoundsTrigger(characterPos, roomBounds);
+    if (this._transitionPausedAt !== null) return;
+
+    // Authored camera poses suppress automatic CCTV/follow motion until playback releases the pose.
+    if (!this._keyframeHold) this._checkRoomBoundsTrigger(characterPos, roomBounds);
 
     // 2. İstasyonlar Arası Yumuşak Lerp Geçişi
     if (this.isTransitioning) {
       const elapsed = now - this.transitionStartTime;
       const progress = Math.min(1.0, elapsed / this.transitionDuration);
-      const ease = progress < 0.5 ? 4 * progress * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+      const ease = this.transitionEasing === 'linear'
+        ? progress
+        : progress < 0.5 ? 4 * progress * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2;
 
       this.camera.position.lerpVectors(this.startPos, this.endPos, ease);
       this.controls.target.lerpVectors(this.startTarget, this.endTarget, ease);
@@ -417,7 +503,7 @@ export class CameraManager {
       }
     } else {
       // 3. Karakteri Takip Etme Mantığı
-      if (this.followCharacter && characterPos) {
+      if (!this._keyframeHold && this.followCharacter && characterPos) {
         const charHead = new THREE.Vector3(characterPos.x, characterPos.y + 0.9, characterPos.z);
 
         if (this.activeStationId !== null) {
