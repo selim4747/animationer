@@ -21,6 +21,7 @@ import { IndexedProjectStore } from './components/ProjectStore.js';
 import { HomeScreen } from './components/HomeScreen.js';
 import { SceneBuilder } from './components/SceneBuilder.js';
 import { SceneEditor } from './components/SceneEditor.js';
+import { PerformanceDiagnostics } from './components/PerformanceDiagnostics.js';
 import { toRendererViewport } from './components/ViewportLayout.js';
 import studioPanelHtml from './ui/studio-panel.html?raw';
 class App {
@@ -169,6 +170,10 @@ class App {
    * @private
    */
   _initComponents() {
+    this.performanceDiagnostics = new PerformanceDiagnostics({
+      onUpdate: (state) => this.uiManager?.updateDiagnosticsUI(state),
+    });
+
     // 1. Çarpışma ve Mekânsal Culling Yöneticisi
     this.collisionManager = new CollisionManager(this.scene);
 
@@ -260,6 +265,7 @@ class App {
       cameraManager: this.cameraManager,
       mapLoader: this.mapLoader,
       recorderManager: this.recorderManager,
+      performanceDiagnostics: this.performanceDiagnostics,
       spriteAnimationManager: this.spriteAnimationManager,
       worldSpriteCharacterManager: this.worldSpriteCharacterManager,
       projectStore: this.projectStore,
@@ -606,6 +612,22 @@ class App {
   _animate() {
     requestAnimationFrame(() => this._animate());
 
+    const diagnosticsEnabled = this.performanceDiagnostics?.enabled || false;
+    let diagnosticsTimestamp = 0;
+    let diagnosticsFrameTime = 0;
+    if (diagnosticsEnabled) {
+      diagnosticsTimestamp = performance.now();
+      if (this._lastDiagnosticsFrameAt !== null && this._lastDiagnosticsFrameAt !== undefined) {
+        diagnosticsFrameTime = Math.max(0, diagnosticsTimestamp - this._lastDiagnosticsFrameAt);
+      }
+      this._lastDiagnosticsFrameAt = diagnosticsTimestamp;
+      this.renderer.info.autoReset = false;
+      this.renderer.info.reset();
+    } else {
+      this._lastDiagnosticsFrameAt = null;
+      this.renderer.info.autoReset = true;
+    }
+
     const delta = Math.min(this.clock.getDelta(), 0.1);
     const charPos = this.character.getPosition();
     const roomBounds = this.door.getRoomBounds();
@@ -648,6 +670,10 @@ class App {
     this.renderer.setViewport(0, 0, this.renderer.domElement.clientWidth, this.renderer.domElement.clientHeight);
     this.renderer.clearDepth();
     this.renderer.render(this.spriteScene, this.spriteCamera);
+    if (diagnosticsEnabled) {
+      this.performanceDiagnostics.recordFrame(diagnosticsFrameTime, this.renderer.info, diagnosticsTimestamp);
+      this.renderer.info.reset();
+    }
   }
 }
 
