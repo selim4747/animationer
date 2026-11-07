@@ -110,6 +110,14 @@
               + Gizle
             </button>
           </div>
+          <div class="studio-sub-header">HAZIR HAREKET AKIŞI:</div>
+          <div class="studio-ctrl-row template-control-row">
+            <label class="template-control-label" for="timeline-motion-template">Akış şablonu
+              <select id="timeline-motion-template" class="hud-select"></select>
+            </label>
+            <button id="btn-add-motion-template" class="hud-btn small-btn" type="button">Akışı sona ekle</button>
+          </div>
+          <p id="timeline-motion-description" class="step-meta template-description" role="status" aria-live="polite"></p>
           <label class="timeline-field follow-target-field">Takip hedefi
             <select id="timeline-follow-target" class="hud-select"></select>
           </label>
@@ -161,6 +169,14 @@
               3D Galeri Demo
             </button>
           </div>
+          <div class="studio-sub-header">HAZIR SAHNE DÜZENİ:</div>
+          <div class="studio-ctrl-row template-control-row">
+            <label class="template-control-label" for="scene-template-picker">Sahne şablonu
+              <select id="scene-template-picker" class="hud-select"></select>
+            </label>
+            <button id="btn-apply-scene-template" class="hud-btn small-btn" type="button">Sahneye ekle</button>
+          </div>
+          <p id="scene-template-description" class="step-meta template-description" role="status" aria-live="polite"></p>
 
           <!-- 2D Görsel Ayarları (Sadece görsel yüklendiğinde açılır) -->
           <div id="panel-image-controls" class="studio-image-options" style="display: none;">
@@ -263,8 +279,8 @@
               <button id="btn-scene-editor-reset" type="button" class="hud-btn subtle">İlk Hâline Döndür</button>
             </div>
             <div class="studio-ctrl-row">
-              <button id="btn-scene-editor-undo" type="button" class="hud-btn flex-grow" title="Sahne nesnesinin son dönüşümünü geri al" disabled>Sahne Geri Al</button>
-              <button id="btn-scene-editor-redo" type="button" class="hud-btn flex-grow" title="Geri alınan sahne dönüşümünü yinele" disabled>Sahne Yinele</button>
+              <button id="btn-scene-editor-undo" type="button" class="hud-btn flex-grow" title="Sahne nesnesinin son düzenlemesini geri al" disabled>Sahne Geri Al</button>
+              <button id="btn-scene-editor-redo" type="button" class="hud-btn flex-grow" title="Geri alınan sahne düzenlemesini yinele" disabled>Sahne Yinele</button>
             </div>
             <label class="timeline-field">Nesne rengi
               <input id="scene-editor-color" type="color" value="#ffffff" aria-label="Seçili nesnenin rengi" disabled />

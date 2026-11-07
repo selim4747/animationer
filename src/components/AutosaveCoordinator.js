@@ -143,10 +143,11 @@ export class AutosaveCoordinator {
         const fingerprint = recordFingerprint(record, this.mapLoader?.stateRevision);
         if (fingerprint === this._lastFingerprint) continue;
         const savedAt = this.projectId && this.projectStore.saveProject
-          ? await this.projectStore.saveProject(this.projectId, record)
+          ? await this.projectStore.saveProject(this.projectId, record, { createVersion: true, minVersionIntervalMs: 5 * 60 * 1000 })
           : await this.projectStore.save(record);
         this._lastFingerprint = fingerprint;
-        this.onStatus(`Otomatik kayıtlı · ${new Date(savedAt).toLocaleTimeString()}`);
+        const historyWarning = this.projectStore.lastHistoryWarning;
+        this.onStatus(`Otomatik kayıtlı · ${new Date(savedAt).toLocaleTimeString()}${historyWarning ? ` · Sürüm geçmişi: ${historyWarning}` : ''}`);
       } while (this._saveRequested && !this._restoring);
     })().catch((error) => {
       this._lastError = error;

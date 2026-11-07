@@ -36,3 +36,28 @@ test('portrait mobile HUD keeps the home-return control visible alongside help',
   assert.match(portraitRule, /\.hud-actions\s+#btn-open-help\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px;/s);
   assert.match(portraitRule, /\.hud-actions\s+#btn-home-screen\s*\{[^}]*display:\s*inline-flex;[^}]*min-height:\s*44px;/s);
 });
+
+test('home exposes version history and editable scene starter templates without narrow-card overflow', async () => {
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  const home = await readFile(new URL('../src/components/HomeScreen.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../src/style.css', import.meta.url), 'utf8');
+  assert.match(html, /id="home-dialog-version-list"[^>]*role="list"[^>]*aria-live="polite"/);
+  assert.match(html, /value="product-display"/);
+  assert.match(html, /value="stage-blocks"/);
+  assert.match(home, /dataset\.action = action/);
+  assert.match(home, /action: 'restore-version'/);
+  assert.match(home, /createProjectVersion\(projectId/);
+  assert.match(css, /\.home-project-actions\s*\{[^}]*flex-wrap:\s*wrap/s);
+});
+
+test('scene and motion template controls have accessible labels and mobile-sized targets', async () => {
+  const html = await readFile(new URL('../src/ui/studio-panel.html', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../src/style.css', import.meta.url), 'utf8');
+  assert.match(html, /id="timeline-motion-template"/);
+  assert.match(html, /id="btn-add-motion-template"/);
+  assert.match(html, /id="timeline-motion-description"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(html, /id="scene-template-picker"/);
+  assert.match(html, /id="btn-apply-scene-template"/);
+  assert.match(css, /\.template-control-label \.hud-select\s*\{[^}]*min-height:\s*44px;/s);
+  assert.match(css, /\.template-control-row\s*>\s*\.hud-btn\s*\{[^}]*min-height:\s*44px;/s);
+});

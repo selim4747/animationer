@@ -1,0 +1,73 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import { SceneEditor } from '../src/components/SceneEditor.js';
+import { TimelineManager } from '../src/components/TimelineManager.js';
+import { getMotionTemplate, MOTION_TEMPLATES } from '../src/data/motion-templates.js';
+import { buildSceneTemplateEdits, SCENE_TEMPLATES } from '../src/data/scene-templates.js';
+
+test('motion presets append validated fresh steps without replacing existing queue and undo atomically', () => {
+  const timeline = new TimelineManager({ initialDemo: false });
+  timeline.addStep('WAIT', { duration: 1 }, 'Existing');
+  const original = structuredClone(timeline.steps);
+  timeline.setPlayMode('scheduled');
+  const preset = getMotionTemplate('greet-and-move');
+  const count = timeline.appendSequence({ steps: preset.steps });
+  assert.equal(count, 3);
+  assert.equal(timeline.steps.length, original.length + 3);
+  assert.deepEqual(timeline.steps.slice(0, original.length), original);
+  assert.equal(timeline.playMode, 'scheduled');
+  assert.equal(new Set(timeline.steps.map((step) => step.id)).size, timeline.steps.length);
+  preset.steps[0].data.x = 999;
+  assert.equal(MOTION_TEMPLATES[0].steps[0].data.x, 0, 'returned templates do not mutate shared definitions');
+  assert.equal(timeline.undo(), true);
+  assert.deepEqual(timeline.steps, original);
+  assert.equal(timeline.redo(), true);
+  assert.equal(timeline.steps.length, original.length + 3);
+});
+
+test('invalid or oversized motion preset is rejected before the queue or history changes', () => {
+  const timeline = new TimelineManager({ initialDemo: false });
+  timeline.addStep('WAIT', { duration: 1 }, 'Existing');
+  const before = structuredClone(timeline.steps);
+  const undoCount = timeline._undoStack.length;
+  assert.throws(() => timeline.appendSequence({ steps: [{ type: 'RUN_SCRIPT', data: {} }] }), /türü geçersiz/i);
+  assert.throws(() => timeline.appendSequence({ steps: Array(5001).fill({ type: 'WAIT', data: { duration: 1 } }) }), /5000/i);
+  assert.deepEqual(timeline.steps, before);
+  assert.equal(timeline._undoStack.length, undoCount);
+});
+
+test('built-in scene presets produce unique, validated editable primitives', () => {
+  const scene = new THREE.Scene();
+  const editor = new SceneEditor({ scene });
+  const existing = editor.createPrimitive('box', { id: 'primitive:existing', name: 'Existing' });
+  editor.select('primitive:existing');
+  editor.setTransform('primitive:existing', { position: { x: 2, y: 0.5, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 } });
+  const priorUndoCount = editor.undoStack.length;
+  const edits = buildSceneTemplateEdits('product-display');
+  assert.equal(edits.length, 3);
+  assert.equal(new Set(edits.map((edit) => edit.id)).size, 3);
+  assert.equal(edits.some((edit) => edit.id === 'primitive:existing'), false);
+  assert.throws(() => buildSceneTemplateEdits('unknown-template'), /bulunamadı/i);
+  assert.throws(() => editor.addPrimitiveBatch([...edits, edits[0]]), /yineleniyor/i);
+  assert.equal(editor.list().length, 1, 'invalid batch is rejected before any primitive is created');
+  const addedIds = editor.addPrimitiveBatch(edits);
+  const rows = editor.list();
+  assert.equal(rows.length, 4);
+  assert.equal(addedIds.length, 3);
+  assert.equal(editor.undoStack.length, priorUndoCount + 1, 'the template batch is one additional scene-history entry');
+  assert.equal(scene.children.includes(existing), true);
+  assert.equal(rows.filter((row) => edits.some((edit) => edit.id === row.id)).length, 3);
+  assert.equal(editor.undo(), true);
+  assert.equal(editor.list().length, 1, 'one undo removes the entire template batch');
+  assert.equal(existing.position.x, 2, 'the prior transform remains beneath the batch history entry');
+  assert.equal(editor.undo(), true);
+  assert.equal(existing.position.x, 0, 'the previous transform remains undoable after template addition');
+  assert.equal(editor.redo(), true);
+  assert.equal(existing.position.x, 2);
+  assert.equal(editor.redo(), true);
+  assert.equal(editor.list().length, 4, 'redo recreates the same template batch');
+  assert.equal(addedIds.every((id) => editor.list().some((row) => row.id === id)), true, 'redo restores stable scene IDs');
+  editor.dispose();
+  assert.equal(SCENE_TEMPLATES.length >= 2, true);
+});

@@ -74,6 +74,7 @@ export class HomeScreen {
       dialogMessage: byId('home-dialog-message'), dialogNameLabel: byId('home-dialog-name-label'), dialogName: byId('home-dialog-name'),
       dialogTemplateLabel: byId('home-dialog-template-label'), dialogTemplate: byId('home-dialog-template'),
       dialogTargetLabel: byId('home-dialog-target-label'), dialogTarget: byId('home-dialog-target'), dialogSubmit: byId('home-dialog-submit'), dialogCancel: byId('home-dialog-cancel'),
+      dialogVersionList: byId('home-dialog-version-list'),
       createProject: byId('home-create-project'), spriteSettings: byId('home-sprite-settings'),
       columns: byId('home-sprite-columns'), rows: byId('home-sprite-rows'), fps: byId('home-sprite-fps'),
       importProject: byId('home-import-project'), exportWorkspace: byId('home-export-workspace'), importWorkspace: byId('home-import-workspace'),
@@ -103,6 +104,7 @@ export class HomeScreen {
       if (!projectCard) return;
       const { projectId } = projectCard.dataset;
       if (button.dataset.action === 'open-project' || button === projectCard.querySelector('.home-project-open')) return this._openProject(projectId);
+      if (button.dataset.action === 'versions') return void this._showVersions(projectId);
       if (button.dataset.action === 'rename') return this._showDialog('rename', projectId);
       if (button.dataset.action === 'duplicate') return this._showDialog('duplicate', projectId);
       if (button.dataset.action === 'delete') return this._showDialog('delete', projectId);
@@ -225,7 +227,7 @@ export class HomeScreen {
       if (project.wallBoxCount) metrics.append(element('span', 'home-project-metric', `${project.wallBoxCount} · ENGEL`));
       const actions = element('div', 'home-project-actions');
       const favorite = element('button', '', project.favorite ? '★ Favori' : '☆ Favorile'); favorite.type = 'button'; favorite.dataset.action = 'favorite'; favorite.setAttribute('aria-pressed', String(project.favorite === true)); actions.append(favorite);
-      for (const [action, label] of [['rename', 'Adını değiştir'], ['duplicate', 'Kopyala'], ['delete', 'Sil']]) {
+      for (const [action, label] of [['versions', 'Sürümler'], ['rename', 'Adını değiştir'], ['duplicate', 'Kopyala'], ['delete', 'Sil']]) {
         const button = element('button', '', label);
         button.type = 'button';
         button.dataset.action = action;
@@ -405,16 +407,19 @@ export class HomeScreen {
       duplicate: ['PROJE KOPYASI', 'Projeyi kopyala', 'Harita, karakterler ve reji adımları yeni bir projeye kopyalanır.'],
       delete: ['PROJEYİ SİL', 'Projeyi sil?', 'Bu işlem projeyi bu cihazdan kaldırır ve geri alınamaz.'],
       'use-character': ['KARAKTER KİTAPLIĞI', 'Projede kullan', 'Karakteri eklemek istediğin projeyi seç.'],
+      versions: ['PROJE GEÇMİŞİ', 'Sürüm geçmişi', 'Kaydedilmiş bir sürümü seçip proje verisini geri yükleyebilirsin. Geri yükleme öncesi mevcut durum ayrıca saklanır.'],
     };
     const [eyebrow, title, message] = titles[action] || titles.create;
     this.dom.dialogEyebrow.textContent = eyebrow;
     this.dom.dialogTitle.textContent = title;
     this.dom.dialogMessage.textContent = message;
+    if (this.dom.dialogVersionList) { this.dom.dialogVersionList.hidden = true; this.dom.dialogVersionList.replaceChildren(); }
     this.dom.dialogNameLabel.hidden = !['create', 'rename', 'duplicate'].includes(action);
     if (this.dom.dialogTemplateLabel) this.dom.dialogTemplateLabel.hidden = action !== 'create';
     if (this.dom.dialogTemplate && action === 'create') this.dom.dialogTemplate.value = 'demo';
     this.dom.dialogTargetLabel.hidden = action !== 'use-character';
     this.dom.dialogSubmit.textContent = action === 'delete' ? 'Projeyi sil' : action === 'use-character' ? 'Projeyi aç ve ekle' : 'Kaydet';
+    this.dom.dialogSubmit.hidden = action === 'versions';
     this.dom.dialogSubmit.classList.toggle('is-destructive', action === 'delete');
     this.dom.dialogName.value = action === 'rename' ? (project?.name || '') : action === 'duplicate' ? `${project?.name || 'Proje'} kopyası`.slice(0, 64) : '';
     this.dom.dialogTarget.replaceChildren();
@@ -438,8 +443,12 @@ export class HomeScreen {
     this._clearError(this.dom.projectError);
     try {
       if (pending.action === 'create') {
-        const template = this.dom.dialogTemplate?.value === 'blank' ? 'blank' : 'demo';
+        const template = this.dom.dialogTemplate?.value || 'demo';
         const project = await this.store.createProject(this.dom.dialogName.value || 'Yeni Proje', { template });
+        this.dom.dialog.close();
+        this._openProject(project.projectId);
+      } else if (pending.action === 'restore-version') {
+        const project = await this.store.restoreProjectVersion(pending.projectId, pending.versionId);
         this.dom.dialog.close();
         this._openProject(project.projectId);
       } else if (pending.action === 'rename') {
@@ -467,6 +476,51 @@ export class HomeScreen {
     } catch (error) {
       this._setError(this.dom.projectError, error.message || 'İşlem tamamlanamadı.');
     }
+  }
+
+  async _showVersions(projectId) {
+    this._showDialog('versions', projectId);
+    if (!this.dom.dialogVersionList) return;
+    this.dom.dialogVersionList.hidden = false;
+    await this._renderProjectVersions(projectId);
+  }
+
+  async _renderProjectVersions(projectId) {
+    const list = this.dom.dialogVersionList;
+    if (!list) return;
+    list.replaceChildren();
+    try {
+      const versions = await this.store.listProjectVersions(projectId);
+      if (!versions.length) list.append(element('p', 'home-version-empty', 'Henüz otomatik sürüm yok. İstersen mevcut kayıt için şimdi bir sürüm oluştur.'));
+      for (const version of versions) {
+        const button = element('button', 'home-version-item');
+        button.type = 'button';
+        button.setAttribute('role', 'listitem');
+        button.setAttribute('aria-label', `${version.label}, ${formatDate(version.createdAt)}, ${version.source === 'auto' ? 'otomatik' : 'manuel'}`);
+        button.append(element('strong', '', version.label), element('span', '', `${formatDate(version.createdAt)} · ${version.source === 'auto' ? 'Otomatik' : 'Manuel'}`));
+        button.addEventListener('click', () => {
+          this.pendingAction = { action: 'restore-version', projectId, versionId: version.id };
+          this.dom.dialogTitle.textContent = 'Bu sürüm geri yüklensin mi?';
+          this.dom.dialogMessage.textContent = `“${version.label}” sürümünün sahnesi ve zaman çizelgesi yüklenecek. Şu anki kayıt “Geri yükleme öncesi” sürümü olarak korunacak.`;
+          list.hidden = true;
+          this.dom.dialogSubmit.hidden = false;
+          this.dom.dialogSubmit.textContent = 'Sürümü geri yükle';
+          this.dom.dialogSubmit.focus();
+        });
+        list.append(button);
+      }
+      const save = element('button', 'home-version-save', 'Mevcut kayıt için sürüm oluştur');
+      save.type = 'button';
+      save.addEventListener('click', async () => {
+        save.disabled = true;
+        try {
+          await this.store.createProjectVersion(projectId, { label: 'Manuel sürüm', source: 'manual' });
+          await this._renderProjectVersions(projectId);
+        } catch (error) { this.dom.dialogMessage.textContent = error.message || 'Sürüm oluşturulamadı.'; }
+        finally { save.disabled = false; }
+      });
+      list.append(save);
+    } catch (error) { this.dom.dialogMessage.textContent = error.message || 'Sürüm geçmişi yüklenemedi.'; }
   }
 
   async _assetAction(action, id) {
