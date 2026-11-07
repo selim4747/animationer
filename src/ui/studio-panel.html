@@ -318,6 +318,10 @@
               + Açıyı Kaydet
             </button>
           </div>
+          <button id="btn-add-camera-keyframe" type="button" class="hud-btn flex-grow" title="Mevcut kamera konumunu ve hedefini zaman çizelgesine ana kare olarak ekle">
+            + Mevcut Açıyı Zaman Çizelgesine Ekle
+          </button>
+          <div class="studio-info-text">Kamera ana kareleri konum ve hedefi saklar; süre ve geçiş eğrisi zaman çizelgesi adımından düzenlenebilir.</div>
           <div class="studio-sub-header">HAZIR KADRAJLAR:</div>
           <div class="camera-preset-grid" role="group" aria-label="Hazır kamera açıları">
             <button type="button" class="hud-btn small-btn camera-preset-btn" data-camera-preset="front">Ön</button>
@@ -500,10 +504,35 @@
           <!-- Ekran Görüntüsü -->
           <div class="studio-sub-header">FOTOĞRAF / EKRAN GÖRÜNTÜSÜ:</div>
           <div class="studio-ctrl-row">
-            <button id="btn-take-screenshot" class="hud-btn primary flex-grow" title="O anki 3D sahneyi mevcut canvas çözünürlüğünde PNG olarak indir">
+            <button id="btn-take-screenshot" class="hud-btn primary flex-grow" title="O anki 3D sahneyi seçili çıktı boyutunda PNG olarak indir">
               📸 Anlık Ekran Görüntüsü Al (PNG)
             </button>
           </div>
+
+          <div class="studio-slider-group" style="margin-bottom: 8px;">
+            <label class="timeline-field" for="export-resolution-select">PNG / video çıktı boyutu
+              <select id="export-resolution-select" class="hud-select" aria-describedby="export-resolution-help">
+                <option value="current">Canlı canvas boyutu</option>
+                <option value="720p">HD · uzun kenar 1280 px</option>
+                <option value="1080p">Full HD · uzun kenar 1920 px</option>
+              </select>
+            </label>
+            <div id="label-export-resolution" class="studio-info-text" role="status" aria-live="polite">Çıktı boyutu hesaplanıyor…</div>
+            <div id="export-resolution-help" class="studio-info-text">Görüntü oranı korunur ve ara canvas’a ölçeklenir; kaynak canvas’tan daha yüksek seçim yeni sahne ayrıntısı üretmez. Mobil cihazlarda pixel sınırı uygulanır.</div>
+          </div>
+
+          <div class="studio-ctrl-row" style="margin-bottom: 8px;">
+            <label class="timeline-field">Dışa aktarma arka planı
+              <select id="export-background-mode" class="hud-select">
+                <option value="scene">Proje sahnesindeki arka plan</option>
+                <option value="solid">Tek renk arka plan</option>
+              </select>
+            </label>
+            <label class="timeline-field">Arka plan rengi
+              <input id="export-background-color" type="color" value="#080808" aria-label="Dışa aktarma tek renk arka planı" disabled />
+            </label>
+          </div>
+          <div class="studio-info-text">Tek renk seçimi yalnızca PNG/video çıktısında geçici olarak uygulanır; proje arka plan ayarını değiştirmez.</div>
 
           <!-- Video Kayıt Kontrolleri -->
           <div id="render-recording-heading" class="studio-sub-header" style="margin-top: 14px;">VİDEO KAYDI (AZAMİ 3 DAKİKA / 128 MiB; CİHAZ PROFİLİNE GÖRE)</div>
@@ -564,7 +593,7 @@
           </section>
 
           <div class="studio-info-text" style="margin-top: 12px;">
-            * <strong>Rejiyi Oynat ve Kaydet:</strong> Panel otomatik gizlenir ve sahne oynatımı WebM/MP4 olarak kaydedilir. Kayıt 3 dakika veya 128 MiB sınırından hangisine önce ulaşırsa otomatik durur. Video çözünürlüğü mevcut sahne canvas ölçüsünü kullanır; seçilen FPS ve bitrate cihazın kayıt desteği ile pil/işlemci yükünü etkiler.
+            * <strong>Rejiyi Oynat ve Kaydet:</strong> Panel otomatik gizlenir ve sahne oynatımı WebM/MP4 olarak kaydedilir. Kayıt 3 dakika veya cihaz profilinin kayıt sınırından hangisine önce ulaşırsa otomatik durur. Seçili çıktı boyutu PNG ve video için geçerlidir; kare hızı ve bitrate profilini ayrıca seçebilirsiniz.
           </div>
         </div>
       </div>

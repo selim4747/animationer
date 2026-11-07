@@ -3,6 +3,24 @@ import { getDeviceMemoryGiB, getDevicePerformanceProfile } from '../utils/device
 
 export const MAX_RECORDING_DURATION_SECONDS = 180;
 export const MAX_RECORDING_BYTES = 128 * 1024 * 1024;
+export const EXPORT_RESOLUTION_PRESETS = Object.freeze({ current: null, '720p': 1280, '1080p': 1920 });
+
+export function getExportDimensions(sourceWidth, sourceHeight, preset = 'current', maxPixels = 16 * 1024 * 1024) {
+  const width = Math.max(1, Math.floor(Number(sourceWidth) || 1));
+  const height = Math.max(1, Math.floor(Number(sourceHeight) || 1));
+  const maxEdge = EXPORT_RESOLUTION_PRESETS[preset];
+  if (!maxEdge) return { width, height };
+  const scale = maxEdge / Math.max(width, height);
+  let outputWidth = Math.max(2, Math.round((width * scale) / 2) * 2);
+  let outputHeight = Math.max(2, Math.round((height * scale) / 2) * 2);
+  const pixelLimit = Number.isFinite(maxPixels) && maxPixels > 0 ? maxPixels : 4 * 1024 * 1024;
+  if (outputWidth * outputHeight > pixelLimit) {
+    const capScale = Math.sqrt(pixelLimit / (outputWidth * outputHeight));
+    outputWidth = Math.max(2, Math.floor((outputWidth * capScale) / 2) * 2);
+    outputHeight = Math.max(2, Math.floor((outputHeight * capScale) / 2) * 2);
+  }
+  return { width: outputWidth, height: outputHeight };
+}
 
 function createUniqueSuffix() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID().slice(0, 8);
@@ -18,17 +36,23 @@ export function createRecordingFilename(mimeType = 'video/webm', date = new Date
 export class RecorderManager {
   constructor(canvas, {
     onStateChange = () => {},
+    onBeforeCapture = () => null,
+    onAfterCapture = () => {},
     maxDurationSeconds = MAX_RECORDING_DURATION_SECONDS,
     maxRecordingBytes = MAX_RECORDING_BYTES,
   } = {}) {
     const profile = getDevicePerformanceProfile(getDeviceMemoryGiB());
     this.canvas = canvas;
     this.onStateChange = onStateChange;
+    this.onBeforeCapture = onBeforeCapture;
+    this.onAfterCapture = onAfterCapture;
     this.maxDurationSeconds = maxDurationSeconds;
     this.maxRecordingBytes = Math.min(maxRecordingBytes, profile.maxRecordingBytes);
     this.maxFrameRate = profile.maxFrameRate;
+    this.maxExportPixels = profile.maxTexturePixels;
     this.isRecording = false;
     this.isFinalizing = false;
+    this.isTakingScreenshot = false;
     this.mediaRecorder = null;
     this.recordedChunks = [];
     this.recordedBytes = 0;
@@ -39,6 +63,15 @@ export class RecorderManager {
     this.quality = 'high';
     this.bitrate = 8500000;
     this.frameRate = 30;
+    this.resolutionPreset = 'current';
+    this.backgroundMode = 'scene';
+    this.backgroundColor = '#080808';
+    this._captureSettingsToken = null;
+    this.exportCanvas = null;
+    this.exportCanvasContext = null;
+    this.captureCanvas = canvas;
+    this._captureFrameHandle = null;
+    this._captureFrameInterval = null;
     this.stream = null;
     this.stopReason = null;
     this.lastStopReason = null;
@@ -60,6 +93,62 @@ export class RecorderManager {
     return this.frameRate;
   }
 
+  setResolutionPreset(preset) {
+    if (this.isRecording || this.isFinalizing || !Object.hasOwn(EXPORT_RESOLUTION_PRESETS, preset)) return false;
+    this.resolutionPreset = preset;
+    return true;
+  }
+
+  setBackground(mode, color = this.backgroundColor) {
+    if (this.isRecording || this.isFinalizing || !['scene', 'solid'].includes(mode)) return false;
+    if (typeof color !== 'string' || !/^#[0-9a-f]{6}$/i.test(color)) return false;
+    this.backgroundMode = mode;
+    this.backgroundColor = color.toLowerCase();
+    return true;
+  }
+
+  getOutputDimensions() {
+    return getExportDimensions(this.canvas?.width, this.canvas?.height, this.resolutionPreset, this.maxExportPixels);
+  }
+
+  _prepareCaptureCanvas() {
+    if (this.resolutionPreset === 'current' || !this.canvas || typeof document === 'undefined' || typeof document.createElement !== 'function') return this.canvas;
+    const dimensions = this.getOutputDimensions();
+    if (!this.exportCanvas) {
+      this.exportCanvas = document.createElement('canvas');
+      this.exportCanvasContext = this.exportCanvas.getContext?.('2d') || null;
+    }
+    if (!this.exportCanvasContext) return this.canvas;
+    if (this.exportCanvas.width !== dimensions.width || this.exportCanvas.height !== dimensions.height) {
+      this.exportCanvas.width = dimensions.width;
+      this.exportCanvas.height = dimensions.height;
+    }
+    return this.exportCanvas;
+  }
+
+  _drawExportFrame(target = this.captureCanvas) {
+    if (!target || target === this.canvas || !this.exportCanvasContext) return;
+    this.exportCanvasContext.imageSmoothingEnabled = true;
+    this.exportCanvasContext.imageSmoothingQuality = 'high';
+    this.exportCanvasContext.fillStyle = this.backgroundMode === 'solid' ? this.backgroundColor : '#080808';
+    this.exportCanvasContext.fillRect(0, 0, target.width, target.height);
+    const scale = Math.min(target.width / Math.max(1, this.canvas.width), target.height / Math.max(1, this.canvas.height));
+    const width = this.canvas.width * scale;
+    const height = this.canvas.height * scale;
+    this.exportCanvasContext.drawImage(this.canvas, (target.width - width) / 2, (target.height - height) / 2, width, height);
+  }
+
+  _startCaptureFrameLoop() {
+    if (this.captureCanvas === this.canvas) return;
+    const draw = () => {
+      if (!this.isRecording) return;
+      this._drawExportFrame();
+      if (typeof requestAnimationFrame === 'function') this._captureFrameHandle = requestAnimationFrame(draw);
+    };
+    if (typeof requestAnimationFrame === 'function') this._captureFrameHandle = requestAnimationFrame(draw);
+    else this._captureFrameInterval = setInterval(() => { if (this.isRecording) this._drawExportFrame(); }, Math.max(16, 1000 / this.frameRate));
+  }
+
   _getSupportedMimeType() {
     if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') return '';
     const types = [
@@ -74,8 +163,8 @@ export class RecorderManager {
   }
 
   startRecording() {
-    if (this.isRecording || this.isFinalizing) return false;
-    if (!this.canvas || typeof this.canvas.captureStream !== 'function' || typeof MediaRecorder === 'undefined') {
+    if (this.isRecording || this.isFinalizing || this.isTakingScreenshot) return false;
+    if (!this.canvas || typeof MediaRecorder === 'undefined') {
       const error = 'Bu ortamda video kaydı desteklenmiyor.';
       console.error(error);
       this.onStateChange({ isRecording: false, isFinalizing: false, error });
@@ -83,7 +172,12 @@ export class RecorderManager {
     }
 
     try {
-      this.stream = this.canvas.captureStream(this.frameRate);
+      this._captureSettingsToken = this.onBeforeCapture({ type: 'video', backgroundMode: this.backgroundMode, backgroundColor: this.backgroundColor });
+      this.captureCanvas = this._prepareCaptureCanvas();
+      if (typeof this.captureCanvas?.captureStream !== 'function') this.captureCanvas = this.canvas;
+      if (typeof this.captureCanvas.captureStream !== 'function') throw new Error('Bu ortamda canvas video kaydı desteklenmiyor.');
+      this._drawExportFrame();
+      this.stream = this.captureCanvas.captureStream(this.frameRate);
       const mimeType = this._getSupportedMimeType();
       const options = { videoBitsPerSecond: this.bitrate };
       if (mimeType) options.mimeType = mimeType;
@@ -129,8 +223,8 @@ export class RecorderManager {
             maxRecordingBytes: this.maxRecordingBytes,
             frameRate: this.frameRate,
             maxFrameRate: this.maxFrameRate,
-            width: this.canvas.width,
-            height: this.canvas.height,
+            width: this.captureCanvas.width,
+            height: this.captureCanvas.height,
           });
         }
       };
@@ -141,6 +235,7 @@ export class RecorderManager {
       recorder.onstop = () => { this._handleRecorderStop(recorder); };
       recorder.start(250);
       this.isRecording = true;
+      this._startCaptureFrameLoop();
       this.recordStartTime = performance.now();
       this.recordDurationSeconds = 0;
       this._lastReportedDuration = 0;
@@ -161,8 +256,8 @@ export class RecorderManager {
             maxDurationSeconds: this.maxDurationSeconds,
             frameRate: this.frameRate,
             maxFrameRate: this.maxFrameRate,
-            width: this.canvas.width,
-            height: this.canvas.height,
+            width: this.captureCanvas.width,
+            height: this.captureCanvas.height,
           });
         }
         if (elapsed >= this.maxDurationSeconds) this.stopRecording('duration-limit');
@@ -177,8 +272,8 @@ export class RecorderManager {
         maxDurationSeconds: this.maxDurationSeconds,
         frameRate: this.frameRate,
         maxFrameRate: this.maxFrameRate,
-        width: this.canvas.width,
-        height: this.canvas.height,
+        width: this.captureCanvas.width,
+        height: this.captureCanvas.height,
       });
       return true;
     } catch (error) {
@@ -351,11 +446,21 @@ export class RecorderManager {
   _cleanupStream() {
     clearInterval(this.timerInterval);
     this.timerInterval = null;
+    if (this._captureFrameHandle !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(this._captureFrameHandle);
+    this._captureFrameHandle = null;
+    clearInterval(this._captureFrameInterval);
+    this._captureFrameInterval = null;
+    this.captureCanvas = this.canvas;
     if (this.stream) {
       for (const track of this.stream.getTracks()) {
         try { track.stop(); } catch { /* Continue releasing the remaining tracks. */ }
       }
       this.stream = null;
+    }
+    if (this._captureSettingsToken !== null) {
+      const token = this._captureSettingsToken;
+      this._captureSettingsToken = null;
+      try { this.onAfterCapture(token, { type: 'video' }); } catch (error) { console.warn('Export ayarları geri yüklenemedi:', error); }
     }
   }
 
@@ -367,15 +472,31 @@ export class RecorderManager {
 
   async takeScreenshot(customName, onProgress) {
     if (!this.canvas) return { saved: false, error: 'Sahne görüntüsü bulunamadı.' };
+    if (this.isRecording || this.isFinalizing || this.isTakingScreenshot) {
+      return { saved: false, error: 'Video kaydı sırasında veya başka bir ekran görüntüsü alınırken yeni ekran görüntüsü alınamaz.' };
+    }
+    this.isTakingScreenshot = true;
+    let restoreToken = null;
     try {
-      const blob = await new Promise((resolve) => this.canvas.toBlob(resolve, 'image/png'));
+      restoreToken = this.onBeforeCapture({ type: 'screenshot', backgroundMode: this.backgroundMode, backgroundColor: this.backgroundColor });
+      if (typeof requestAnimationFrame === 'function') await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+      const outputCanvas = this._prepareCaptureCanvas();
+      this.captureCanvas = outputCanvas;
+      this._drawExportFrame(outputCanvas);
+      const blob = await new Promise((resolve) => outputCanvas.toBlob(resolve, 'image/png'));
       if (!blob) throw new Error('PNG görüntüsü oluşturulamadı.');
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 23);
       const filename = customName || `diorama_snapshot_${timestamp}.png`;
-      return { ...(await saveGeneratedFile(blob, filename, { onProgress })), filename, blob };
+      return { ...(await saveGeneratedFile(blob, filename, { onProgress })), filename, blob, width: outputCanvas.width, height: outputCanvas.height };
     } catch (error) {
       console.error('Ekran görüntüsü kaydedilemedi:', error);
       return { saved: false, error: error.message || 'Ekran görüntüsü kaydedilemedi.' };
+    } finally {
+      this.isTakingScreenshot = false;
+      this.captureCanvas = this.canvas;
+      if (restoreToken !== null) {
+        try { this.onAfterCapture(restoreToken, { type: 'screenshot' }); } catch (error) { console.warn('Export arka planı geri yüklenemedi:', error); }
+      }
     }
   }
 

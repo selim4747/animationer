@@ -235,6 +235,16 @@ class App {
           this.uiManager.updateRecorderUI(state);
         }
       },
+      onBeforeCapture: ({ backgroundMode, backgroundColor }) => {
+        if (backgroundMode !== 'solid') return null;
+        const original = this.scene.background;
+        const override = new THREE.Color(backgroundColor);
+        this.scene.background = override;
+        return { original, override };
+      },
+      onAfterCapture: (token) => {
+        if (token && this.scene.background === token.override) this.scene.background = token.original;
+      },
     });
   }
 
