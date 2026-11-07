@@ -58,8 +58,9 @@ class MemoryIndexedDB {
                 return get;
               },
               get: (key) => {
+                tx.pending++;
                 const get = {};
-                queueMicrotask(() => { get.result = data.get(key); get.onsuccess?.(); });
+                queueMicrotask(() => { get.result = data.get(key); get.onsuccess?.(); tx.pending--; finish(); });
                 return get;
               },
               delete: (key) => {
@@ -182,8 +183,10 @@ test('blank and demo project presets persist distinct initial contents', async (
   const store = new IndexedProjectStore(new MemoryIndexedDB());
   const blank = await store.createProject('Boş Sahne', { template: 'blank' });
   const demo = await store.createProject('Deneme Sahnesi', { template: 'demo' });
+  const product = await store.createProject('Ürün Seti', { template: 'product-display' });
   const blankRecord = await store.loadProject(blank.projectId);
   const demoRecord = await store.loadProject(demo.projectId);
+  const productRecord = await store.loadProject(product.projectId);
   assert.equal(blankRecord.projectTemplate, 'blank');
   assert.deepEqual(blankRecord.characters3d, []);
   assert.deepEqual(blankRecord.worldCharacters, []);
@@ -192,6 +195,10 @@ test('blank and demo project presets persist distinct initial contents', async (
   assert.equal(demoRecord.projectTemplate, 'demo');
   assert.equal(demoRecord.characters3d.length, 1);
   assert.equal(demoRecord.timeline.steps.length, 9);
+  assert.equal(productRecord.projectTemplate, 'blank');
+  assert.deepEqual(productRecord.timeline.steps, []);
+  assert.equal(productRecord.sceneEdits.length, 3);
+  assert.equal(new Set(productRecord.sceneEdits.map((edit) => edit.id)).size, 3);
 });
 
 test('3D GLB models persist in the shared library and remain protected while a project uses them', async () => {
@@ -291,4 +298,58 @@ test('project favorites persist backward-compatibly in project records', async (
   assert.equal((await store.listProjects())[0].favorite, true);
   await store.setProjectFavorite(project.projectId, false);
   assert.equal((await store.loadProject(project.projectId)).favorite, false);
+});
+
+test('project version restore preserves project identity, name, favorite and rollback checkpoint', async () => {
+  const store = new IndexedProjectStore(new MemoryIndexedDB());
+  const project = await store.createProject('Versioned', { template: 'blank' });
+  await store.setProjectFavorite(project.projectId, true);
+  const original = await store.loadProject(project.projectId);
+  const version = await store.createProjectVersion(project.projectId, { label: 'İlk sahne' });
+  const edited = { ...original, timeline: { ...original.timeline, steps: [{ id: 'later', type: 'WAIT', title: 'Later', data: { duration: 2 } }] } };
+  await store.saveProject(project.projectId, edited);
+
+  const restored = await store.restoreProjectVersion(project.projectId, version.id);
+  assert.equal(restored.projectId, project.projectId);
+  assert.equal(restored.name, 'Versioned');
+  assert.equal(restored.favorite, true);
+  assert.deepEqual(restored.timeline.steps, []);
+  const versions = await store.listProjectVersions(project.projectId);
+  assert.ok(versions.some((item) => item.label === 'Geri yükleme öncesi'));
+  assert.ok(versions.some((item) => item.id === version.id));
+});
+
+test('named autosave checkpoints the previous content before writing changed content', async () => {
+  const store = new IndexedProjectStore(new MemoryIndexedDB());
+  const project = await store.createProject('Autosave versions', { template: 'blank' });
+  const before = await store.loadProject(project.projectId);
+  const changed = { ...before, timeline: { ...before.timeline, steps: [{ id: 'new-step', type: 'WAIT', data: { duration: 1 } }] } };
+  await store.saveProject(project.projectId, changed, { createVersion: true, minVersionIntervalMs: 0 });
+  const [version] = await store.listProjectVersions(project.projectId);
+  assert.ok(version);
+  const snapshot = store.indexedDB.stores.get('project-versions').get(`${project.projectId}:${version.id}`);
+  assert.deepEqual(snapshot.record.timeline.steps, before.timeline.steps);
+  assert.equal((await store.loadProject(project.projectId)).timeline.steps[0].id, 'new-step');
+});
+
+test('automatic project history is throttled and bounded to ten versions', async () => {
+  const store = new IndexedProjectStore(new MemoryIndexedDB());
+  const project = await store.createProject('History cap', { template: 'blank' });
+  const first = await store.createProjectVersion(project.projectId, { source: 'auto', minIntervalMs: 60_000 });
+  assert.ok(first);
+  assert.equal(await store.createProjectVersion(project.projectId, { source: 'auto', minIntervalMs: 60_000 }), null);
+  for (let index = 0; index < 11; index++) await store.createProjectVersion(project.projectId, { label: `Checkpoint ${index}` });
+  const versions = await store.listProjectVersions(project.projectId);
+  assert.equal(versions.length, 10);
+  assert.equal(versions.some((item) => item.id === first.id), false);
+});
+
+test('deleting a named project also deletes its version snapshots and index', async () => {
+  const store = new IndexedProjectStore(new MemoryIndexedDB());
+  const project = await store.createProject('Delete history', { template: 'blank' });
+  await store.createProjectVersion(project.projectId);
+  assert.equal((await store.listProjectVersions(project.projectId)).length, 1);
+  await store.deleteProject(project.projectId);
+  assert.deepEqual(await store.listProjectVersions(project.projectId), []);
+  assert.equal(await store.loadProject(project.projectId), null);
 });

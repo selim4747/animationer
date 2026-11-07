@@ -223,6 +223,30 @@ export class SceneEditor {
   _replayHistory(source, destination) {
     const snapshot = source.pop();
     if (!snapshot) return false;
+    if (snapshot.kind === 'primitive-batch-add') {
+      if (source === this.undoStack) {
+        const entries = snapshot.ids.map((id) => this._entries().find((entry) => entry.id === id));
+        if (entries.some((entry) => !entry || entry.object.userData.sceneEditorKind !== 'primitive')) { source.push(snapshot); return false; }
+        for (const entry of entries) {
+          entry.object.parent?.remove(entry.object);
+          entry.object.geometry?.dispose?.();
+          const materials = Array.isArray(entry.object.material) ? entry.object.material : [entry.object.material];
+          materials.forEach((material) => material?.dispose?.());
+          this._originalMaterials.delete(entry.object);
+          this._colorOwnedObjects.delete(entry.object);
+        }
+        this.selectedIds = this.selectedIds.filter((id) => !snapshot.ids.includes(id));
+        if (!this.selectedIds.includes(this.selectedId)) this.selectedId = this.selectedIds.at(-1) || null;
+      } else {
+        try { this.addPrimitiveBatch(snapshot.edits, { recordHistory: false, notify: false }); }
+        catch { source.push(snapshot); return false; }
+      }
+      destination.push(snapshot);
+      if (destination.length > this.historyLimit) destination.shift();
+      this.collisionManager?.updateObstacleBoxes?.();
+      this.onChange({ type: source === this.undoStack ? 'template-removed' : 'template-added', active: this.active, objects: this.list(), selection: this.getSelection() });
+      return true;
+    }
     const changes = Array.isArray(snapshot) ? snapshot : [{ id: snapshot.id, transform: snapshot.transform }];
     const entries = this._entries();
     const current = changes.map((change) => {
@@ -397,8 +421,51 @@ export class SceneEditor {
     object.castShadow = true;
     object.receiveShadow = true;
     this.scene?.add(object);
-    this.onChange({ type: 'primitive-added', active: this.active, objects: this.list(), selection: this.getSelection() });
+    if (!options.silent) this.onChange({ type: 'primitive-added', active: this.active, objects: this.list(), selection: this.getSelection() });
     return object;
+  }
+
+  addPrimitiveBatch(edits = [], { recordHistory = true, notify = true } = {}) {
+    if (!Array.isArray(edits) || !edits.length || edits.length > 500 || this._entries().length + edits.length > 500) {
+      throw new Error('Sahne şablonu nesne sınırını aşıyor.');
+    }
+    const seen = new Set(this._entries().map((entry) => entry.id));
+    const normalized = edits.map((edit, index) => {
+      const value = this._validateSceneEdit(edit, index, seen);
+      if (!value.primitive) throw new Error(`Şablon nesnesi #${index + 1} bir primitive tanımı içermiyor.`);
+      if (['x', 'y', 'z'].some((axis) => Math.abs(value.position[axis]) > 10000)) throw new Error(`Şablon nesnesi #${index + 1} konumu ±10000 aralığında olmalı.`);
+      return value;
+    });
+    const added = [];
+    try {
+      for (const edit of normalized) {
+        const object = this.createPrimitive(edit.primitive.type, { ...edit.primitive, id: edit.id, position: edit.position, silent: true });
+        object.rotation.set(edit.rotation.x, edit.rotation.y, edit.rotation.z);
+        object.scale.set(edit.scale.x, edit.scale.y, edit.scale.z);
+        object.visible = edit.visible !== false;
+        object.userData.sceneEditorLocked = edit.locked === true;
+        object.userData.sceneEditorLabel = edit.label || edit.primitive.name;
+        added.push(object);
+      }
+    } catch (error) {
+      for (const object of added) {
+        object.parent?.remove(object);
+        object.geometry?.dispose?.();
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        materials.forEach((material) => material?.dispose?.());
+      }
+      throw error;
+    }
+    const ids = added.map((object) => object.userData.sceneEditorId);
+    if (recordHistory) {
+      const idSet = new Set(ids);
+      this.undoStack.push({ kind: 'primitive-batch-add', ids, edits: this.exportProjectState().filter((edit) => idSet.has(edit.id)) });
+      if (this.undoStack.length > this.historyLimit) this.undoStack.shift();
+      this.redoStack.length = 0;
+    }
+    this.collisionManager?.updateObstacleBoxes?.();
+    if (notify) this.onChange({ type: 'template-added', active: this.active, objects: this.list(), selection: this.getSelection() });
+    return ids;
   }
 
   removePrimitive(id = this.selectedId) {
@@ -410,7 +477,9 @@ export class SceneEditor {
     materials.forEach((material) => material?.dispose?.());
     this._originalMaterials.delete(entry.object);
     this._colorOwnedObjects.delete(entry.object);
-    const references = (snapshot) => Array.isArray(snapshot) ? snapshot.some((item) => item.id === id) : snapshot.id === id;
+    const references = (snapshot) => snapshot?.kind === 'primitive-batch-add'
+      ? snapshot.ids.includes(id)
+      : Array.isArray(snapshot) ? snapshot.some((item) => item.id === id) : snapshot.id === id;
     this.undoStack = this.undoStack.filter((snapshot) => !references(snapshot));
     this.redoStack = this.redoStack.filter((snapshot) => !references(snapshot));
     this.selectedIds = this.selectedIds.filter((selectedId) => selectedId !== id);

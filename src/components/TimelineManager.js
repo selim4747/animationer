@@ -233,6 +233,21 @@ export class TimelineManager {
     return step;
   }
 
+  /** Validate an entire sequence before appending it as one undoable edit. */
+  appendSequence(sequenceInput) {
+    if (this.isPlaying) throw new Error('Oynatma sırasında hazır akış eklenemez.');
+    const candidate = new this.constructor({ initialDemo: false });
+    candidate.importSequence(sequenceInput);
+    if (!candidate.steps.length) return 0;
+    if (this.steps.length + candidate.steps.length > 5000) throw new Error('Zaman çizelgesi en fazla 5000 adım içerebilir.');
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const appended = candidate.steps.map((step, index) => ({ ...step, id: `step-template-${suffix}-${index + 1}`, data: { ...step.data } }));
+    this._recordStructuralEdit();
+    this.steps = [...this.steps, ...appended];
+    this._notify();
+    return appended.length;
+  }
+
   /** Clone a step immediately after its source; returns null for an invalid index. */
   cloneStep(index) {
     if (!Number.isInteger(index) || index < 0 || index >= this.steps.length) return null;

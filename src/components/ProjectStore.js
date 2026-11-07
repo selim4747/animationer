@@ -1,4 +1,5 @@
 import { getDeviceMemoryGiB, getDevicePerformanceProfile } from '../utils/device-profile.js';
+import { buildSceneTemplateEdits, SCENE_TEMPLATES } from '../data/scene-templates.js';
 
 export const PROJECT_SCHEMA_VERSION = 6;
 export const MAX_PROJECT_BYTES = 100 * 1024 * 1024;
@@ -10,6 +11,10 @@ const STORE_NAME = 'projects';
 const PROJECT_INDEX_STORE = 'project-index';
 const CHARACTER_LIBRARY_STORE = 'character-library';
 const CHARACTER_MODEL_STORE = 'character-models';
+const PROJECT_VERSION_STORE = 'project-versions';
+const PROJECT_VERSION_INDEX_STORE = 'project-version-index';
+export const MAX_PROJECT_VERSIONS = 10;
+export const MAX_PROJECT_HISTORY_BYTES = 200 * 1024 * 1024;
 const ACTIVE_KEY = 'autosave';
 const LEGACY_MIGRATION_KEY = 'migration:legacy-autosave';
 const PROJECT_KEY_PREFIX = 'project:';
@@ -32,6 +37,13 @@ function createId(prefix) {
 function safeProjectName(value, fallback = 'Yeni Proje') {
   const name = typeof value === 'string' ? value.trim().slice(0, 64) : '';
   return name || fallback;
+}
+
+function cloneVersionValue(value) {
+  if (typeof Blob !== 'undefined' && value instanceof Blob) return value.slice(0, value.size, value.type);
+  if (Array.isArray(value)) return value.map(cloneVersionValue);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cloneVersionValue(item)]));
+  return value;
 }
 
 export function validateCharacterTemplateRecord(input) {
@@ -366,12 +378,14 @@ export class IndexedProjectStore {
   _open() {
     if (!this.indexedDB) return Promise.reject(new Error('Bu tarayıcı IndexedDB otomatik kaydını desteklemiyor.'));
     return new Promise((resolve, reject) => {
-      const request = this.indexedDB.open(DB_NAME, 3);
+      const request = this.indexedDB.open(DB_NAME, 4);
       request.onupgradeneeded = () => {
         if (!request.result.objectStoreNames.contains(STORE_NAME)) request.result.createObjectStore(STORE_NAME);
         if (!request.result.objectStoreNames.contains(CHARACTER_LIBRARY_STORE)) request.result.createObjectStore(CHARACTER_LIBRARY_STORE);
         if (!request.result.objectStoreNames.contains(PROJECT_INDEX_STORE)) request.result.createObjectStore(PROJECT_INDEX_STORE);
         if (!request.result.objectStoreNames.contains(CHARACTER_MODEL_STORE)) request.result.createObjectStore(CHARACTER_MODEL_STORE);
+        if (!request.result.objectStoreNames.contains(PROJECT_VERSION_STORE)) request.result.createObjectStore(PROJECT_VERSION_STORE);
+        if (!request.result.objectStoreNames.contains(PROJECT_VERSION_INDEX_STORE)) request.result.createObjectStore(PROJECT_VERSION_INDEX_STORE);
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error || new Error('IndexedDB açılamadı.'));
@@ -419,22 +433,29 @@ export class IndexedProjectStore {
     } finally { db.close(); }
   }
   async createProject(name = 'Yeni Proje', { template = 'demo' } = {}) {
-    if (!['blank', 'demo'].includes(template)) throw new Error('Proje başlangıç türü geçersiz.');
+    const sceneTemplate = SCENE_TEMPLATES.find((item) => item.id === template);
+    if (!['blank', 'demo'].includes(template) && !sceneTemplate) throw new Error('Proje başlangıç türü geçersiz.');
+    const projectTemplate = template === 'demo' ? 'demo' : 'blank';
     const id = createId('project');
     const timestamp = new Date().toISOString();
     const record = createAutosaveRecord({
-      projectId: id, name: safeProjectName(name), projectTemplate: template, createdAt: timestamp,
-      timeline: { version: '1.0.0', playMode: 'sequential', steps: template === 'blank' ? [] : DEMO_STARTER_STEPS.map((step) => ({ ...step, data: { ...step.data } })) },
+      projectId: id, name: safeProjectName(name), projectTemplate, createdAt: timestamp,
+      timeline: { version: '1.0.0', playMode: 'sequential', steps: projectTemplate === 'blank' ? [] : DEMO_STARTER_STEPS.map((step) => ({ ...step, data: { ...step.data } })) },
       sprites: [], viewport: null,
-      characters3d: template === 'blank' ? [] : [{ id: 'character-1', name: 'Karakter 1', modelId: null, position: { x: 0, y: 0, z: 0 }, rotationY: 0, walkSpeed: 4.2, wobbleIntensity: 1, visible: true }],
-      selectedCharacter3dId: template === 'blank' ? null : 'character-1',
-      sceneEdits: [],
+      characters3d: projectTemplate === 'blank' ? [] : [{ id: 'character-1', name: 'Karakter 1', modelId: null, position: { x: 0, y: 0, z: 0 }, rotationY: 0, walkSpeed: 4.2, wobbleIntensity: 1, visible: true }],
+      selectedCharacter3dId: projectTemplate === 'blank' ? null : 'character-1',
+      sceneEdits: sceneTemplate ? buildSceneTemplateEdits(sceneTemplate.id) : [],
     });
     await this.saveProject(id, record);
     return record;
   }
-  async saveProject(id, input) {
+  async saveProject(id, input, { createVersion = false, minVersionIntervalMs = 5 * 60 * 1000 } = {}) {
     if (typeof id !== 'string' || !id || id.length > 128) throw new Error('Proje kimliği geçersiz.');
+    this.lastHistoryWarning = '';
+    if (createVersion) {
+      try { await this.createProjectVersion(id, { source: 'auto', label: 'Otomatik sürüm', minIntervalMs: minVersionIntervalMs }); }
+      catch (error) { this.lastHistoryWarning = error?.message || 'Otomatik sürüm oluşturulamadı.'; }
+    }
     const existing = await this._get(PROJECT_INDEX_STORE, id, 'Proje özeti okunamadı.');
     const timestamp = new Date().toISOString();
     const record = validateProjectRecord({
@@ -460,6 +481,91 @@ export class IndexedProjectStore {
       throw error;
     } finally { db.close(); }
     return record.updatedAt;
+  }
+  async listProjectVersions(id) {
+    if (typeof id !== 'string' || !id) return [];
+    const versions = await this._get(PROJECT_VERSION_INDEX_STORE, id, 'Proje sürüm geçmişi okunamadı.');
+    return Array.isArray(versions) ? versions.filter((item) => item && typeof item.id === 'string').sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))) : [];
+  }
+  async createProjectVersion(id, { label = 'Manuel sürüm', source = 'manual', minIntervalMs = 0 } = {}) {
+    if (typeof id !== 'string' || !id) throw new Error('Proje kimliği geçersiz.');
+    if (!['manual', 'auto'].includes(source)) throw new Error('Sürüm kaynağı geçersiz.');
+    const interval = Math.max(0, Math.min(30 * 24 * 60 * 60 * 1000, Number(minIntervalMs) || 0));
+    const db = await this._open();
+    try {
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction([STORE_NAME, PROJECT_VERSION_STORE, PROJECT_VERSION_INDEX_STORE], 'readwrite');
+        const projects = tx.objectStore(STORE_NAME);
+        const snapshots = tx.objectStore(PROJECT_VERSION_STORE);
+        const indexes = tx.objectStore(PROJECT_VERSION_INDEX_STORE);
+        let projectValue;
+        let versionsValue;
+        let reads = 0;
+        let result = null;
+        let operationError = null;
+        const fail = (error) => {
+          operationError = error;
+          try { tx.abort(); } catch { reject(error); }
+        };
+        const finalize = () => {
+          if (++reads !== 2) return;
+          try {
+            const record = projectValue == null ? null : migrateProjectRecord(projectValue);
+            if (!record) throw new Error('Sürüm oluşturulacak proje bulunamadı.');
+            const versions = (Array.isArray(versionsValue) ? versionsValue : [])
+              .filter((item) => item && typeof item.id === 'string')
+              .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+            const now = Date.now();
+            const lastAuto = [...versions].reverse().find((item) => item.source === 'auto');
+            if (source === 'auto' && lastAuto && now - new Date(lastAuto.createdAt).getTime() < interval) return;
+            const version = {
+              id: createId('version'), projectId: id,
+              createdAt: new Date(now).toISOString(),
+              label: safeProjectName(label, source === 'auto' ? 'Otomatik sürüm' : 'Manuel sürüm').slice(0, 80),
+              source,
+              bytes: calculateProjectBytes(record.timeline, record.sprites, record.mapAsset, record.worldCharacterTemplates),
+            };
+            const nextVersions = [...versions, version];
+            let retainedBytes = nextVersions.reduce((sum, item) => sum + (Number(item.bytes) || 0), 0);
+            const removed = [];
+            while (nextVersions.length > 1 && (nextVersions.length > MAX_PROJECT_VERSIONS || retainedBytes > MAX_PROJECT_HISTORY_BYTES)) {
+              const oldest = nextVersions.shift();
+              removed.push(oldest);
+              retainedBytes -= Number(oldest.bytes) || 0;
+            }
+            const snapshot = { ...version, record: typeof structuredClone === 'function' ? structuredClone(record) : cloneVersionValue(record) };
+            snapshots.put(snapshot, `${id}:${version.id}`);
+            indexes.put(nextVersions, id);
+            for (const old of removed) snapshots.delete(`${id}:${old.id}`);
+            result = version;
+          } catch (error) { fail(error); }
+        };
+        const projectRequest = projects.get(`${PROJECT_KEY_PREFIX}${id}`);
+        const versionsRequest = indexes.get(id);
+        projectRequest.onsuccess = () => { projectValue = projectRequest.result; finalize(); };
+        versionsRequest.onsuccess = () => { versionsValue = versionsRequest.result; finalize(); };
+        projectRequest.onerror = () => fail(projectRequest.error || new Error('Proje sürümü okunamadı.'));
+        versionsRequest.onerror = () => fail(versionsRequest.error || new Error('Proje sürüm indeksi okunamadı.'));
+        tx.oncomplete = () => resolve(result);
+        tx.onerror = () => reject(operationError || tx.error || new Error('Proje sürümü kaydedilemedi.'));
+        tx.onabort = () => reject(operationError || tx.error || new Error('Proje sürüm kaydı geri alındı.'));
+      });
+    } catch (error) {
+      if (error?.name === 'QuotaExceededError') throw new Error('Cihaz depolama kotası dolu; mevcut proje ve sürümler korundu.');
+      throw error;
+    } finally { db.close(); }
+  }
+  async restoreProjectVersion(id, versionId) {
+    if (typeof id !== 'string' || !id || typeof versionId !== 'string' || !versionId) throw new Error('Proje sürümü seçimi geçersiz.');
+    const [current, snapshot] = await Promise.all([
+      this.loadProject(id),
+      this._get(PROJECT_VERSION_STORE, `${id}:${versionId}`, 'Proje sürümü okunamadı.'),
+    ]);
+    if (!current || !snapshot || snapshot.projectId !== id) throw new Error('Geri yüklenecek proje sürümü bulunamadı.');
+    const restored = validateProjectRecord({ ...snapshot.record, projectId: id, name: current.name, favorite: current.favorite === true, createdAt: current.createdAt });
+    await this.createProjectVersion(id, { label: 'Geri yükleme öncesi', source: 'manual' });
+    await this.saveProject(id, restored);
+    return this.loadProject(id);
   }
   async loadProject(id) {
     if (!id) return null;
@@ -511,12 +617,16 @@ export class IndexedProjectStore {
   }
   async deleteProject(id) {
     if (!id) return false;
+    const versions = await this.listProjectVersions(id);
     const db = await this._open();
     try {
       await new Promise((resolve, reject) => {
-        const tx = db.transaction([STORE_NAME, PROJECT_INDEX_STORE], 'readwrite');
+        const tx = db.transaction([STORE_NAME, PROJECT_INDEX_STORE, PROJECT_VERSION_STORE, PROJECT_VERSION_INDEX_STORE], 'readwrite');
         tx.objectStore(STORE_NAME).delete(`${PROJECT_KEY_PREFIX}${id}`);
         tx.objectStore(PROJECT_INDEX_STORE).delete(id);
+        const versionStore = tx.objectStore(PROJECT_VERSION_STORE);
+        for (const version of versions) versionStore.delete(`${id}:${version.id}`);
+        tx.objectStore(PROJECT_VERSION_INDEX_STORE).delete(id);
         tx.oncomplete = () => resolve(true);
         tx.onerror = () => reject(tx.error || new Error('Proje silinemedi.'));
         tx.onabort = () => reject(tx.error || new Error('Proje silme işlemi geri alındı.'));

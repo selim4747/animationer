@@ -10,6 +10,8 @@ import { AutosaveCoordinator } from './AutosaveCoordinator.js';
 import { saveGeneratedFile, shareGeneratedFile } from '../utils/FileExportManager.js';
 import { calculateProjectBytes, migrateProjectRecord, PROJECT_SCHEMA_VERSION } from './ProjectStore.js';
 import { getDeviceMemoryGiB, getDevicePerformanceProfile } from '../utils/device-profile.js';
+import { MOTION_TEMPLATES, getMotionTemplate } from '../data/motion-templates.js';
+import { SCENE_TEMPLATES, buildSceneTemplateEdits } from '../data/scene-templates.js';
 
 const MAX_INLINE_PREVIEW_BYTES = 32 * 1024 * 1024;
 
@@ -79,6 +81,7 @@ export class UIManager {
     this.recordingPreviewUrl = null;
 
     this._cacheDOM();
+    this._initTemplateControls();
     this._bindEvents();
     this._initShortcuts();
     this.autosave = new AutosaveCoordinator({
@@ -189,6 +192,9 @@ export class UIManager {
       timelineFollowTarget: document.getElementById('timeline-follow-target'),
       btnAddFollowStep: document.getElementById('btn-add-follow-step'),
       btnAddHideStep: document.getElementById('btn-add-hide-step'),
+      motionTemplate: document.getElementById('timeline-motion-template'),
+      motionTemplateDescription: document.getElementById('timeline-motion-description'),
+      btnAddMotionTemplate: document.getElementById('btn-add-motion-template'),
 
       // Sekme 2: SAHNE / HARİTA
       filePicker: document.getElementById('file-picker'),
@@ -208,6 +214,9 @@ export class UIManager {
       btnFocusMap: document.getElementById('btn-focus-map'),
       btnClearMap: document.getElementById('btn-clear-map'),
       btnAddWallBox: document.getElementById('btn-add-wall-box'),
+      sceneTemplate: document.getElementById('scene-template-picker'),
+      sceneTemplateDescription: document.getElementById('scene-template-description'),
+      btnApplySceneTemplate: document.getElementById('btn-apply-scene-template'),
       btnClearWallBoxes: document.getElementById('btn-clear-wall-boxes'),
       wallBoxList: document.getElementById('studio-wall-box-list'),
       mapObjectList: document.getElementById('studio-map-object-list'),
@@ -320,8 +329,51 @@ export class UIManager {
     };
   }
 
+  _initTemplateControls() {
+    const populate = (select, templates) => {
+      if (!select) return;
+      select.replaceChildren();
+      for (const template of templates) {
+        const option = document.createElement('option');
+        option.value = template.id;
+        option.textContent = template.name;
+        select.append(option);
+      }
+    };
+    populate(this.dom.motionTemplate, MOTION_TEMPLATES);
+    populate(this.dom.sceneTemplate, SCENE_TEMPLATES);
+    if (this.dom.motionTemplateDescription) this.dom.motionTemplateDescription.textContent = MOTION_TEMPLATES[0]?.description || '';
+    if (this.dom.sceneTemplateDescription) this.dom.sceneTemplateDescription.textContent = SCENE_TEMPLATES[0]?.description || '';
+  }
+
   _bindEvents() {
     const d = this.dom;
+    d.motionTemplate?.addEventListener('change', () => {
+      const template = getMotionTemplate(d.motionTemplate.value);
+      if (d.motionTemplateDescription) d.motionTemplateDescription.textContent = template?.description || '';
+    });
+    d.btnAddMotionTemplate?.addEventListener('click', () => {
+      try {
+        const template = getMotionTemplate(d.motionTemplate?.value);
+        if (!template) throw new Error('Hareket şablonu bulunamadı.');
+        const count = this.timeline.appendSequence({ steps: template.steps });
+        if (count) this.showToast(`“${template.name}” akışı sona eklendi (${count} adım); tek Zaman Çizelgesi Geri Al işlemiyle kaldırabilirsiniz.`);
+      } catch (error) { this.showToast(error.message || 'Hareket şablonu eklenemedi.'); }
+    });
+    d.sceneTemplate?.addEventListener('change', () => {
+      const template = SCENE_TEMPLATES.find((item) => item.id === d.sceneTemplate.value);
+      if (d.sceneTemplateDescription) d.sceneTemplateDescription.textContent = template?.description || '';
+    });
+    d.btnApplySceneTemplate?.addEventListener('click', () => {
+      try {
+        if (!this.sceneEditor) throw new Error('Sahne düzenleyici hazır değil.');
+        const additions = buildSceneTemplateEdits(d.sceneTemplate?.value);
+        const ids = this.sceneEditor.addPrimitiveBatch(additions);
+        ids.forEach((id, index) => this.sceneEditor.select(id, { additive: index > 0 }));
+        const name = SCENE_TEMPLATES.find((item) => item.id === d.sceneTemplate?.value)?.name || 'Sahne';
+        this.showToast(`“${name}” sahne düzeni eklendi; nesneler düzenlenebilir. Sahne Geri Al ile tek adımda kaldırabilirsiniz.`);
+      } catch (error) { this.showToast(error.message || 'Sahne şablonu eklenemedi.'); }
+    });
 
     if (d.btnHomeScreen) {
       d.btnHomeScreen.addEventListener('click', async () => {
