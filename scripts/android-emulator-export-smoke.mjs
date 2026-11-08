@@ -6,7 +6,7 @@ const DEVTOOLS_URL = 'http://127.0.0.1:9222';
 const EXPORT_DIRECTORY = '/sdcard/Documents/Animationer';
 const APP_ID = 'com.monochrome.threejsstudio';
 const APK_PATH = 'android/app/build/outputs/apk/debug/app-debug.apk';
-const EXPECTED_TABS = ['tab-timeline', 'tab-scene', 'tab-camera', 'tab-character', 'tab-sprites', 'tab-render'];
+const EXPECTED_TABS = ['tab-timeline', 'tab-scene', 'tab-camera', 'tab-character', 'tab-sprites', 'tab-render', 'tab-performance'];
 
 function adbText(args) {
   return execFileSync('adb', args, {
@@ -282,7 +282,7 @@ async function main() {
       if (uiState.tabs?.length === EXPECTED_TABS.length && uiState.screenshotButton && uiState.canvas && !uiState.panelInert) break;
       await sleep(1_000);
     }
-    assert.deepEqual(uiState?.tabs, EXPECTED_TABS, `Expected all six tabs; got ${JSON.stringify(uiState?.tabs)}`);
+    assert.deepEqual(uiState?.tabs, EXPECTED_TABS, `Expected all studio tabs; got ${JSON.stringify(uiState?.tabs)}`);
     assert(uiState.screenshotButton && uiState.canvas, `App UI did not become ready: ${JSON.stringify(uiState)}`);
     assert.equal(uiState.panelInert, false, 'Studio controls remained inert after project restoration.');
     console.log(`PASS: Android app UI loaded (${uiState.appTitle}; ${EXPECTED_TABS.length} tabs; canvas present).`);
@@ -319,7 +319,7 @@ async function main() {
       assert.equal(tabState.displayed, 'block', `Tab pane was not displayed: ${tabId}`);
       assert.deepEqual(tabState.visiblePanes, [tabId], `Unexpected visible panes after selecting ${tabId}`);
     }
-    console.log('PASS: Touch navigation across all six tabs; selected content matched each tab.');
+    console.log('PASS: Touch navigation across all studio tabs; selected content matched each tab.');
 
     // Collapse/expand must update both the visual state and accessibility/inert state.
     await tapSelector(devtools.command, '#panel-collapse-trigger');

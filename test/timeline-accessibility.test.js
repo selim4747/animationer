@@ -23,8 +23,10 @@ test('reorder, delete and inline editor controls are siblings of the run button 
 
 test('studio tabs expose tab semantics and keyboard roving navigation', async () => {
   const html = await readFile(new URL('../src/ui/studio-panel.html', import.meta.url), 'utf8');
-  assert.equal((html.match(/role="tab"/g) || []).length, 6);
-  assert.equal((html.match(/role="tabpanel"/g) || []).length, 6);
+  assert.equal((html.match(/role="tab"/g) || []).length, 7);
+  assert.equal((html.match(/role="tabpanel"/g) || []).length, 7);
+  assert.match(html, /id="studio-tab-performance-tab" role="tab" aria-controls="tab-performance"/);
+  assert.match(html, /id="tab-performance" class="studio-tab-pane" role="tabpanel" aria-labelledby="studio-tab-performance-tab"/);
   assert.match(html, /role="tablist"/);
   assert.match(uiSource, /event\.key === 'ArrowRight'/);
   assert.match(uiSource, /event\.key === 'Home'/);

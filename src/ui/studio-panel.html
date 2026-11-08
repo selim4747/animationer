@@ -37,6 +37,9 @@
           <button class="studio-tab-btn" id="studio-tab-render-tab" role="tab" aria-controls="tab-render" aria-selected="false" tabindex="-1" data-tab="tab-render" title="Dışa Aktar / Render">
             💾 RENDER
           </button>
+          <button class="studio-tab-btn" id="studio-tab-performance-tab" role="tab" aria-controls="tab-performance" aria-selected="false" tabindex="-1" data-tab="tab-performance" title="Performans Tanılaması">
+            ⚡ PERF
+          </button>
         </nav>
 
         <!-- ==========================================
@@ -595,6 +598,25 @@
           <div class="studio-info-text" style="margin-top: 12px;">
             * <strong>Rejiyi Oynat ve Kaydet:</strong> Panel otomatik gizlenir ve sahne oynatımı WebM/MP4 olarak kaydedilir. Kayıt 3 dakika veya cihaz profilinin kayıt sınırından hangisine önce ulaşırsa otomatik durur. Seçili çıktı boyutu PNG ve video için geçerlidir; kare hızı ve bitrate profilini ayrıca seçebilirsiniz.
           </div>
+        </div>
+
+        <div id="tab-performance" class="studio-tab-pane" role="tabpanel" aria-labelledby="studio-tab-performance-tab" tabindex="0" aria-hidden="true" style="display: none;">
+          <div class="studio-sub-header">CANLI PERFORMANS ÖLÇÜMLERİ</div>
+          <p class="studio-info-text">Ölçüm varsayılan olarak kapalıdır. Başlatıldığında ekran yaklaşık 0,5 saniyede bir güncellenir; hiçbir telemetri gönderilmez veya projeye kaydedilmez.</p>
+          <div class="studio-ctrl-row">
+            <button id="btn-toggle-performance-diagnostics" class="hud-btn primary flex-grow" type="button" aria-pressed="false">▶ Tanılamayı Başlat</button>
+          </div>
+          <p id="performance-diagnostics-status" class="studio-info-text" role="status" aria-live="polite">Kapalı · ölçüm yapılmıyor.</p>
+          <div class="performance-metrics-grid" aria-label="Performans ölçümleri">
+            <div class="performance-metric"><span>Kare hızı</span><strong id="diagnostics-fps">—</strong></div>
+            <div class="performance-metric"><span>Kare süresi</span><strong id="diagnostics-frame-time">—</strong></div>
+            <div class="performance-metric"><span>Draw calls</span><strong id="diagnostics-draw-calls">—</strong></div>
+            <div class="performance-metric"><span>Üçgen</span><strong id="diagnostics-triangles">—</strong></div>
+            <div class="performance-metric"><span>Geometri</span><strong id="diagnostics-geometries">—</strong></div>
+            <div class="performance-metric"><span>Texture</span><strong id="diagnostics-textures">—</strong></div>
+            <div class="performance-metric performance-metric-wide"><span>JS heap (uygunsa)</span><strong id="diagnostics-js-heap">Desteklenmiyor</strong></div>
+          </div>
+          <p class="studio-info-text">Geometri/texture sayıları Three.js kaynak adetleridir; GPU bellek kullanımının bayt cinsinden ölçümü değildir. JS heap değeri yalnızca tarayıcı destekliyorsa gösterilir.</p>
         </div>
       </div>
     </aside>

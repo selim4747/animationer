@@ -55,7 +55,7 @@ export class UIManager {
    * @param {import('./RecorderManager.js').RecorderManager} [context.recorderManager]
    * @param {Object} context.sceneHelpers - gridHelper, dirLight, hemiLight referansları
    */
-  constructor({ timelineManager, character, characterManager, spriteAnimationManager, worldSpriteCharacterManager = null, sceneEditor = null, projectTemplate = 'demo', projectStore = null, projectId = '', projectName = 'Yeni Proje', onReturnHome = () => {}, worldSpriteReady = Promise.resolve(), onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, sceneHelpers }) {
+  constructor({ timelineManager, character, characterManager, spriteAnimationManager, worldSpriteCharacterManager = null, sceneEditor = null, projectTemplate = 'demo', projectStore = null, projectId = '', projectName = 'Yeni Proje', onReturnHome = () => {}, worldSpriteReady = Promise.resolve(), onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, performanceDiagnostics = null, sceneHelpers }) {
     this.timeline = timelineManager;
     this.character = character;
     this.characters = characterManager || character;
@@ -73,6 +73,7 @@ export class UIManager {
     this.cameraManager = cameraManager;
     this.mapLoader = mapLoader;
     this.recorder = recorderManager;
+    this.performanceDiagnostics = performanceDiagnostics;
     this.sceneHelpers = sceneHelpers || {};
 
     this.isPanelHidden = false; // 'H' tuşu ve sinematik mod
@@ -322,6 +323,17 @@ export class UIManager {
       btnDismissVideoPreview: document.getElementById('btn-dismiss-video-preview'),
       recordingHeading: document.getElementById('render-recording-heading'),
 
+      // Sekme 7: PERFORMANCE DIAGNOSTICS
+      btnToggleDiagnostics: document.getElementById('btn-toggle-performance-diagnostics'),
+      diagnosticsStatus: document.getElementById('performance-diagnostics-status'),
+      diagnosticsFps: document.getElementById('diagnostics-fps'),
+      diagnosticsFrameTime: document.getElementById('diagnostics-frame-time'),
+      diagnosticsDrawCalls: document.getElementById('diagnostics-draw-calls'),
+      diagnosticsTriangles: document.getElementById('diagnostics-triangles'),
+      diagnosticsGeometries: document.getElementById('diagnostics-geometries'),
+      diagnosticsTextures: document.getElementById('diagnostics-textures'),
+      diagnosticsHeap: document.getElementById('diagnostics-js-heap'),
+
       // Toast & Modallar
       toast: document.getElementById('toast'),
       toastMessage: document.getElementById('toast-message'),
@@ -405,6 +417,17 @@ export class UIManager {
         if (event.key === 'Home') next = buttons[0]; if (event.key === 'End') next = buttons.at(-1);
         if (next) { event.preventDefault(); this.switchTab(next.dataset.tab, true); }
       });
+    });
+    d.btnToggleDiagnostics?.addEventListener('click', () => {
+      if (!this.performanceDiagnostics) {
+        this.showToast('Performans tanılaması kullanılamıyor.');
+        return;
+      }
+      const enabled = !this.performanceDiagnostics.enabled;
+      this.performanceDiagnostics.setEnabled(enabled);
+      d.btnToggleDiagnostics.setAttribute('aria-pressed', String(enabled));
+      d.btnToggleDiagnostics.textContent = enabled ? '■ Tanılamayı Durdur' : '▶ Tanılamayı Başlat';
+      this.showToast(enabled ? 'Performans tanılaması açıldı.' : 'Performans tanılaması kapatıldı.');
     });
     d.timelineViewList?.addEventListener('click', () => this.setTimelineView('list'));
     d.timelineViewRuler?.addEventListener('click', () => this.setTimelineView('ruler'));
@@ -1374,6 +1397,38 @@ export class UIManager {
         d.modalHelp.classList.remove('active');
       });
     }
+  }
+
+  updateDiagnosticsUI(state) {
+    if (!state) return;
+    const d = this.dom;
+    const setValue = (element, value) => { if (element) element.textContent = value; };
+    if (!state.enabled) {
+      setValue(d.diagnosticsStatus, 'Kapalı · ölçüm yapılmıyor.');
+      setValue(d.diagnosticsFps, '—');
+      setValue(d.diagnosticsFrameTime, '—');
+      setValue(d.diagnosticsDrawCalls, '—');
+      setValue(d.diagnosticsTriangles, '—');
+      setValue(d.diagnosticsGeometries, '—');
+      setValue(d.diagnosticsTextures, '—');
+      setValue(d.diagnosticsHeap, 'Desteklenmiyor');
+      return;
+    }
+    if (state.fps === null) {
+      setValue(d.diagnosticsStatus, 'Etkin · ilk ölçüm bekleniyor…');
+      return;
+    }
+    const fps = Number(state.fps) || 0;
+    setValue(d.diagnosticsStatus, fps < 24 ? `Etkin · düşük kare hızı (${fps.toFixed(1)} FPS)` : `Etkin · son ${Math.round(this.performanceDiagnostics.updateIntervalMs)} ms örneği`);
+    setValue(d.diagnosticsFps, `${fps.toFixed(1)} FPS`);
+    setValue(d.diagnosticsFrameTime, `${(Number(state.frameTimeMs) || 0).toFixed(1)} ms`);
+    setValue(d.diagnosticsDrawCalls, Number(state.drawCalls || 0).toLocaleString());
+    setValue(d.diagnosticsTriangles, Number(state.triangles || 0).toLocaleString());
+    setValue(d.diagnosticsGeometries, Number(state.geometries || 0).toLocaleString());
+    setValue(d.diagnosticsTextures, Number(state.textures || 0).toLocaleString());
+    setValue(d.diagnosticsHeap, Number.isFinite(state.jsHeapUsedMB)
+      ? `${state.jsHeapUsedMB.toFixed(1)}${Number.isFinite(state.jsHeapLimitMB) ? ` / ${state.jsHeapLimitMB.toFixed(0)}` : ''} MB`
+      : 'Bu tarayıcıda sunulmuyor');
   }
 
   /**

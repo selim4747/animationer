@@ -472,7 +472,7 @@ html, body {
 /* Sekmeler Gezinti Çubuğu */
 .studio-tabs-nav {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   background: var(--mono-dark-900);
   border-bottom: 1px solid var(--mono-border);
   gap: 1px;
@@ -504,6 +504,41 @@ html, body {
   background: var(--mono-dark-700);
   color: var(--mono-white);
   border-bottom: 2px solid var(--mono-white);
+}
+
+.performance-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.performance-metric {
+  display: flex;
+  min-height: 56px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--mono-dark-800);
+  border: 1px solid var(--mono-border);
+  border-radius: 6px;
+}
+
+.performance-metric span {
+  color: var(--mono-gray);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.performance-metric strong {
+  color: var(--mono-white);
+  font: 700 14px monospace;
+  overflow-wrap: anywhere;
+}
+
+.performance-metric-wide {
+  grid-column: 1 / -1;
 }
 
 /* Anlık Kayıt Durum Banner'ı */
@@ -1154,6 +1189,9 @@ input[type="range"]::-moz-range-thumb {
 }
 
 @media (max-width: 640px) and (orientation: portrait), (max-width: 640px) {
+  .studio-tabs-nav {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
   .top-hud {
     flex-wrap: nowrap;
     gap: 4px;
