@@ -34,6 +34,7 @@ export class SceneEditor {
     this.undoStack = [];
     this.redoStack = [];
     this.historyLimit = 100;
+    this._historySuppressed = false;
     this._originalMaterials = new WeakMap();
     this._colorOwnedObjects = new Set();
     this._primitiveCounter = 0;
@@ -41,6 +42,15 @@ export class SceneEditor {
 
   get canUndo() { return this.undoStack.length > 0; }
   get canRedo() { return this.redoStack.length > 0; }
+
+  _captureSelection() { return { selectedId: this.selectedId, selectedIds: [...this.selectedIds] }; }
+
+  _restoreSelection(selection) {
+    if (!selection) return;
+    const available = new Set(this._entries().map((entry) => entry.id));
+    this.selectedIds = [...new Set(Array.isArray(selection.selectedIds) ? selection.selectedIds : [])].filter((id) => available.has(id));
+    this.selectedId = this.selectedIds.includes(selection.selectedId) ? selection.selectedId : (this.selectedIds.at(-1) || null);
+  }
 
   setActive(active) {
     this.active = Boolean(active);
@@ -217,34 +227,51 @@ export class SceneEditor {
     this.redoStack.length = 0;
   }
 
+  _recordProperties(id, before, after) {
+    if (this._historySuppressed || JSON.stringify(before) === JSON.stringify(after)) return;
+    this.undoStack.push({ kind: 'properties', before: [{ id, ...before }], after: [{ id, ...after }] });
+    if (this.undoStack.length > this.historyLimit) this.undoStack.shift();
+    this.redoStack.length = 0;
+  }
+
   undo() { return this._replayHistory(this.undoStack, this.redoStack); }
   redo() { return this._replayHistory(this.redoStack, this.undoStack); }
 
   _replayHistory(source, destination) {
     const snapshot = source.pop();
     if (!snapshot) return false;
-    if (snapshot.kind === 'primitive-batch-add') {
-      if (source === this.undoStack) {
-        const entries = snapshot.ids.map((id) => this._entries().find((entry) => entry.id === id));
-        if (entries.some((entry) => !entry || entry.object.userData.sceneEditorKind !== 'primitive')) { source.push(snapshot); return false; }
-        for (const entry of entries) {
-          entry.object.parent?.remove(entry.object);
-          entry.object.geometry?.dispose?.();
-          const materials = Array.isArray(entry.object.material) ? entry.object.material : [entry.object.material];
-          materials.forEach((material) => material?.dispose?.());
-          this._originalMaterials.delete(entry.object);
-          this._colorOwnedObjects.delete(entry.object);
+    const undoing = source === this.undoStack;
+    if (snapshot.kind === 'primitive-add' || snapshot.kind === 'primitive-remove') {
+      const shouldAdd = (snapshot.kind === 'primitive-add') !== undoing;
+      try {
+        if (shouldAdd) this.addPrimitiveBatch(snapshot.edits, { recordHistory: false, notify: false });
+        else {
+          const entries = new Map(this._entries().map((entry) => [entry.id, entry]));
+          if (snapshot.edits.some((edit) => entries.get(edit.id)?.object.userData.sceneEditorKind !== 'primitive')) {
+            source.push(snapshot);
+            return false;
+          }
+          for (const edit of snapshot.edits) {
+            if (!this._removePrimitiveObject(edit.id)) throw new Error('Sahne geçmişindeki primitive artık kaldırılamıyor.');
+          }
         }
-        this.selectedIds = this.selectedIds.filter((id) => !snapshot.ids.includes(id));
-        if (!this.selectedIds.includes(this.selectedId)) this.selectedId = this.selectedIds.at(-1) || null;
-      } else {
-        try { this.addPrimitiveBatch(snapshot.edits, { recordHistory: false, notify: false }); }
-        catch { source.push(snapshot); return false; }
-      }
+      } catch { source.push(snapshot); return false; }
+      this._restoreSelection(undoing ? snapshot.selectionBefore : snapshot.selectionAfter);
       destination.push(snapshot);
       if (destination.length > this.historyLimit) destination.shift();
       this.collisionManager?.updateObstacleBoxes?.();
-      this.onChange({ type: source === this.undoStack ? 'template-removed' : 'template-added', active: this.active, objects: this.list(), selection: this.getSelection() });
+      this.onChange({ type: shouldAdd ? 'primitive-added' : 'primitive-removed', active: this.active, objects: this.list(), selection: this.getSelection() });
+      return true;
+    }
+    if (snapshot.kind === 'properties') {
+      const changes = undoing ? snapshot.before : snapshot.after;
+      const entries = changes.map((change) => this._entries().find((entry) => entry.id === change.id));
+      if (entries.some((entry) => !entry)) { source.push(snapshot); return false; }
+      changes.forEach((change, index) => this._applyProperties(entries[index], change));
+      destination.push(snapshot);
+      if (destination.length > this.historyLimit) destination.shift();
+      this.collisionManager?.updateObstacleBoxes?.();
+      this.onChange({ type: 'scene-edit', active: this.active, objects: this.list(), selection: this.getSelection() });
       return true;
     }
     const changes = Array.isArray(snapshot) ? snapshot : [{ id: snapshot.id, transform: snapshot.transform }];
@@ -256,12 +283,24 @@ export class SceneEditor {
     if (current.some((item) => !item)) { source.push(snapshot); return false; }
     destination.push(current);
     if (destination.length > this.historyLimit) destination.shift();
-    changes.forEach((change) => {
-      const entry = entries.find((item) => item.id === change.id);
-      this._applyTransform(entry, change.transform);
-    });
+    changes.forEach((change) => this._applyTransform(entries.find((item) => item.id === change.id), change.transform));
     this.onChange({ type: 'transform', active: this.active, objects: this.list(), selection: this.getSelection() });
     return true;
+  }
+
+  _applyProperties(entry, change) {
+    const object = entry.object;
+    if (change.transform) this._applyTransform(entry, change.transform);
+    if (change.color) this.setColor(entry.id, change.color, { recordHistory: false, notify: false });
+    if (change.label !== undefined) {
+      object.userData.sceneEditorLabel = change.label;
+      if (object.userData.sceneEditorKind === 'primitive') object.userData.primitiveDescriptor.name = change.label;
+    }
+    if (change.visible !== undefined) {
+      if (entry.kind === 'map') this.mapLoader?.setMeshVisible?.(entry.id.slice('map:'.length), change.visible, { notify: false });
+      else object.visible = change.visible;
+    }
+    if (change.locked !== undefined) object.userData.sceneEditorLocked = change.locked;
   }
 
   setSelectionTransform(transform = {}) {
@@ -315,8 +354,10 @@ export class SceneEditor {
     const entry = this._entries().find((item) => item.id === id);
     const clean = typeof label === 'string' ? label.trim().slice(0, 80) : '';
     if (!entry || !clean) return false;
+    const before = { label: entry.label };
     entry.object.userData.sceneEditorLabel = clean;
     if (entry.kind === 'primitive') entry.object.userData.primitiveDescriptor.name = clean;
+    this._recordProperties(entry.id, before, { label: clean });
     this.onChange({ type: 'object-renamed', objects: this.list(), selection: this.getSelection() });
     return true;
   }
@@ -325,9 +366,11 @@ export class SceneEditor {
     const entry = this._entries().find((item) => item.id === id);
     if (!entry) return false;
     const nextVisible = Boolean(visible);
+    const before = { visible: entry.visible };
     if (entry.kind === 'map') this.mapLoader?.setMeshVisible?.(entry.id.slice('map:'.length), nextVisible);
     else entry.object.visible = nextVisible;
     this.collisionManager?.updateObstacleBoxes?.();
+    this._recordProperties(entry.id, before, { visible: nextVisible });
     this.onChange({ type: 'object-visibility', objects: this.list(), selection: this.getSelection() });
     return true;
   }
@@ -335,7 +378,9 @@ export class SceneEditor {
   setObjectLocked(id, locked) {
     const entry = this._entries().find((item) => item.id === id);
     if (!entry) return false;
+    const before = { locked: entry.locked };
     entry.object.userData.sceneEditorLocked = Boolean(locked);
+    this._recordProperties(entry.id, before, { locked: Boolean(locked) });
     this.onChange({ type: 'object-lock', objects: this.list(), selection: this.getSelection() });
     return true;
   }
@@ -347,11 +392,12 @@ export class SceneEditor {
     return this.setTransform(id, original);
   }
 
-  setColor(id, color) {
+  setColor(id, color, { recordHistory = true, notify = true } = {}) {
     const entry = this._entries().find((item) => item.id === (id || this.selectedId));
     const normalized = normalizeColor(color);
     if (!entry || entry.locked || !normalized) return false;
     const object = entry.object;
+    const beforeColor = this.getObjectColor(object);
     const current = Array.isArray(object.material) ? object.material : [object.material];
     if (!current.length || current.some((material) => !material?.color?.set)) return false;
 
@@ -365,7 +411,8 @@ export class SceneEditor {
     const owned = Array.isArray(object.material) ? object.material : [object.material];
     for (const material of owned) material.color.set(normalized);
     if (object.userData.sceneEditorKind === 'primitive') object.userData.primitiveDescriptor.color = normalized;
-    this.onChange({ type: 'color', active: this.active, objects: this.list(), selection: this.getSelection(), color: normalized });
+    if (recordHistory) this._recordProperties(entry.id, { color: beforeColor }, { color: normalized });
+    if (notify) this.onChange({ type: 'color', active: this.active, objects: this.list(), selection: this.getSelection(), color: normalized });
     return true;
   }
 
@@ -395,6 +442,7 @@ export class SceneEditor {
     if (!color) throw new Error('Nesne rengi geçersiz.');
     const id = String(options.id || `primitive:${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${++this._primitiveCounter}`}`);
     if (!id || id.length > 256 || this._entries().some((entry) => entry.id === id)) throw new Error('Nesne kimliği geçersiz veya yineleniyor.');
+    const selectionBefore = this._captureSelection();
     const geometry = type === 'box'
       ? new THREE.BoxGeometry(width, height, depth)
       : type === 'sphere'
@@ -421,8 +469,22 @@ export class SceneEditor {
     object.castShadow = true;
     object.receiveShadow = true;
     this.scene?.add(object);
+    if (!options.silent && !this._historySuppressed) {
+      const edit = this.exportProjectState().find((item) => item.id === id);
+      this._pushPrimitiveHistory('primitive-add', [edit], {
+        selectionBefore,
+        selectionAfter: { selectedId: id, selectedIds: [id] },
+      });
+    }
     if (!options.silent) this.onChange({ type: 'primitive-added', active: this.active, objects: this.list(), selection: this.getSelection() });
     return object;
+  }
+
+  _pushPrimitiveHistory(kind, edits, { selectionBefore = this._captureSelection(), selectionAfter = this._captureSelection() } = {}) {
+    if (this._historySuppressed || !edits.length) return;
+    this.undoStack.push({ kind, edits: structuredClone(edits), selectionBefore: structuredClone(selectionBefore), selectionAfter: structuredClone(selectionAfter) });
+    if (this.undoStack.length > this.historyLimit) this.undoStack.shift();
+    this.redoStack.length = 0;
   }
 
   addPrimitiveBatch(edits = [], { recordHistory = true, notify = true } = {}) {
@@ -436,6 +498,7 @@ export class SceneEditor {
       if (['x', 'y', 'z'].some((axis) => Math.abs(value.position[axis]) > 10000)) throw new Error(`Şablon nesnesi #${index + 1} konumu ±10000 aralığında olmalı.`);
       return value;
     });
+    const selectionBefore = this._captureSelection();
     const added = [];
     try {
       for (const edit of normalized) {
@@ -459,31 +522,40 @@ export class SceneEditor {
     const ids = added.map((object) => object.userData.sceneEditorId);
     if (recordHistory) {
       const idSet = new Set(ids);
-      this.undoStack.push({ kind: 'primitive-batch-add', ids, edits: this.exportProjectState().filter((edit) => idSet.has(edit.id)) });
-      if (this.undoStack.length > this.historyLimit) this.undoStack.shift();
-      this.redoStack.length = 0;
+      this._pushPrimitiveHistory('primitive-add', this.exportProjectState().filter((edit) => idSet.has(edit.id)), {
+        selectionBefore,
+        selectionAfter: this._captureSelection(),
+      });
     }
     this.collisionManager?.updateObstacleBoxes?.();
     if (notify) this.onChange({ type: 'template-added', active: this.active, objects: this.list(), selection: this.getSelection() });
     return ids;
   }
 
-  removePrimitive(id = this.selectedId) {
+  _removePrimitiveObject(id) {
     const entry = this._entries().find((item) => item.id === id);
-    if (!entry || entry.locked || entry.object.userData.sceneEditorKind !== 'primitive') return false;
+    if (!entry || entry.object.userData.sceneEditorKind !== 'primitive') return false;
     entry.object.parent?.remove(entry.object);
     entry.object.geometry?.dispose?.();
     const materials = Array.isArray(entry.object.material) ? entry.object.material : [entry.object.material];
     materials.forEach((material) => material?.dispose?.());
     this._originalMaterials.delete(entry.object);
     this._colorOwnedObjects.delete(entry.object);
-    const references = (snapshot) => snapshot?.kind === 'primitive-batch-add'
-      ? snapshot.ids.includes(id)
-      : Array.isArray(snapshot) ? snapshot.some((item) => item.id === id) : snapshot.id === id;
-    this.undoStack = this.undoStack.filter((snapshot) => !references(snapshot));
-    this.redoStack = this.redoStack.filter((snapshot) => !references(snapshot));
     this.selectedIds = this.selectedIds.filter((selectedId) => selectedId !== id);
     if (this.selectedId === id) this.selectedId = this.selectedIds.at(-1) || null;
+    return true;
+  }
+
+  removePrimitive(id = this.selectedId) {
+    const entry = this._entries().find((item) => item.id === id);
+    if (!entry || entry.locked || entry.object.userData.sceneEditorKind !== 'primitive') return false;
+    const selectionBefore = this._captureSelection();
+    const edit = this.exportProjectState().find((item) => item.id === id);
+    this._removePrimitiveObject(id);
+    if (!this._historySuppressed) this._pushPrimitiveHistory('primitive-remove', [edit], {
+      selectionBefore,
+      selectionAfter: this._captureSelection(),
+    });
     this.onChange({ type: 'primitive-removed', active: this.active, objects: this.list(), selection: this.getSelection() });
     return true;
   }
@@ -555,45 +627,51 @@ export class SceneEditor {
     if (!Array.isArray(edits) || edits.length > 500) throw new Error('Sahne düzenleme verisi geçersiz.');
     const seen = new Set();
     const normalized = edits.map((edit, index) => this._validateSceneEdit(edit, index, seen));
-    const desiredPrimitiveIds = new Set(normalized.filter((edit) => edit.primitive).map((edit) => edit.id));
-    for (const entry of this._entries()) {
-      if (entry.object.userData.sceneEditorKind === 'primitive' && !desiredPrimitiveIds.has(entry.id)) this.removePrimitive(entry.id);
+    this.undoStack.length = 0; this.redoStack.length = 0;
+    const priorSuppression = this._historySuppressed; this._historySuppressed = true;
+    try {
+      const desiredPrimitiveIds = new Set(normalized.filter((edit) => edit.primitive).map((edit) => edit.id));
+      for (const entry of this._entries()) {
+        if (entry.object.userData.sceneEditorKind === 'primitive' && !desiredPrimitiveIds.has(entry.id)) this.removePrimitive(entry.id);
+      }
+      for (const edit of normalized) {
+        if (!this._entries().some((entry) => entry.id === edit.id) && edit.primitive) {
+          this.createPrimitive(edit.primitive.type, { ...edit.primitive, id: edit.id, position: { x: 0, y: 0.5, z: 0 } });
+        }
+      }
+      const byId = new Map(normalized.map((edit) => [edit.id, edit]));
+      for (const entry of this._entries()) {
+        const edit = byId.get(entry.id);
+        if (!edit) {
+          if (entry.object.userData.sceneEditorDefaultTransform) this._applyTransform(entry, entry.object.userData.sceneEditorDefaultTransform);
+          this._restoreOriginalMaterial(entry.object);
+          const defaultVisible = entry.object.userData.sceneEditorDefaultVisible !== false;
+          if (entry.kind === 'map') this.mapLoader?.setMeshVisible?.(entry.id.slice('map:'.length), defaultVisible, { notify: false });
+          else entry.object.visible = defaultVisible;
+          entry.object.userData.sceneEditorLocked = entry.object.userData.sceneEditorDefaultLocked === true;
+          entry.object.userData.sceneEditorLabel = entry.object.userData.sceneEditorDefaultLabel;
+          continue;
+        }
+        this._applyTransform(entry, edit);
+        const color = edit.color || edit.primitive?.color;
+        if (color) this.setColor(edit.id, color);
+        else this._restoreOriginalMaterial(entry.object);
+        if (edit.primitive && entry.object.userData.sceneEditorKind === 'primitive') {
+          entry.object.userData.primitiveDescriptor = { ...edit.primitive, color: color || edit.primitive.color };
+          entry.object.userData.sceneEditorLabel = edit.primitive.name;
+        }
+        if (edit.label) entry.object.userData.sceneEditorLabel = edit.label;
+        if (edit.visible !== undefined) {
+          if (entry.kind === 'map') this.mapLoader?.setMeshVisible?.(entry.id.slice('map:'.length), edit.visible, { notify: false });
+          else entry.object.visible = edit.visible;
+        }
+        if (edit.locked !== undefined) entry.object.userData.sceneEditorLocked = edit.locked;
+      }
+      this.undoStack.length = 0;
+      this.redoStack.length = 0;
+    } finally {
+      this._historySuppressed = priorSuppression;
     }
-    for (const edit of normalized) {
-      if (!this._entries().some((entry) => entry.id === edit.id) && edit.primitive) {
-        this.createPrimitive(edit.primitive.type, { ...edit.primitive, id: edit.id, position: { x: 0, y: 0.5, z: 0 } });
-      }
-    }
-    const byId = new Map(normalized.map((edit) => [edit.id, edit]));
-    for (const entry of this._entries()) {
-      const edit = byId.get(entry.id);
-      if (!edit) {
-        if (entry.object.userData.sceneEditorDefaultTransform) this._applyTransform(entry, entry.object.userData.sceneEditorDefaultTransform);
-        this._restoreOriginalMaterial(entry.object);
-        const defaultVisible = entry.object.userData.sceneEditorDefaultVisible !== false;
-        if (entry.kind === 'map') this.mapLoader?.setMeshVisible?.(entry.id.slice('map:'.length), defaultVisible, { notify: false });
-        else entry.object.visible = defaultVisible;
-        entry.object.userData.sceneEditorLocked = entry.object.userData.sceneEditorDefaultLocked === true;
-        entry.object.userData.sceneEditorLabel = entry.object.userData.sceneEditorDefaultLabel;
-        continue;
-      }
-      this._applyTransform(entry, edit);
-      const color = edit.color || edit.primitive?.color;
-      if (color) this.setColor(edit.id, color);
-      else this._restoreOriginalMaterial(entry.object);
-      if (edit.primitive && entry.object.userData.sceneEditorKind === 'primitive') {
-        entry.object.userData.primitiveDescriptor = { ...edit.primitive, color: color || edit.primitive.color };
-        entry.object.userData.sceneEditorLabel = edit.primitive.name;
-      }
-      if (edit.label) entry.object.userData.sceneEditorLabel = edit.label;
-      if (edit.visible !== undefined) {
-        if (entry.kind === 'map') this.mapLoader?.setMeshVisible?.(entry.id.slice('map:'.length), edit.visible, { notify: false });
-        else entry.object.visible = edit.visible;
-      }
-      if (edit.locked !== undefined) entry.object.userData.sceneEditorLocked = edit.locked;
-    }
-    this.undoStack.length = 0;
-    this.redoStack.length = 0;
     this.collisionManager?.updateObstacleBoxes?.();
     this.selectedIds = this.selectedIds.filter((id) => this._entries().some((entry) => entry.id === id));
     if (!this.selectedIds.includes(this.selectedId)) this.selectedId = this.selectedIds.at(-1) || null;
