@@ -1698,5 +1698,37 @@ input[type="range"]::-moz-range-thumb {
 .timeline-ruler::before { content: '0s  ─────  zaman'; position: absolute; top: 4px; left: 6px; color: var(--mono-gray); font: 9px monospace; }
 .timeline-ruler-step { position: absolute; top: 32px; min-width: 46px; min-height: 52px; overflow: hidden; padding: 5px; border: 1px solid var(--mono-border-light); border-radius: 3px; background: var(--mono-dark-600); color: var(--mono-white); font: 9px monospace; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; touch-action: manipulation; }
 .timeline-ruler-step:focus-visible, .studio-tab-btn:focus-visible { outline: 2px solid var(--mono-white); outline-offset: 2px; z-index: 2; }
+
+/* Consistent mobile hit areas for every actionable control inside studio panels. */
+@media (max-width: 640px) {
+  .studio-panel button,
+  .studio-panel .hud-btn.small-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .step-actions,
+  .station-card-actions {
+    flex-wrap: wrap;
+  }
+  .step-btn-icon,
+  .station-action-btn {
+    width: 44px;
+    height: 44px;
+  }
+  .scene-editor-tree-row {
+    min-width: 0;
+    grid-template-columns: 44px minmax(0, 1fr) auto auto;
+  }
+  .scene-editor-tree-action {
+    min-height: 44px !important;
+  }
+  .scene-editor-panel button {
+    min-height: 44px;
+  }
+  html,
+  body {
+    overflow-x: hidden;
+  }
+}
 .timeline-ruler-step:disabled { opacity: .65; cursor: not-allowed; }
 .studio-tab-pane[aria-hidden="true"] { visibility: hidden; }

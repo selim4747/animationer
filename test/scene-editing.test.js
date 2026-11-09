@@ -282,3 +282,128 @@ test('scene panel exposes color, primitive creation and separate scene history c
   for (const id of ['scene-editor-hierarchy', 'scene-editor-rename', 'scene-editor-touch-step']) assert.match(html, new RegExp(`id="${id}"`));
   assert.match(html, /data-scene-nudge=/);
 });
+
+test('scene history undoes and redoes primitive creation and removal without retaining disposed resources', () => {
+  const scene = new THREE.Scene();
+  const editor = new SceneEditor({ scene });
+  editor.createPrimitive('box', { id: 'history:created', color: '#112233' });
+  assert.equal(editor.canUndo, true);
+  assert.equal(editor.undo(), true);
+  assert.equal(editor.list().some((item) => item.id === 'history:created'), false);
+  assert.equal(editor.redo(), true);
+  assert.equal(editor.getObjectColor(scene.children.find((item) => item.userData.sceneEditorId === 'history:created')), '#112233');
+  assert.equal(editor.removePrimitive('history:created'), true);
+  assert.equal(editor.undo(), true);
+  assert.equal(editor.list().some((item) => item.id === 'history:created'), true);
+  assert.equal(editor.redo(), true);
+  assert.equal(editor.list().some((item) => item.id === 'history:created'), false);
+  editor.dispose();
+});
+
+test('scene property edits undo and redo color, rename, visibility, and lock with sibling material isolation', () => {
+  const scene = new THREE.Scene();
+  const shared = new THREE.MeshStandardMaterial({ color: '#102030', roughness: 0.35 });
+  const first = new THREE.Mesh(new THREE.BoxGeometry(), shared); first.userData.sceneEditorId = 'history:first'; first.name = 'Original';
+  const sibling = new THREE.Mesh(new THREE.BoxGeometry(), shared); sibling.userData.sceneEditorId = 'history:sibling';
+  scene.add(first, sibling);
+  const editor = new SceneEditor({ scene });
+  assert.equal(editor.setColor('history:first', '#ff0000'), true);
+  assert.equal(editor.undo(), true);
+  assert.equal(editor.getObjectColor(first), '#102030');
+  assert.equal(editor.getObjectColor(sibling), '#102030');
+  assert.equal(editor.redo(), true);
+  assert.equal(editor.getObjectColor(first), '#ff0000');
+  assert.equal(editor.getObjectColor(sibling), '#102030');
+  assert.equal(editor.renameObject('history:first', 'Renamed'), true);
+  assert.equal(editor.undo(), true); assert.equal(editor.list().find((item) => item.id === 'history:first').label, 'Original');
+  assert.equal(editor.redo(), true); assert.equal(editor.list().find((item) => item.id === 'history:first').label, 'Renamed');
+  assert.equal(editor.setObjectVisible('history:first', false), true);
+  assert.equal(editor.undo(), true); assert.equal(first.visible, true);
+  assert.equal(editor.redo(), true); assert.equal(first.visible, false);
+  assert.equal(editor.setObjectLocked('history:first', true), true);
+  assert.equal(editor.undo(), true); assert.equal(first.userData.sceneEditorLocked, false);
+  assert.equal(editor.redo(), true); assert.equal(first.userData.sceneEditorLocked, true);
+  editor.dispose(); first.geometry.dispose(); sibling.geometry.dispose(); shared.dispose();
+});
+
+test('primitive batch history is atomic, bounded, invalidates redo, and restore clears history', () => {
+  const scene = new THREE.Scene();
+  const editor = new SceneEditor({ scene });
+  editor.addPrimitiveBatch([
+    { id: 'batch:a', position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 }, primitive: { type: 'box', width: 1, height: 1, depth: 1, radius: 1, color: '#abcdef', name: 'A' } },
+    { id: 'batch:b', position: { x: 1, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 }, primitive: { type: 'sphere', width: 1, height: 1, depth: 1, radius: 1, color: '#123456', name: 'B' } },
+  ]);
+  assert.equal(editor.undoStack.length, 1);
+  assert.equal(editor.undo(), true);
+  assert.equal(editor.list().some((item) => item.id.startsWith('batch:')), false);
+  assert.equal(editor.redo(), true);
+  assert.equal(editor.list().filter((item) => item.id.startsWith('batch:')).length, 2);
+  editor.historyLimit = 1;
+  editor.setObjectLocked('batch:a', true);
+  editor.setObjectLocked('batch:a', false);
+  assert.equal(editor.undoStack.length, 1);
+  assert.equal(editor.undo(), true);
+  editor.setObjectVisible('batch:a', false);
+  assert.equal(editor.canRedo, false);
+  editor.restoreProjectState(editor.exportProjectState());
+  assert.equal(editor.canUndo, false);
+  assert.equal(editor.canRedo, false);
+  editor.dispose();
+});
+
+test('primitive undo and redo restore the selection associated with each operation', () => {
+  const scene = new THREE.Scene();
+  const editor = new SceneEditor({ scene });
+  editor.createPrimitive('box', { id: 'history:selected' });
+  editor.select('history:selected');
+  assert.equal(editor.undo(), true);
+  assert.equal(editor.selectedId, null);
+  assert.equal(editor.redo(), true);
+  assert.equal(editor.selectedId, 'history:selected');
+  assert.equal(editor.removePrimitive('history:selected'), true);
+  assert.equal(editor.selectedId, null);
+  assert.equal(editor.undo(), true);
+  assert.equal(editor.selectedId, 'history:selected');
+  assert.equal(editor.redo(), true);
+  assert.equal(editor.selectedId, null);
+  editor.dispose();
+});
+
+test('failed project restore always releases history suppression and clears stale history', () => {
+  const scene = new THREE.Scene();
+  const editor = new SceneEditor({ scene });
+  editor.createPrimitive('box', { id: 'restore:existing' });
+  const existing = editor.exportProjectState().find((edit) => edit.id === 'restore:existing');
+  const originalCreatePrimitive = editor.createPrimitive;
+  editor.createPrimitive = (type, options) => {
+    if (options?.id === 'restore:failed') throw new Error('simulated restore failure');
+    return originalCreatePrimitive.call(editor, type, options);
+  };
+  const failed = {
+    id: 'restore:failed',
+    position: { x: 0, y: 0.5, z: 0 },
+    rotation: { x: 0, y: 0, z: 0 },
+    scale: { x: 1, y: 1, z: 1 },
+    primitive: { type: 'box', width: 1, height: 1, depth: 1, radius: 1, color: '#b8b8b8', name: 'failed' },
+  };
+  assert.throws(() => editor.restoreProjectState([existing, failed]), /simulated restore failure/);
+  delete editor.createPrimitive;
+  assert.equal(editor._historySuppressed, false);
+  assert.equal(editor.canUndo, false);
+  assert.equal(editor.canRedo, false);
+  editor.createPrimitive('box', { id: 'restore:after-failure' });
+  assert.equal(editor.canUndo, true);
+  editor.dispose();
+});
+
+test('stale primitive history is rejected without moving the command between stacks', () => {
+  const scene = new THREE.Scene();
+  const editor = new SceneEditor({ scene });
+  const object = editor.createPrimitive('box', { id: 'history:stale' });
+  scene.remove(object);
+  assert.equal(editor.undo(), false);
+  assert.equal(editor.canUndo, true);
+  assert.equal(editor.canRedo, false);
+  object.geometry.dispose();
+  object.material.dispose();
+});

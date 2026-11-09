@@ -15,8 +15,9 @@ import { SCENE_TEMPLATES, buildSceneTemplateEdits } from '../data/scene-template
 
 const MAX_INLINE_PREVIEW_BYTES = 32 * 1024 * 1024;
 
-function saveResultMessage(label, result) {
+export function saveResultMessage(label, result) {
   if (result?.canceled) return `${label} kaydetme işlemi iptal edildi.`;
+  if (result?.method === 'browser' && result?.initiated) return `${label} indirme başlatıldı: ${result.filename || 'dosya'} · Tarayıcı indirilenleri`;
   if (!result?.saved) return result?.error || `${label} cihaza kaydedilemedi.`;
   const filename = result.filename || 'dosya';
   if (result.method === 'browser') return `${label} indiriliyor: ${filename} · Tarayıcı indirilenleri`;
