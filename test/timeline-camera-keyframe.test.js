@@ -75,3 +75,47 @@ test('scheduled playback also rejects a camera keyframe overlapping a station sw
   assert.equal(timeline.isPlaying, false);
   assert.match(timeline.lastPlaybackError, /kamera geçişleri çakışamaz/i);
 });
+
+
+test('manual camera keyframe execution awaits the transition, locks edits and releases camera controls', async () => {
+  let finishTransition;
+  let releaseCount = 0;
+  const cameraManager = {
+    transitionToPosePromise: () => new Promise((resolve) => { finishTransition = resolve; }),
+    releaseTimelinePose: () => { releaseCount += 1; },
+  };
+  const timeline = new TimelineManager({ cameraManager, initialDemo: false });
+  timeline.addStep(ACTION_TYPES.CAMERA_KEYFRAME, structuredClone(data), 'Manual pose', { duration: 1.5 });
+
+  const execution = timeline.runStep(0);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(timeline.isPlaying, true);
+  assert.equal(timeline.isSingleStepRunning, true);
+  assert.equal(timeline.moveStep(0, 0), false);
+  assert.equal(releaseCount, 0, 'camera hold remains until the transition promise finishes');
+
+  finishTransition();
+  assert.equal(await execution, true);
+  assert.equal(timeline.isPlaying, false);
+  assert.equal(timeline.isSingleStepRunning, false);
+  assert.equal(timeline.currentStepIndex, -1);
+  assert.equal(releaseCount, 1);
+});
+
+test('manual camera keyframe failures still release the camera pose and expose the error', async () => {
+  let releaseCount = 0;
+  const timeline = new TimelineManager({
+    cameraManager: {
+      transitionToPosePromise: async () => { throw new Error('camera transition failed'); },
+      releaseTimelinePose: () => { releaseCount += 1; },
+    },
+    initialDemo: false,
+  });
+  timeline.addStep(ACTION_TYPES.CAMERA_KEYFRAME, structuredClone(data), 'Broken pose');
+
+  assert.equal(await timeline.runStep(0), false);
+  assert.equal(timeline.isPlaying, false);
+  assert.equal(timeline.isSingleStepRunning, false);
+  assert.equal(releaseCount, 1);
+  assert.equal(timeline.lastPlaybackError, 'camera transition failed');
+});

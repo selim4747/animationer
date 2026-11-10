@@ -50,3 +50,17 @@ test('disabling diagnostics resets the snapshot and ignores subsequent frames', 
   assert.equal(diagnostics.recordFrame(12, { render: { calls: 99 } }, 1000), false);
   assert.equal(updates.length, 3);
 });
+
+
+test('ignores zero-duration frames so an initial timestamp cannot inflate the first FPS sample', () => {
+  const updates = [];
+  const diagnostics = new PerformanceDiagnostics({ onUpdate: (snapshot) => updates.push(snapshot), now: () => 0 });
+  const info = { render: { calls: 8 } };
+  diagnostics.setEnabled(true);
+
+  assert.equal(diagnostics.recordFrame(0, info, 500), false);
+  assert.equal(updates.length, 1, 'a zero-delta frame is not published as a sample');
+  assert.equal(diagnostics.recordFrame(20, info, 500), true);
+  assert.equal(updates.at(-1).frameTimeMs, 20);
+  assert.equal(updates.at(-1).fps, 50);
+});

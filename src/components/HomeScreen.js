@@ -71,7 +71,7 @@ export class HomeScreen {
       previewCanvas: byId('home-character-canvas'), previewImage: byId('home-character-image'), previewPlaceholder: byId('home-preview-placeholder'),
       previewName: byId('home-preview-name'), previewDetail: byId('home-preview-detail'), toast: byId('home-toast'),
       dialog: byId('home-dialog'), dialogForm: byId('home-dialog-form'), dialogEyebrow: byId('home-dialog-eyebrow'), dialogTitle: byId('home-dialog-title'),
-      dialogMessage: byId('home-dialog-message'), dialogNameLabel: byId('home-dialog-name-label'), dialogName: byId('home-dialog-name'),
+      dialogMessage: byId('home-dialog-message'), dialogError: byId('home-dialog-error'), dialogNameLabel: byId('home-dialog-name-label'), dialogName: byId('home-dialog-name'),
       dialogTemplateLabel: byId('home-dialog-template-label'), dialogTemplate: byId('home-dialog-template'),
       dialogTargetLabel: byId('home-dialog-target-label'), dialogTarget: byId('home-dialog-target'), dialogSubmit: byId('home-dialog-submit'), dialogCancel: byId('home-dialog-cancel'),
       dialogVersionList: byId('home-dialog-version-list'),
@@ -109,6 +109,21 @@ export class HomeScreen {
       if (button.dataset.action === 'duplicate') return this._showDialog('duplicate', projectId);
       if (button.dataset.action === 'delete') return this._showDialog('delete', projectId);
       if (button.dataset.action === 'favorite') { void this.store.setProjectFavorite(projectId, button.getAttribute('aria-pressed') !== 'true').then(() => this.refresh()).catch((error) => this._setError(this.dom.projectError, error.message)); return; }
+    });
+
+    this.root.querySelector('[role=tablist]')?.addEventListener('keydown', (event) => {
+      const tabs = [...this.root.querySelectorAll('[data-library-kind]')];
+      const current = tabs.indexOf(event.target.closest('[data-library-kind]'));
+      if (current < 0) return;
+      let next = current;
+      if (event.key === 'ArrowRight') next = (current + 1) % tabs.length;
+      else if (event.key === 'ArrowLeft') next = (current - 1 + tabs.length) % tabs.length;
+      else if (event.key === 'Home') next = 0;
+      else if (event.key === 'End') next = tabs.length - 1;
+      else return;
+      event.preventDefault();
+      tabs[next].focus();
+      tabs[next].click();
     });
 
     this._ensureProjectControls();
@@ -285,7 +300,9 @@ export class HomeScreen {
       const active = button.dataset.libraryKind === this.activeKind;
       button.classList.toggle('is-active', active);
       button.setAttribute('aria-selected', String(active));
+      button.tabIndex = active ? 0 : -1;
     }
+    if (this.dom.characterList) this.dom.characterList.setAttribute('aria-labelledby', `home-library-tab-${this.activeKind}`);
     this.dom.add3d.hidden = this.activeKind !== '3d';
     this.dom.add2d.hidden = this.activeKind !== '2d';
     this.dom.spriteSettings.hidden = this.activeKind !== '2d';
@@ -400,6 +417,7 @@ export class HomeScreen {
 
   _showDialog(action, projectId = null) {
     this.pendingAction = { action, projectId };
+    this.dom.dialogError.hidden = true; this.dom.dialogError.textContent = '';
     const project = this.projects.find((item) => item.id === projectId);
     const titles = {
       create: ['YENİ SAHNE', 'Yeni Proje', 'Projene bir ad ver.'],
@@ -474,7 +492,9 @@ export class HomeScreen {
         this._openProject(projectId, item);
       }
     } catch (error) {
-      this._setError(this.dom.projectError, error.message || 'İşlem tamamlanamadı.');
+      this.dom.dialogError.textContent = error.message || 'İşlem tamamlanamadı.';
+      this.dom.dialogError.hidden = false;
+      this.dom.dialogError.focus();
     }
   }
 

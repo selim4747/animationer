@@ -56,6 +56,7 @@ export class TimelineManager {
     // Oynatma Durumu
     this.isPlaying = false;
     this.isPaused = false;
+    this.isSingleStepRunning = false;
     this.currentStepIndex = -1;
     this._abortPlayback = false;
     this._pausePromiseResolver = null;
@@ -142,6 +143,10 @@ export class TimelineManager {
     return { steps: this._copySteps(this.steps), playMode: this.playMode };
   }
 
+  _isMutationLocked() {
+    return this.isPlaying || this.isSingleStepRunning;
+  }
+
   _recordStructuralEdit() {
     this._undoStack.push(this._captureTimeline());
     if (this._undoStack.length > this._historyLimit) this._undoStack.shift();
@@ -157,7 +162,7 @@ export class TimelineManager {
 
   /** Undo the latest structural timeline edit; returns false if unavailable. */
   undo() {
-    if (this.isPlaying || this._undoStack.length === 0) return false;
+    if (this._isMutationLocked() || this._undoStack.length === 0) return false;
     this._redoStack.push(this._captureTimeline());
     this._restoreTimeline(this._undoStack.pop());
     return true;
@@ -165,7 +170,7 @@ export class TimelineManager {
 
   /** Redo the latest undone structural timeline edit; returns false if unavailable. */
   redo() {
-    if (this.isPlaying || this._redoStack.length === 0) return false;
+    if (this._isMutationLocked() || this._redoStack.length === 0) return false;
     this._undoStack.push(this._captureTimeline());
     if (this._undoStack.length > this._historyLimit) this._undoStack.shift();
     this._restoreTimeline(this._redoStack.pop());
@@ -176,6 +181,7 @@ export class TimelineManager {
     this.onStateChange({
       isPlaying: this.isPlaying,
       isPaused: this.isPaused,
+      isSingleStepRunning: this.isSingleStepRunning,
       currentStepIndex: this.currentStepIndex,
       steps: [...this.steps],
       isRecording: this.isRecording,
@@ -188,6 +194,7 @@ export class TimelineManager {
    * @param {boolean} [enable]
    */
   toggleRecordMode(enable) {
+    if (this._isMutationLocked()) return this.isRecording;
     this.isRecording = enable !== undefined ? enable : !this.isRecording;
     this._notify();
     return this.isRecording;
@@ -199,7 +206,7 @@ export class TimelineManager {
    * @param {Object} data
    */
   recordClickAsStep(type, data, options = {}) {
-    if (!this.isRecording) return;
+    if (!this.isRecording || this._isMutationLocked()) return null;
 
     let title = 'Yeni Eylem';
     if (type === ACTION_TYPES.MOVE_TO) {
@@ -235,6 +242,7 @@ export class TimelineManager {
    * Manuel adım ekleme
    */
   addStep(type, data = {}, title = '', options = {}) {
+    if (this._isMutationLocked()) return null;
     const step = {
       id: 'step-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
       type,
@@ -250,7 +258,7 @@ export class TimelineManager {
 
   /** Validate an entire sequence before appending it as one undoable edit. */
   appendSequence(sequenceInput) {
-    if (this.isPlaying) throw new Error('Oynatma sırasında hazır akış eklenemez.');
+    if (this._isMutationLocked()) throw new Error('Oynatma sırasında hazır akış eklenemez.');
     const candidate = new this.constructor({ initialDemo: false });
     candidate.importSequence(sequenceInput);
     if (!candidate.steps.length) return 0;
@@ -265,7 +273,7 @@ export class TimelineManager {
 
   /** Clone a step immediately after its source; returns null for an invalid index. */
   cloneStep(index) {
-    if (!Number.isInteger(index) || index < 0 || index >= this.steps.length) return null;
+    if (this._isMutationLocked() || !Number.isInteger(index) || index < 0 || index >= this.steps.length) return null;
     const clone = this._copySteps([this.steps[index]])[0];
     clone.id = 'step-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
     this._recordStructuralEdit();
@@ -275,7 +283,7 @@ export class TimelineManager {
   }
 
   updateStep(index, patch = {}) {
-    if (this.isPlaying || !Number.isInteger(index) || index < 0 || index >= this.steps.length) return false;
+    if (this._isMutationLocked() || !Number.isInteger(index) || index < 0 || index >= this.steps.length) return false;
     const current = this.steps[index];
     const next = { ...current };
     if (typeof patch.title === 'string') {
@@ -320,8 +328,10 @@ export class TimelineManager {
   }
 
   setPlayMode(mode) {
+    if (this._isMutationLocked()) return false;
     this.playMode = mode === 'scheduled' ? 'scheduled' : 'sequential';
     this._notify();
+    return true;
   }
 
   _getDefaultTitleForType(type, data) {
@@ -354,42 +364,45 @@ export class TimelineManager {
    * @param {number} index
    */
   removeStep(index) {
-    if (index >= 0 && index < this.steps.length) {
-      this._recordStructuralEdit();
-      this.steps.splice(index, 1);
-      if (this.currentStepIndex >= this.steps.length) {
-        this.currentStepIndex = Math.max(-1, this.steps.length - 1);
-      }
-      this._notify();
-    }
+    if (this._isMutationLocked() || !Number.isInteger(index) || index < 0 || index >= this.steps.length) return false;
+    this._recordStructuralEdit();
+    this.steps.splice(index, 1);
+    if (this.currentStepIndex >= this.steps.length) this.currentStepIndex = Math.max(-1, this.steps.length - 1);
+    this._notify();
+    return true;
   }
 
   /**
    * Adım sırasını değiştirme
    */
   moveStep(fromIndex, toIndex) {
+    if (this._isMutationLocked()) return false;
     if (
       fromIndex >= 0 &&
       fromIndex < this.steps.length &&
       toIndex >= 0 &&
       toIndex < this.steps.length
     ) {
-      if (fromIndex === toIndex) return;
+      if (fromIndex === toIndex) return true;
       this._recordStructuralEdit();
       const item = this.steps.splice(fromIndex, 1)[0];
       this.steps.splice(toIndex, 0, item);
       this._notify();
+      return true;
     }
+    return false;
   }
 
   /**
    * Kuyruğu temizleme
    */
   clear() {
+    if (this._isMutationLocked()) return false;
     if (this.steps.length) this._recordStructuralEdit();
-    this.stop();
     this.steps = [];
+    this.currentStepIndex = -1;
     this._notify();
+    return true;
   }
 
   /**
@@ -546,9 +559,42 @@ export class TimelineManager {
     return !failed && !this._abortPlayback && playbackId === this._playbackId;
   }
 
+  /** Execute one timeline step as a cancellable, isolated playback operation. */
+  async runStep(index) {
+    if (this._isMutationLocked() || !Number.isInteger(index) || index < 0 || index >= this.steps.length) return false;
+
+    const playbackId = ++this._playbackId;
+    this._abortPlayback = false;
+    this.lastPlaybackError = null;
+    this.isSingleStepRunning = true;
+    this.isPlaying = true;
+    this.isPaused = false;
+    this.currentStepIndex = index;
+    this._notify();
+
+    let succeeded = false;
+    try {
+      await this._executeStep(this.steps[index], playbackId);
+      succeeded = !this._abortPlayback && playbackId === this._playbackId;
+    } catch (error) {
+      this.lastPlaybackError = error?.message || 'Timeline adımı çalıştırılamadı.';
+      console.error('Tek timeline adımı çalıştırma hatası:', error);
+    } finally {
+      if (playbackId === this._playbackId) {
+        this.cameraManager?.releaseTimelinePose?.();
+        this.isSingleStepRunning = false;
+        this.isPlaying = false;
+        this.isPaused = false;
+        this.currentStepIndex = -1;
+        this._notify();
+      }
+    }
+    return succeeded;
+  }
+
   /**
-   * Tek bir adımı çalıştırır
-   * @private
+    * Tek bir adımı çalıştırır
+    * @private
    */
   async _executeStep(step, playbackId = this._playbackId) {
     if (!step) return;
@@ -705,6 +751,7 @@ export class TimelineManager {
     this._abortPlayback = true;
     this.isPlaying = false;
     this.isPaused = false;
+    this.isSingleStepRunning = false;
     this.currentStepIndex = -1;
     this.character?.pauseAll?.(false);
     this.character?.stopAllMotions?.();
@@ -749,6 +796,7 @@ export class TimelineManager {
    * @param {string|Object} jsonInput
    */
   importSequence(jsonInput) {
+    if (this._isMutationLocked()) throw new Error('Oynatma sırasında zaman çizelgesi içe aktarılamaz.');
     try {
       const data = typeof jsonInput === 'string' ? JSON.parse(jsonInput) : jsonInput;
       const rawSteps = Array.isArray(data) ? data : data?.steps;

@@ -107,11 +107,40 @@ export class UIManager {
     if (this.dom.panelBody) {
       this.dom.panelBody.inert = true;
       this.dom.panelBody.setAttribute('aria-busy', 'true');
-      this.autosave.ready.finally(() => {
+      if (this.dom.restoreNotice) {
+        this.dom.restoreNotice.hidden = false;
+        this.dom.restoreNotice.setAttribute('role', 'status');
+        this.dom.restoreNotice.textContent = 'Proje verileri yükleniyor… Düzenleme bu sırada geçici olarak kilitli.';
+      }
+      this.autosave.ready.then(() => {
         this.dom.panelBody.inert = false;
         this.dom.panelBody.removeAttribute('aria-busy');
+        if (this.dom.restoreNotice) this.dom.restoreNotice.hidden = true;
         if (this.dom.sceneSkyColor && this.sceneHelpers.scene?.background?.getHexString) this.dom.sceneSkyColor.value = `#${this.sceneHelpers.scene.background.getHexString()}`;
-      }).catch(() => {});
+      }, (error) => {
+        this.dom.panelBody.inert = true;
+        this.dom.panelBody.removeAttribute('aria-busy');
+        const notice = this.dom.restoreNotice;
+        if (!notice) return;
+        notice.replaceChildren();
+        notice.setAttribute('role', 'alert');
+        const message = document.createElement('p');
+        message.textContent = `Proje yüklenemedi; kayıtlı verinin üzerine yazmamak için düzenleme kilitli. ${error?.message || ''}`.trim();
+        const returnButton = document.createElement('button');
+        returnButton.type = 'button';
+        returnButton.className = 'hud-btn';
+        returnButton.textContent = 'Ana ekrana dön';
+        returnButton.addEventListener('click', async () => {
+          returnButton.disabled = true;
+          try { await this.onReturnHome(); }
+          catch (returnError) {
+            returnButton.disabled = false;
+            this.showToast(`Ana ekrana dönülemedi: ${returnError?.message || 'bilinmeyen hata'}`);
+          }
+        });
+        notice.append(message, returnButton);
+        notice.hidden = false;
+      });
     }
 
     // İlk durum senkronizasyonu
@@ -341,6 +370,7 @@ export class UIManager {
       toastProgress: document.getElementById('toast-progress'),
       toastAction: document.getElementById('toast-action'),
       modalHelp: document.getElementById('modal-help'),
+      restoreNotice: document.getElementById('studio-restore-notice'),
       btnOpenHelp: document.getElementById('btn-open-help'),
       btnCloseHelp: document.getElementById('btn-close-help'),
       dragOverlay: document.getElementById('drag-overlay'),
@@ -1387,15 +1417,39 @@ export class UIManager {
       });
     }
 
-    // Yardım Modalı
+    // Accessible quick-start dialog with focus return, Escape and a contained tab loop.
     if (d.btnOpenHelp && d.modalHelp) {
-      d.btnOpenHelp.addEventListener('click', () => {
-        d.modalHelp.classList.add('active');
-      });
-    }
-    if (d.btnCloseHelp && d.modalHelp) {
-      d.btnCloseHelp.addEventListener('click', () => {
+      let returnFocus = null;
+      const closeHelp = () => {
         d.modalHelp.classList.remove('active');
+        d.modalHelp.setAttribute('aria-hidden', 'true');
+        d.modalHelp.hidden = true;
+        if (returnFocus?.isConnected) returnFocus.focus();
+      };
+      d.btnOpenHelp.addEventListener('click', () => {
+        returnFocus = document.activeElement;
+        d.modalHelp.hidden = false;
+        d.modalHelp.setAttribute('aria-hidden', 'false');
+        d.modalHelp.classList.add('active');
+        d.btnCloseHelp?.focus();
+      });
+      d.btnCloseHelp?.addEventListener('click', closeHelp);
+      d.modalHelp.addEventListener('click', (event) => {
+        if (event.target === d.modalHelp) closeHelp();
+      });
+      d.modalHelp.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeHelp();
+          return;
+        }
+        if (event.key !== 'Tab') return;
+        const focusable = [...d.modalHelp.querySelectorAll('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')];
+        if (!focusable.length) { event.preventDefault(); return; }
+        const first = focusable[0];
+        const last = focusable.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
       });
     }
   }
@@ -1872,9 +1926,20 @@ export class UIManager {
   updateTimelineUI() {
     const list = this.dom.timelineListContainer;
     if (!list) return;
-    if (this.dom.timelinePlayMode) this.dom.timelinePlayMode.value = this.timeline.playMode;
-    if (this.dom.btnTimelineUndo) this.dom.btnTimelineUndo.disabled = this.timeline.isPlaying || !this.timeline._undoStack?.length;
-    if (this.dom.btnTimelineRedo) this.dom.btnTimelineRedo.disabled = this.timeline.isPlaying || !this.timeline._redoStack?.length;
+    const playbackLocked = this.timeline.isPlaying || this.timeline.isSingleStepRunning;
+    if (this.dom.timelinePlayMode) {
+      this.dom.timelinePlayMode.value = this.timeline.playMode;
+      this.dom.timelinePlayMode.disabled = playbackLocked;
+    }
+    if (this.dom.btnTimelinePlay) this.dom.btnTimelinePlay.disabled = (playbackLocked && !this.timeline.isPaused) || this.timeline.steps.length === 0;
+    if (this.dom.btnQuickPlay) this.dom.btnQuickPlay.disabled = (playbackLocked && !this.timeline.isPaused) || this.timeline.steps.length === 0;
+    if (this.dom.btnTimelinePause) this.dom.btnTimelinePause.disabled = !playbackLocked || this.timeline.isPaused;
+    if (this.dom.btnTimelineStop) this.dom.btnTimelineStop.disabled = !playbackLocked;
+    for (const control of [this.dom.btnToggleRecord, this.dom.btnAddWaitStep, this.dom.btnAddDoorStep, this.dom.btnAddCamStep, this.dom.btnAddEmoteStep, this.dom.btnImportJSON, this.dom.btnClearTimeline, this.dom.btnAddFollowStep, this.dom.btnAddHideStep, this.dom.btnAddMotionTemplate, this.dom.motionTemplate, this.dom.timelineStartAt, this.dom.timelineDuration, this.dom.timelineFollowTarget]) {
+      if (control) control.disabled = playbackLocked;
+    }
+    if (this.dom.btnTimelineUndo) this.dom.btnTimelineUndo.disabled = playbackLocked || !this.timeline._undoStack?.length;
+    if (this.dom.btnTimelineRedo) this.dom.btnTimelineRedo.disabled = playbackLocked || !this.timeline._redoStack?.length;
 
     list.innerHTML = '';
 
@@ -2003,6 +2068,9 @@ export class UIManager {
       for (const control of editRow.children) control.addEventListener('click', (event) => event.stopPropagation());
       item.querySelector('.step-content').appendChild(editRow);
       item.querySelector('.step-title').textContent = step.title || 'Adım';
+      for (const control of item.querySelectorAll('.step-actions button, .step-content input, .step-content select, .step-run-button')) {
+        control.disabled = playbackLocked;
+      }
       const actorName = this.characters?.getActor?.(step.actorId)?.name || this.sprites?.getActor?.(step.actorId)?.name || (step.actorId ? 'Karakter' : 'Aktif karakter');
       const meta = [actorName];
       if (Number.isFinite(step.startAt)) meta.push(`başlangıç ${step.startAt}s`);
@@ -2029,11 +2097,11 @@ export class UIManager {
 
       const runButton = item.querySelector('.step-run-button');
       runButton.setAttribute('aria-label', `Çalıştır: ${idx + 1}. adım, ${step.title || 'Adım'}`);
-      runButton.addEventListener('click', () => {
+      runButton.addEventListener('click', async () => {
         if (this.timeline.isPlaying) return;
-        this.timeline.currentStepIndex = idx;
-        this.timeline._executeStep(step);
-        this.showToast(`${idx + 1}. Adım Çalıştırıldı: ${step.title}`);
+        const succeeded = await this.timeline.runStep(idx);
+        if (succeeded) this.showToast(`${idx + 1}. adım tamamlandı: ${step.title || 'Adım'}`);
+        else this.showToast(this.timeline.lastPlaybackError || 'Adım çalıştırma iptal edildi.');
       });
 
       list.appendChild(item);
