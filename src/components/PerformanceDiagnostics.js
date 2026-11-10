@@ -44,7 +44,8 @@ export class PerformanceDiagnostics {
 
   recordFrame(frameTimeMs, rendererInfo, now = this.now()) {
     if (!this.enabled) return false;
-    const safeFrameTime = Number.isFinite(frameTimeMs) && frameTimeMs >= 0 ? frameTimeMs : 0;
+    if (!Number.isFinite(frameTimeMs) || frameTimeMs <= 0) return false;
+    const safeFrameTime = frameTimeMs;
     this._frameCount += 1;
     this._frameTimeTotal += safeFrameTime;
     if (this._lastUpdateAt === null) this._lastUpdateAt = now;

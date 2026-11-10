@@ -130,11 +130,14 @@
             <button id="home-create-project" class="home-primary-button" type="button">＋ Yeni Proje</button>
           </div>
 
-          <div class="home-archive-controls" aria-label="Yedekleme ve içe aktarma">
+          <details class="home-archive-disclosure">
+            <summary>Yedekleme ve içe aktarma</summary>
+            <div class="home-archive-controls" aria-label="Yedekleme ve içe aktarma">
             <button id="home-import-project" class="home-small-button" type="button">Proje yedeğini yeni proje olarak içe aktar</button>
             <button id="home-export-workspace" class="home-small-button" type="button">Tüm çalışma alanını dışa aktar</button>
             <button id="home-import-workspace" class="home-small-button" type="button">Çalışma alanı arşivini içe aktar</button>
-          </div>
+            </div>
+          </details>
           <p id="home-archive-status" role="status" aria-live="polite" hidden></p>
           <p id="home-archive-error" role="alert" hidden></p>
 
@@ -153,8 +156,8 @@
           </div>
           <div class="home-library-toolbar">
             <div class="home-library-tabs" role="tablist" aria-label="Karakter biçimi">
-              <button type="button" class="home-library-tab is-active" data-library-kind="3d" role="tab" aria-selected="true">3D Modeller</button>
-              <button type="button" class="home-library-tab" data-library-kind="2d" role="tab" aria-selected="false">2D Karakterler</button>
+              <button type="button" id="home-library-tab-3d" class="home-library-tab is-active" data-library-kind="3d" role="tab" aria-selected="true" aria-controls="home-character-list" tabindex="0">3D Modeller</button>
+              <button type="button" id="home-library-tab-2d" class="home-library-tab" data-library-kind="2d" role="tab" aria-selected="false" aria-controls="home-character-list" tabindex="-1">2D Karakterler</button>
             </div>
             <div class="home-library-upload-actions">
               <button id="home-add-3d" class="home-small-button" type="button">＋ GLB ekle</button>
@@ -173,7 +176,7 @@
             <div id="home-preview-placeholder" class="home-preview-placeholder"><span>3D / 2D</span><p>Önizlemek için kitaplıktan bir karakter seç.</p></div>
             <div class="home-preview-caption"><strong id="home-preview-name">Karakter seçilmedi</strong><span id="home-preview-detail">Yerel karakter kitaplığı</span></div>
           </div>
-          <div id="home-character-list" class="home-character-grid" aria-live="polite"></div>
+          <div id="home-character-list" class="home-character-grid" role="tabpanel" aria-labelledby="home-library-tab-3d" tabindex="0" aria-live="polite"></div>
           <p id="home-character-empty" class="home-empty-state compact" hidden>Bu kitaplık henüz boş. Dosya ekleyerek karakterlerini burada sakla.</p>
           <p id="home-library-error" class="home-error-state" role="alert" hidden></p>
         </aside>
@@ -183,11 +186,12 @@
       <input id="home-sprite-picker" type="file" accept="image/png,image/webp,image/jpeg" hidden />
       <input id="home-project-backup-picker" type="file" accept=".json,application/json" aria-label="Animationer proje yedeği seç" hidden />
       <input id="home-workspace-archive-picker" type="file" accept=".json,application/json" aria-label="Animationer çalışma alanı arşivi seç" hidden />
-      <dialog id="home-dialog" class="home-dialog">
+      <dialog id="home-dialog" class="home-dialog" aria-labelledby="home-dialog-title" aria-describedby="home-dialog-message">
         <form id="home-dialog-form" method="dialog">
           <p id="home-dialog-eyebrow" class="home-eyebrow">PROJE</p>
           <h2 id="home-dialog-title">Yeni Proje</h2>
           <p id="home-dialog-message" class="home-dialog-message">Sahnen için bir ad seç.</p>
+          <p id="home-dialog-error" class="home-error-state home-dialog-error" role="alert" tabindex="-1" hidden></p>
           <label id="home-dialog-name-label" class="home-dialog-field">Proje adı<input id="home-dialog-name" maxlength="64" autocomplete="off" /></label>
           <label id="home-dialog-template-label" class="home-dialog-field" hidden>Başlangıç sahnesi
             <select id="home-dialog-template">
@@ -207,6 +211,23 @@
       </dialog>
       <div id="home-toast" class="home-toast" role="status" aria-live="polite"></div>
     </main>
+    <div id="modal-help" class="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-dialog-title" aria-describedby="help-dialog-description" aria-hidden="true" hidden>
+      <section class="help-dialog" tabindex="-1">
+        <header class="help-dialog-header">
+          <div><p class="home-eyebrow">HIZLI REHBER</p><h2 id="help-dialog-title">Sahneni oluştur ve dışa aktar</h2></div>
+          <button id="btn-close-help" class="help-dialog-close" type="button" aria-label="Yardımı kapat">Kapat</button>
+        </header>
+        <p id="help-dialog-description">Animationer; sahne düzenleme, kamera hareketleri ve zaman çizelgesiyle kısa 2D/3D sekanslar hazırlamak için kullanılır.</p>
+        <ol class="help-dialog-steps">
+          <li><strong>Proje:</strong> Ana ekrandan boş sahne veya hazır başlangıç şablonu seç.</li>
+          <li><strong>Sahne:</strong> Nesne ekle, seç ve renk/konum/ölçek ayarlarını düzenle. Sahne Geri Al, bu değişiklikleri geri alır.</li>
+          <li><strong>Reji:</strong> Adım ekle veya kaydı aç; adımları sırala, sürelerini ayarla ve tek tek ya da sırayla oynat.</li>
+          <li><strong>Kamera:</strong> Görünümü ayarla, kamera ana karesi ekle; geçişler zaman çizelgesinde oynatılır.</li>
+          <li><strong>Dışa aktar:</strong> Render sekmesinde çözünürlük ve arka planı seçip ekran görüntüsü veya video kaydet.</li>
+        </ol>
+        <p class="help-dialog-tip">Kısayol: <kbd>Space</kbd> oynat/duraklat, <kbd>H</kbd> stüdyo panelini gizle/göster. Mobilde sahne için dokunup sürükle.</p>
+      </section>
+    </div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

@@ -106,3 +106,30 @@ test('per-step character assignment can be explicitly cleared to restore selecte
   assert.equal(timeline.undo(), true);
   assert.equal(timeline.steps[0].actorId, 'character-2');
 });
+
+
+test('timeline rejects all structural edits and imports while playback is active', () => {
+  const timeline = new TimelineManager({ initialDemo: false });
+  timeline.addStep(ACTION_TYPES.WAIT, { duration: 1 }, 'First');
+  timeline.addStep(ACTION_TYPES.WAIT, { duration: 2 }, 'Second');
+  timeline.isRecording = true;
+  const before = structuredClone(timeline.steps);
+  const historyBefore = timeline._undoStack.length;
+  timeline.isPlaying = true;
+
+  assert.equal(timeline.moveStep(1, 0), false);
+  assert.equal(timeline.removeStep(0), false);
+  assert.equal(timeline.cloneStep(0), null);
+  assert.equal(timeline.addStep(ACTION_TYPES.WAIT, { duration: 3 }), null);
+  assert.equal(timeline.recordClickAsStep(ACTION_TYPES.WAIT, { duration: 4 }), null);
+  assert.equal(timeline.updateStep(0, { title: 'Changed' }), false);
+  assert.equal(timeline.setPlayMode('scheduled'), false);
+  assert.equal(timeline.toggleRecordMode(false), true);
+  assert.equal(timeline.clear(), false);
+  assert.equal(timeline.undo(), false);
+  assert.equal(timeline.redo(), false);
+  assert.throws(() => timeline.appendSequence({ steps: [{ type: ACTION_TYPES.WAIT, data: { duration: 1 } }] }), /oynatma/i);
+  assert.throws(() => timeline.importSequence({ steps: [{ type: ACTION_TYPES.WAIT, data: { duration: 1 } }] }), /oynatma/i);
+  assert.deepEqual(timeline.steps, before);
+  assert.equal(timeline._undoStack.length, historyBefore);
+});
