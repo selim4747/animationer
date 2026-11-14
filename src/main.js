@@ -250,14 +250,24 @@ class App {
         }
       },
       onBeforeCapture: ({ backgroundMode, backgroundColor }) => {
-        if (backgroundMode !== 'solid') return null;
-        const original = this.scene.background;
-        const override = new THREE.Color(backgroundColor);
-        this.scene.background = override;
-        return { original, override };
+        const token = { sceneBackground: this.scene.background, spriteBackground: this.spriteScene.background, pure2DBackground: this.pure2DBackground.clone(), clearColor: this.renderer.getClearColor(new THREE.Color()).clone() };
+        if (backgroundMode === 'solid') {
+          const override = new THREE.Color(backgroundColor);
+          if (this.pure2DMode) {
+            this.pure2DBackground = override;
+            this.spriteScene.background = override;
+          } else {
+            this.scene.background = override;
+          }
+        }
+        return token;
       },
       onAfterCapture: (token) => {
-        if (token && this.scene.background === token.override) this.scene.background = token.original;
+        if (!token) return;
+        this.scene.background = token.sceneBackground;
+        this.spriteScene.background = token.spriteBackground;
+        this.pure2DBackground = token.pure2DBackground;
+        this.renderer.setClearColor(token.clearColor, 1);
       },
     });
   }
@@ -629,8 +639,10 @@ class App {
     }
     if (this.pure2DMode) {
       this.spriteScene.background = this.pure2DBackground;
+      this.renderer.setClearColor(this.pure2DBackground, 1);
     } else {
       this.spriteScene.background = null;
+      this.renderer.setClearColor(0x080808, 1);
     }
     this.uiManager?.showToast?.(
       this.pure2DMode

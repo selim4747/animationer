@@ -940,9 +940,10 @@ export class TimelineManager {
         }
         const title = typeof step.title === 'string' ? step.title.slice(0, 160) : '';
         const actorId = step.actorId === undefined ? undefined : (typeof step.actorId === 'string' && step.actorId.length <= 128 ? step.actorId : null);
+        const layerId = step.layerId === undefined ? undefined : (typeof step.layerId === 'string' && step.layerId.length <= 128 ? step.layerId : null);
         const startAt = step.startAt === undefined ? undefined : Number(step.startAt);
         const duration = step.duration === undefined ? undefined : Number(step.duration);
-        if (actorId === null || (startAt !== undefined && (!Number.isFinite(startAt) || startAt < 0 || startAt > 3600))) {
+        if (actorId === null || layerId === null || (startAt !== undefined && (!Number.isFinite(startAt) || startAt < 0 || startAt > 3600))) {
           throw new Error(`${index + 1}. adımın karakteri veya başlangıç zamanı geçersiz.`);
         }
         if (step.type === ACTION_TYPES.PLAY_SPRITE_ANIMATION && !actorId) {
@@ -960,6 +961,7 @@ export class TimelineManager {
           title: title || this._getDefaultTitleForType(step.type, cleanData),
           data: cleanData,
           ...(actorId === undefined ? {} : { actorId }),
+          ...(layerId === undefined ? {} : { layerId }),
           ...(startAt === undefined ? {} : { startAt }),
           ...(duration === undefined ? {} : { duration }),
         };

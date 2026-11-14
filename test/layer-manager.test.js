@@ -22,6 +22,8 @@ test('LayerManager adds layers, toggles visibility, and reorders', async () => {
   const id1 = await manager.addLayer(file, { name: 'Arka' });
   const id2 = await manager.addLayer(file, { name: 'Ön' });
 
+  assert.equal(id1, 'layer-0');
+  assert.equal(manager.getDefaultLayerId(), 'layer-0');
   assert.equal(manager.layers.length, 2);
   assert.equal(manager.list()[1].name, 'Ön');
 
@@ -34,6 +36,8 @@ test('LayerManager adds layers, toggles visibility, and reorders', async () => {
 
   manager.setOpacity(id2, 0.4);
   assert.equal(manager.list().find((l) => l.id === id2).opacity, 0.4);
+  assert.equal(manager.setOpacity(id2, Number.NaN), false);
+  assert.equal(manager.setPosition(id2, Number.NaN, 10), false);
 });
 
 test('Timeline applies layer visibility and opacity steps during playback', async () => {

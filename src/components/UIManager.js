@@ -91,6 +91,7 @@ export class UIManager {
     this.autosave = new AutosaveCoordinator({
       timeline: this.timeline,
       sprites: this.sprites,
+      layers: this.layers,
       characters: this.characters,
       mapLoader: this.mapLoader,
       worldSprites: this.worldSprites,
@@ -630,7 +631,7 @@ export class UIManager {
             if (!model) throw new Error(`3D karakter kaynağı kitaplıkta bulunamadı (${id}).`);
             models.push(model);
           }
-          const totalBytes = calculateProjectBytes(record.timeline, record.sprites, record.mapAsset, record.worldCharacterTemplates)
+          const totalBytes = calculateProjectBytes(record.timeline, record.sprites, record.mapAsset, record.worldCharacterTemplates, record.layers)
             + models.reduce((sum, model) => sum + (model.blob?.size || 0), 0);
           const exportLimit = getDevicePerformanceProfile(getDeviceMemoryGiB()).maxProjectAssetExportBytes;
           if (totalBytes > exportLimit) throw new Error(`Bu cihazda proje JSON görsel varlık sınırı ${Math.floor(exportLimit / (1024 * 1024))} MiB.`);
@@ -644,6 +645,7 @@ export class UIManager {
             schemaVersion: PROJECT_SCHEMA_VERSION, projectVersion: PROJECT_SCHEMA_VERSION,
             updatedAt: new Date().toISOString(),
             sprites: await portableAssets(record.sprites),
+            layers: await portableAssets(record.layers || []),
             mapAsset: portableMap,
             worldCharacterTemplates: await portableAssets(record.worldCharacterTemplates),
             portableModels,
@@ -681,13 +683,17 @@ export class UIManager {
                 if (![1, 2, 3, 4, PROJECT_SCHEMA_VERSION].includes(payload.schemaVersion || payload.projectVersion || 1)) throw new Error('Bu proje sürümü desteklenmiyor.');
                 const migrated = migrateProjectRecord(payload);
                 const portableModelBytes = (payload.portableModels || []).reduce((sum, model) => sum + (typeof model.data === 'string' ? Math.floor(model.data.length * 3 / 4) : 0), 0);
-                const importBytes = calculateProjectBytes(migrated.timeline, migrated.sprites, migrated.mapAsset, migrated.worldCharacterTemplates) + portableModelBytes;
+                const importBytes = calculateProjectBytes(migrated.timeline, migrated.sprites, migrated.mapAsset, migrated.worldCharacterTemplates, migrated.layers) + portableModelBytes;
                 const importLimit = getDevicePerformanceProfile(getDeviceMemoryGiB()).maxProjectAssetExportBytes;
                 if (importBytes > importLimit) throw new Error(`Bu proje cihazın ${Math.floor(importLimit / (1024 * 1024))} MiB görsel bellek sınırını aşıyor; daha küçük dosyalarla yeniden dışa aktarın.`);
                 const assets = [];
                 for (const asset of migrated.sprites) assets.push(asset.data
                   ? { ...asset, blob: base64ToBlob(asset.data, asset.mimeType), data: undefined }
                   : asset);
+                const layers = [];
+                for (const layer of (migrated.layers || [])) layers.push(layer.data
+                  ? { ...layer, blob: base64ToBlob(layer.data, layer.mimeType), data: undefined }
+                  : layer);
                 const worldCharacterTemplates = [];
                 for (const template of migrated.worldCharacterTemplates) worldCharacterTemplates.push(template.data
                   ? { ...template, blob: base64ToBlob(template.data, template.mimeType), data: undefined }
@@ -707,7 +713,7 @@ export class UIManager {
                 const characters3d = (migrated.characters3d || []).map((actor) => ({
                   ...actor, modelId: modelIdMap.get(actor.modelId) || actor.modelId,
                 }));
-                const normalized = migrateProjectRecord({ ...migrated, sprites: assets, worldCharacterTemplates, mapAsset, characters3d });
+                const normalized = migrateProjectRecord({ ...migrated, sprites: assets, layers, worldCharacterTemplates, mapAsset, characters3d });
                 const assetIds = this.sprites.constructor.validateProjectAssets(assets);
                 const candidateTimeline = new this.timeline.constructor({});
                 candidateTimeline.importSequence(normalized.timeline);
@@ -718,6 +724,7 @@ export class UIManager {
                 // Each resource manager stages/decode-validates its input before replacing that resource.
                 await this.worldSprites?.importProjectState?.({ templates: normalized.worldCharacterTemplates, actors: normalized.worldCharacters }, { replaceTemplates: true });
                 await this.sprites.importAssets(assets);
+                await this.layers?.importAssets?.(layers);
                 await this.mapLoader?.restoreProjectState?.(mapAsset);
                 await this.mapLoader?.restoreWallBoxes?.(normalized.wallBoxes || []);
                 await this.characters?.restoreProjectState?.({ actors: normalized.characters3d || [], selectedId: normalized.selectedCharacter3dId });
@@ -737,6 +744,7 @@ export class UIManager {
                 try {
                   await this.worldSprites?.importProjectState?.({ templates: previousImportState.worldCharacterTemplates, actors: previousImportState.worldCharacters }, { replaceTemplates: true });
                   await this.sprites.importAssets(previousImportState.sprites);
+                  await this.layers?.importAssets?.(previousImportState.layers || []);
                   await this.mapLoader?.restoreProjectState?.(previousImportState.mapAsset);
                   await this.mapLoader?.restoreWallBoxes?.(previousImportState.wallBoxes || []);
                   await this.characters?.restoreProjectState?.({ actors: previousImportState.characters3d, selectedId: previousImportState.selectedCharacter3dId });
@@ -1949,7 +1957,7 @@ export class UIManager {
       if (layers.length === 0) {
         const option = document.createElement('option');
         option.value = '';
-        option.textContent = 'Önce katman ekleyin';
+        option.textContent = 'Varsayılan layer-0 · Görsel ekleyin';
         select.appendChild(option);
       } else {
         layers.forEach((layer) => {
