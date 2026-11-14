@@ -35,6 +35,9 @@
           <button class="studio-tab-btn" id="studio-tab-sprites-tab" role="tab" aria-controls="tab-sprites" aria-selected="false" tabindex="-1" data-tab="tab-sprites" title="2D Spritesheet Animasyonu">
             ▦ 2D
           </button>
+          <button class="studio-tab-btn" id="studio-tab-layers-tab" role="tab" aria-controls="tab-layers" aria-selected="false" tabindex="-1" data-tab="tab-layers" title="2D Sahne & Katmanlar">
+            ▦ KATMAN
+          </button>
           <button class="studio-tab-btn" id="studio-tab-render-tab" role="tab" aria-controls="tab-render" aria-selected="false" tabindex="-1" data-tab="tab-render" title="Dışa Aktar / Render">
             💾 RENDER
           </button>
@@ -504,7 +507,47 @@
         <!-- ==========================================
              SEKME 6: DIŞA AKTAR / RENDER
              ========================================== -->
-        <div id="tab-render" class="studio-tab-pane" role="tabpanel" aria-labelledby="studio-tab-render-tab" tabindex="0" style="display: none;">
+
+        <!-- ==========================================
+             SEKME: 2D SAHNE & KATMANLAR
+             ========================================== -->
+        <div id="tab-layers" class="studio-tab-pane" role="tabpanel" aria-labelledby="studio-tab-layers-tab" tabindex="0" style="display: none;">
+          <div class="studio-info-text">Saf 2D sahne aç: boş veya beyaz (veya istediğin renkte) arka plan. 3D sahne gizlenir. Katmanları istediğin gibi ekle, sırala, gizle veya opaklığını değiştir — animasyon oynarken bile anında uygulanır. Zaman çizelgesine de ekleyebilirsin.</div>
+          <div class="studio-ctrl-row">
+            <button id="btn-open-2d-scene" class="hud-btn primary flex-grow" type="button">2D Sahne Aç (Boş/Beyaz)</button>
+            <button id="btn-close-2d-scene" class="hud-btn" type="button">3D'ye Dön</button>
+          </div>
+          <div class="studio-ctrl-row">
+            <label class="timeline-field flex-grow">Arka plan rengi
+              <input id="layer-background-color" type="color" value="#ffffff" />
+            </label>
+            <button id="btn-clear-layers" class="hud-btn subtle" type="button">Katmanları Temizle</button>
+            <button id="btn-add-layer" class="hud-btn flex-grow" type="button">Katman Ekle</button>
+            <input id="file-picker-layer" type="file" accept="image/png,image/webp,image/jpeg,.png,.webp,.jpg,.jpeg" style="display: none;" />
+          </div>
+          <label class="timeline-field">Katman
+            <select id="layer-select" class="hud-select"></select>
+          </label>
+          <div class="studio-ctrl-row">
+            <label class="timeline-field flex-grow">Görünür
+              <input id="layer-visible" type="checkbox" checked />
+            </label>
+            <label class="timeline-field flex-grow">Opaklık
+              <input id="layer-opacity" type="range" min="0" max="1" step="0.01" value="1" />
+            </label>
+          </div>
+          <div class="studio-ctrl-row">
+            <button id="btn-layer-up" class="hud-btn" type="button" title="Öne getir">↑ Öne</button>
+            <button id="btn-layer-down" class="hud-btn" type="button" title="Arkaya gönder">↓ Arkaya</button>
+            <button id="btn-layer-remove" class="hud-btn subtle" type="button">Sil</button>
+          </div>
+          <div class="studio-ctrl-row">
+            <button id="btn-add-layer-visibility-step" class="hud-btn primary flex-grow" type="button">Görünürlüğü Zaman Çizelgesine Ekle</button>
+          </div>
+          <div id="layer-list" class="studio-sprite-list" aria-live="polite"></div>
+        </div>
+
+<div id="tab-render" class="studio-tab-pane" role="tabpanel" aria-labelledby="studio-tab-render-tab" tabindex="0" style="display: none;">
           <!-- Ekran Görüntüsü -->
           <div class="studio-sub-header">FOTOĞRAF / EKRAN GÖRÜNTÜSÜ:</div>
           <div class="studio-ctrl-row">

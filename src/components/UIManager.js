@@ -56,11 +56,13 @@ export class UIManager {
    * @param {import('./RecorderManager.js').RecorderManager} [context.recorderManager]
    * @param {Object} context.sceneHelpers - gridHelper, dirLight, hemiLight referansları
    */
-  constructor({ timelineManager, character, characterManager, spriteAnimationManager, worldSpriteCharacterManager = null, sceneEditor = null, projectTemplate = 'demo', projectStore = null, projectId = '', projectName = 'Yeni Proje', onReturnHome = () => {}, worldSpriteReady = Promise.resolve(), onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, performanceDiagnostics = null, sceneHelpers }) {
+  constructor({ timelineManager, character, characterManager, spriteAnimationManager, layerManager = null, worldSpriteCharacterManager = null, sceneEditor = null, projectTemplate = 'demo', projectStore = null, projectId = '', projectName = 'Yeni Proje', onReturnHome = () => {}, worldSpriteReady = Promise.resolve(), onControlModeChange = () => {}, door, cameraManager, mapLoader, recorderManager, performanceDiagnostics = null, sceneHelpers, onSetPure2D = () => {} }) {
     this.timeline = timelineManager;
     this.character = character;
     this.characters = characterManager || character;
     this.sprites = spriteAnimationManager;
+    this.layers = layerManager;
+    this.onSetPure2D = onSetPure2D;
     this.worldSprites = worldSpriteCharacterManager;
     this.sceneEditor = sceneEditor;
     this.projectTemplate = projectTemplate === 'blank' ? 'blank' : 'demo';
@@ -148,6 +150,7 @@ export class UIManager {
     this.updateCameraList(this.cameraManager.stations, this.cameraManager.activeStationId);
     this.updateCharacterList(this.characters?.list?.() || []);
     this.updateSpriteList(this.sprites?.list?.() || [], this.sprites?.selectedId);
+    this.updateLayerList(this.layers?.list?.() || [], this.layers?.selectedId);
     this.updateWorldSpriteUI();
     this.updateMapMeshList();
     this.updateSceneEditorUI();
@@ -330,6 +333,22 @@ export class UIManager {
       btnWorldSpriteControl: document.getElementById('btn-world-sprite-control'),
       btnRemoveWorldSprite: document.getElementById('btn-remove-world-sprite'),
       worldSpriteListContainer: document.getElementById('studio-world-sprite-list'),
+
+      // 2D Katmanlar
+      btnOpen2dScene: document.getElementById('btn-open-2d-scene'),
+      btnClose2dScene: document.getElementById('btn-close-2d-scene'),
+      btnClearLayers: document.getElementById('btn-clear-layers'),
+      layerBackgroundColor: document.getElementById('layer-background-color'),
+      btnAddLayer: document.getElementById('btn-add-layer'),
+      layerFilePicker: document.getElementById('file-picker-layer'),
+      layerSelect: document.getElementById('layer-select'),
+      layerVisible: document.getElementById('layer-visible'),
+      layerOpacity: document.getElementById('layer-opacity'),
+      btnLayerUp: document.getElementById('btn-layer-up'),
+      btnLayerDown: document.getElementById('btn-layer-down'),
+      btnLayerRemove: document.getElementById('btn-layer-remove'),
+      btnAddLayerVisibilityStep: document.getElementById('btn-add-layer-visibility-step'),
+      layerListContainer: document.getElementById('layer-list'),
 
       // Sekme 5: DIŞA AKTAR / RENDER
       btnTakeScreenshot: document.getElementById('btn-take-screenshot'),
@@ -845,6 +864,87 @@ export class UIManager {
       this.sprites.remove(actor.id);
       this.showToast(`${actor.name} 2D sahneden silindi`);
     });
+
+    // 2D Katmanlar
+    d.btnOpen2dScene?.addEventListener('click', () => {
+      this.switchTab('tab-layers', true);
+      const bg = d.layerBackgroundColor?.value || '#ffffff';
+      this.onSetPure2D(true, bg);
+      this.showToast('Saf 2D sahne açıldı. Arka plan boş/beyaz. Katmanları istediğin gibi ekle, sırala, gizle — animasyon oynarken bile.');
+    });
+    d.btnClose2dScene?.addEventListener('click', () => {
+      this.onSetPure2D(false);
+      this.showToast('3D sahneye dönüldü.');
+    });
+    d.btnClearLayers?.addEventListener('click', () => {
+      if (!this.layers) return;
+      const ids = this.layers.list().map((l) => l.id);
+      ids.forEach((id) => this.layers.removeLayer(id));
+      this.updateLayerList();
+      this.showToast('Tüm katmanlar temizlendi. Sahne boş.');
+    });
+    d.layerBackgroundColor?.addEventListener('change', () => {
+      if (this.onSetPure2D) {
+        this.onSetPure2D(true, d.layerBackgroundColor.value);
+      }
+    });
+    d.btnAddLayer?.addEventListener('click', () => d.layerFilePicker?.click());
+    d.layerFilePicker?.addEventListener('change', async (event) => {
+      const file = event.target.files?.[0];
+      if (!file || !this.layers) return;
+      this.showToast('Katman görseli yükleniyor…');
+      try {
+        const id = await this.layers.addLayer(file);
+        this.showToast('Katman eklendi');
+        this.updateLayerList();
+      } catch (error) {
+        this.showToast(error.message || 'Katman yüklenemedi.');
+      } finally {
+        d.layerFilePicker.value = '';
+      }
+    });
+    d.layerSelect?.addEventListener('change', () => {
+      this.layers?.select(d.layerSelect.value);
+      this.updateLayerList();
+    });
+    d.layerVisible?.addEventListener('change', () => {
+      const id = this.layers?.selectedId;
+      if (!id) return;
+      this.layers.setVisible(id, d.layerVisible.checked);
+    });
+    d.layerOpacity?.addEventListener('input', () => {
+      const id = this.layers?.selectedId;
+      if (!id) return;
+      this.layers.setOpacity(id, Number(d.layerOpacity.value));
+    });
+    d.btnLayerUp?.addEventListener('click', () => {
+      const id = this.layers?.selectedId;
+      if (!id) return;
+      this.layers.moveLayer(id, 'up');
+      this.updateLayerList();
+    });
+    d.btnLayerDown?.addEventListener('click', () => {
+      const id = this.layers?.selectedId;
+      if (!id) return;
+      this.layers.moveLayer(id, 'down');
+      this.updateLayerList();
+    });
+    d.btnLayerRemove?.addEventListener('click', () => {
+      const id = this.layers?.selectedId;
+      if (!id) return;
+      this.layers.removeLayer(id);
+      this.showToast('Katman silindi');
+      this.updateLayerList();
+    });
+    d.btnAddLayerVisibilityStep?.addEventListener('click', () => {
+      const id = this.layers?.selectedId;
+      if (!id) return this.showToast('Önce bir katman seçin.');
+      const layer = this.layers.list().find((l) => l.id === id);
+      const visible = Boolean(d.layerVisible?.checked);
+      this.timeline.addStep('SET_LAYER_VISIBILITY', { visible }, visible ? `Katmanı Göster: ${layer?.name || id}` : `Katmanı Gizle: ${layer?.name || id}`, { actorId: id });
+      this.showToast('Katman görünürlük adımı zaman çizelgesine eklendi');
+    });
+
     d.btnSaveWorldSpriteTemplate?.addEventListener('click', () => d.worldSpriteFilePicker?.click());
     d.worldSpriteFilePicker?.addEventListener('change', async (event) => {
       const file = event.target.files?.[0];
@@ -1836,6 +1936,53 @@ export class UIManager {
         const meta = document.createElement('span');
         meta.className = 'sprite-list-meta';
         meta.textContent = `${item.columns}×${item.rows} · ${item.fps} FPS${item.isPlaying ? ' · oynuyor' : ''}`;
+        row.append(name, meta);
+        list.appendChild(row);
+      });
+    }
+  }
+
+  updateLayerList(layers = this.layers?.list?.() || [], selectedId = this.layers?.selectedId) {
+    const select = this.dom.layerSelect;
+    if (select) {
+      select.replaceChildren();
+      if (layers.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'Önce katman ekleyin';
+        select.appendChild(option);
+      } else {
+        layers.forEach((layer) => {
+          const option = document.createElement('option');
+          option.value = layer.id;
+          option.textContent = `${layer.name}${layer.visible ? '' : ' (gizli)'}`;
+          select.appendChild(option);
+        });
+        if (layers.some((l) => l.id === selectedId)) select.value = selectedId;
+      }
+      select.disabled = layers.length === 0;
+    }
+
+    const layer = layers.find((l) => l.id === selectedId) || null;
+    if (this.dom.layerVisible) this.dom.layerVisible.checked = layer ? layer.visible : true;
+    if (this.dom.layerOpacity) this.dom.layerOpacity.value = layer ? layer.opacity : 1;
+    if (this.dom.btnLayerRemove) this.dom.btnLayerRemove.disabled = !layer;
+    if (this.dom.btnLayerUp) this.dom.btnLayerUp.disabled = !layer;
+    if (this.dom.btnLayerDown) this.dom.btnLayerDown.disabled = !layer;
+    if (this.dom.btnAddLayerVisibilityStep) this.dom.btnAddLayerVisibilityStep.disabled = !layer;
+
+    const list = this.dom.layerListContainer;
+    if (list) {
+      list.replaceChildren();
+      // Show topmost first
+      [...layers].reverse().forEach((item) => {
+        const row = document.createElement('div');
+        row.className = `sprite-list-item${item.id === selectedId ? ' active' : ''}`;
+        const name = document.createElement('span');
+        name.textContent = item.name;
+        const meta = document.createElement('span');
+        meta.className = 'sprite-list-meta';
+        meta.textContent = `${item.visible ? 'görünür' : 'gizli'} · ${Math.round(item.opacity * 100)}% · sıra ${item.order}`;
         row.append(name, meta);
         list.appendChild(row);
       });
