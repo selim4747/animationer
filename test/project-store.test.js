@@ -142,6 +142,19 @@ test('records viewport metadata and rejects projects beyond the 100 MB limit', (
   assert.ok(calculateProjectBytes({ steps: [] }, [{ blob: { size: MAX_PROJECT_BYTES } }]) > MAX_PROJECT_BYTES);
 });
 
+test('autosave project record persists layer-0 metadata and counts its asset bytes', () => {
+  const layerBlob = new Blob(['layer'], { type: 'image/png' });
+  const record = createAutosaveRecord({
+    timeline: { version: '1.0.0', playMode: 'sequential', steps: [] },
+    sprites: [],
+    layers: [{ id: 'layer-0', name: 'Background', blob: layerBlob, mimeType: 'image/png', fileName: 'background.png', x: 10, y: 20, width: 100, height: 80, visible: true, opacity: 0.75, order: 0 }],
+  });
+  assert.equal(record.layers[0].id, 'layer-0');
+  assert.equal(record.layers[0].opacity, 0.75);
+  assert.ok(calculateProjectBytes(record.timeline, [], null, [], record.layers) >= layerBlob.size);
+  assert.throws(() => validateProjectRecord({ ...record, layers: [{ ...record.layers[0], opacity: 2 }] }), /katman/i);
+});
+
 test('v4 autosaves validate maps, placed 2D and 3D characters, and wall boxes', () => {
   const sheet = new Blob(['character'], { type: 'image/png' });
   const map = new Blob(['map'], { type: 'image/png' });

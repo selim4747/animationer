@@ -14,6 +14,7 @@ function recordFingerprint(record, mapRevision = 0) {
     sprites: record.sprites.map(({ id, name, columns, rows, fps, x, y, displayHeight, fileName, blob, data }) => [id, name, columns, rows, fps, x, y, displayHeight, fileName, assetSize({ blob, data })]),
     map: record.mapAsset ? [mapRevision, record.mapAsset.fileName, assetSize(record.mapAsset), record.mapAsset.scale, record.mapAsset.opacity, record.mapAsset.groundOrientation] : null,
     templates: record.worldCharacterTemplates.map(({ id, name, columns, rows, fps, fileName, updatedAt, blob, data }) => [id, name, columns, rows, fps, fileName, updatedAt, assetSize({ blob, data })]),
+    layers: record.layers.map(({ id, name, x, y, width, height, visible, opacity, order, fileName, blob, data }) => [id, name, x, y, width, height, visible, opacity, order, fileName, assetSize({ blob, data })]),
     actors: record.worldCharacters.map(({ id, name, templateId, x, y, z }) => [id, name, templateId, x, y, z]),
     characters3d: record.characters3d.map(({ id, name, modelId, position, rotationY, walkSpeed, wobbleIntensity, visible }) => [id, name, modelId, position.x, position.y, position.z, rotationY, walkSpeed, wobbleIntensity, visible]),
     wallBoxes: record.wallBoxes.map(({ x, z, width, depth, height }) => [x, z, width, depth, height]),
@@ -27,9 +28,10 @@ function recordFingerprint(record, mapRevision = 0) {
 
 /** Coalesces and serializes durable project changes into IndexedDB. */
 export class AutosaveCoordinator {
-  constructor({ timeline, sprites, characters = null, mapLoader = null, worldSprites = null, cameraManager = null, sceneEditor = null, scene = null, projectStore, projectId = '', projectName = 'Yeni Proje', projectTemplate = 'demo', worldSpriteReady = Promise.resolve(), onStatus = () => {}, onError = () => {} }) {
+  constructor({ timeline, sprites, layers = null, characters = null, mapLoader = null, worldSprites = null, cameraManager = null, sceneEditor = null, scene = null, projectStore, projectId = '', projectName = 'Yeni Proje', projectTemplate = 'demo', worldSpriteReady = Promise.resolve(), onStatus = () => {}, onError = () => {} }) {
     this.timeline = timeline;
     this.sprites = sprites;
+    this.layers = layers;
     this.characters = characters;
     this.mapLoader = mapLoader;
     this.worldSprites = worldSprites;
@@ -62,6 +64,10 @@ export class AutosaveCoordinator {
       originalTimelineNotify?.(state);
       this.schedule(); // Playback-only updates are suppressed by the persisted-content fingerprint.
     };
+    if (this.layers) {
+      const originalLayerNotify = this.layers.onStateChange;
+      this.layers.onStateChange = (state) => { originalLayerNotify?.(state); this.schedule(); };
+    }
     const originalSpriteNotify = this.sprites.onStateChange;
     this.sprites.onStateChange = (state) => {
       originalSpriteNotify?.(state);
@@ -102,8 +108,9 @@ export class AutosaveCoordinator {
   }
 
   async _buildRecord() {
-    const [sprites, worldState] = await Promise.all([
+    const [sprites, layers, worldState] = await Promise.all([
       this.sprites.exportAssetsForStorage(),
+      this.layers?.exportAssetsForStorage?.() || Promise.resolve([]),
       this.worldSprites?.exportProjectStateForStorage?.() || Promise.resolve({ templates: [], actors: [] }),
     ]);
     const characterState = this.characters?.exportProjectStateForStorage?.();
@@ -111,6 +118,7 @@ export class AutosaveCoordinator {
     return createAutosaveRecord({
       timeline: JSON.parse(this.timeline.exportSequence()),
       sprites,
+      layers,
       mapAsset: this.mapLoader?.exportStateForStorage?.() || null,
       worldCharacterTemplates: worldState.templates,
       worldCharacters: worldState.actors,
@@ -191,6 +199,7 @@ export class AutosaveCoordinator {
       // Resource loaders validate/decode into temporary resources before replacing their current state.
       await this.worldSprites?.importProjectState?.({ templates: record.worldCharacterTemplates, actors: record.worldCharacters });
       await this.sprites.importAssets(record.sprites);
+      await this.layers?.importAssets?.(record.layers || []);
       await this.mapLoader?.restoreProjectState?.(record.mapAsset);
       await this.mapLoader?.restoreWallBoxes?.(record.wallBoxes || []);
       await this.characters?.restoreProjectState?.({ actors: record.characters3d, selectedId: record.selectedCharacter3dId });
@@ -208,6 +217,7 @@ export class AutosaveCoordinator {
         if (previous) {
           await this.worldSprites?.importProjectState?.({ templates: previous.worldCharacterTemplates, actors: previous.worldCharacters }, { replaceTemplates: true });
           await this.sprites.importAssets(previous.sprites);
+          await this.layers?.importAssets?.(previous.layers || []);
           await this.mapLoader?.restoreProjectState?.(previous.mapAsset);
           await this.mapLoader?.restoreWallBoxes?.(previous.wallBoxes || []);
           await this.characters?.restoreProjectState?.({ actors: previous.characters3d, selectedId: previous.selectedCharacter3dId });

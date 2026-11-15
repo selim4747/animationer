@@ -6,6 +6,8 @@ export const MAX_PROJECT_BYTES = 100 * 1024 * 1024;
 export const MAX_CHARACTER_TEMPLATE_BYTES = 50 * 1024 * 1024;
 export const MAX_CHARACTER_LIBRARY_BYTES = 250 * 1024 * 1024;
 export const MAX_CHARACTER_MODEL_BYTES = 50 * 1024 * 1024;
+export const MAX_LAYER_BYTES = 50 * 1024 * 1024;
+export const MAX_LAYERS = 100;
 const DB_NAME = 'animationer-projects';
 const STORE_NAME = 'projects';
 const PROJECT_INDEX_STORE = 'project-index';
@@ -182,6 +184,7 @@ export function migrateProjectRecord(input) {
         steps: Array.isArray(legacyTimeline.steps) ? legacyTimeline.steps : [],
       },
       sprites: Array.isArray(input.sprites) ? input.sprites.map((asset) => ({ ...asset })) : [],
+      layers: Array.isArray(input.layers) ? input.layers.map((asset) => ({ ...asset })) : [],
       mapAsset: null,
       worldCharacterTemplates: [],
       worldCharacters: [],
@@ -192,9 +195,9 @@ export function migrateProjectRecord(input) {
   throw new Error(`Desteklenmeyen proje schema sürümü: ${input.schemaVersion ?? input.projectVersion ?? 'belirsiz'}`);
 }
 
-export function calculateProjectBytes(timeline, sprites = [], mapAsset = null, worldCharacterTemplates = []) {
+export function calculateProjectBytes(timeline, sprites = [], mapAsset = null, worldCharacterTemplates = [], layers = []) {
   let total = new TextEncoder().encode(JSON.stringify(timeline)).byteLength;
-  for (const asset of [...sprites, ...worldCharacterTemplates]) total += assetSize(asset);
+  for (const asset of [...sprites, ...worldCharacterTemplates, ...layers]) total += assetSize(asset);
   if (mapAsset) total += assetSize(mapAsset);
   return total;
 }
@@ -207,7 +210,9 @@ export function validateProjectRecord(input) {
     throw new Error('Proje timeline veya sprite verisi eksik.');
   }
   const mapAsset = input.mapAsset ?? null;
+  const sprites = input.sprites.map((asset) => ({ ...asset, layerId: typeof asset?.layerId === 'string' && asset.layerId.length <= 128 ? asset.layerId : 'layer-0' }));
   const worldCharacterTemplates = input.worldCharacterTemplates ?? [];
+  const layers = Array.isArray(input.layers) ? input.layers : [];
   const worldCharacters = input.worldCharacters ?? [];
   const characters3d = normalized3dActors(input.characters3d);
   const wallBoxes = Array.isArray(input.wallBoxes) ? input.wallBoxes.map((box) => ({
@@ -234,6 +239,17 @@ export function validateProjectRecord(input) {
     ...(edit?.primitive && ['box','sphere','cylinder','cone'].includes(edit.primitive.type) ? { primitive: { ...edit.primitive } } : {}),
   })) : [];
   if (!Array.isArray(worldCharacterTemplates) || worldCharacterTemplates.length > 50) throw new Error('2D karakter kaynak listesi geçersiz.');
+  if (layers.length > MAX_LAYERS) throw new Error(`Katman listesi ${MAX_LAYERS} sınırını aşıyor.`);
+  const layerIds = new Set();
+  for (const layer of layers) {
+    if (!layer || typeof layer.id !== 'string' || !layer.id || layer.id.length > 128 || layerIds.has(layer.id)) throw new Error('Katman kimliği geçersiz veya yineleniyor.');
+    layerIds.add(layer.id);
+    const size = assetSize(layer);
+    if (!['image/png', 'image/webp', 'image/jpeg'].includes(layer.mimeType || layer.blob?.type)) throw new Error(`'${layer.id}' katman görsel biçimi desteklenmiyor.`);
+    if (!size || size > MAX_LAYER_BYTES) throw new Error(`'${layer.id}' katman görseli eksik veya çok büyük.`);
+    if (![layer.x, layer.y, layer.width, layer.height, layer.opacity].every((value) => Number.isFinite(Number(value))) || Number(layer.width) < 1 || Number(layer.height) < 1 || Number(layer.opacity) < 0 || Number(layer.opacity) > 1) throw new Error(`'${layer.id}' katman verisi geçersiz.`);
+    if (layer.visible !== undefined && typeof layer.visible !== 'boolean') throw new Error(`'${layer.id}' katman görünürlüğü geçersiz.`);
+  }
   if (!Array.isArray(worldCharacters) || worldCharacters.length > 50) throw new Error('Sahnedeki 2D karakter listesi geçersiz.');
   if (wallBoxes.length > 200 || wallBoxes.some((box) => ![box.x, box.z, box.width, box.depth, box.height].every(Number.isFinite)
     || box.width <= 0 || box.depth <= 0 || box.height <= 0 || box.width > 1000 || box.depth > 1000 || box.height > 1000)) {
@@ -281,9 +297,9 @@ export function validateProjectRecord(input) {
     if (actor.modelId !== null && (typeof actor.modelId !== 'string' || actor.modelId.length > 128)) throw new Error('3D karakter kaynak kimliği geçersiz.');
     characterIds.add(actor.id);
   }
-  if (input.sprites.length > 100) throw new Error('Projede en fazla 100 sprite olabilir.');
-  const totalBytes = calculateProjectBytes(input.timeline, input.sprites, mapAsset, worldCharacterTemplates);
-  for (const asset of input.sprites) {
+  if (sprites.length > 100) throw new Error('Projede en fazla 100 sprite olabilir.');
+  const totalBytes = calculateProjectBytes(input.timeline, sprites, mapAsset, worldCharacterTemplates, layers);
+  for (const asset of sprites) {
     if (!asset || typeof asset.id !== 'string' || !asset.id) throw new Error('Proje sprite kimliği geçersiz.');
     const size = assetSize(asset);
     if (!size) throw new Error(`'${asset.id}' sprite dosyası eksik.`);
@@ -299,7 +315,8 @@ export function validateProjectRecord(input) {
     updatedAt: input.updatedAt || new Date().toISOString(),
     scope: { ...input.scope },
     timeline: { ...input.timeline },
-    sprites: [...input.sprites],
+    sprites: [...sprites],
+    layers: [...layers],
     mapAsset,
     worldCharacterTemplates: [...worldCharacterTemplates],
     worldCharacters: [...worldCharacters],
@@ -313,9 +330,9 @@ export function validateProjectRecord(input) {
   };
 }
 
-export function createAutosaveRecord({ timeline, sprites, viewport, mapAsset = null, worldCharacterTemplates = [], worldCharacters = [], characters3d = [], selectedCharacter3dId = null, wallBoxes = [], skyColor = '080808', cameraStations = [], activeCameraStationId = null, cameraFollowCharacter = true, projectId = '', name = 'Yeni Proje', projectTemplate = 'demo', sceneEdits = [], createdAt = null }) {
+export function createAutosaveRecord({ timeline, sprites, layers = [], viewport, mapAsset = null, worldCharacterTemplates = [], worldCharacters = [], characters3d = [], selectedCharacter3dId = null, wallBoxes = [], skyColor = '080808', cameraStations = [], activeCameraStationId = null, cameraFollowCharacter = true, projectId = '', name = 'Yeni Proje', projectTemplate = 'demo', sceneEdits = [], createdAt = null }) {
   const assetBudget = getDevicePerformanceProfile(getDeviceMemoryGiB()).maxProjectAssetExportBytes;
-  const assetBytes = [...sprites, ...worldCharacterTemplates].reduce((total, asset) => total + assetSize(asset), mapAsset ? assetSize(mapAsset) : 0);
+  const assetBytes = [...sprites, ...worldCharacterTemplates, ...layers].reduce((total, asset) => total + assetSize(asset), mapAsset ? assetSize(mapAsset) : 0);
   if (assetBytes > assetBudget) throw new Error(`Bu cihazda otomatik kayıt görsel varlık sınırı ${Math.floor(assetBudget / (1024 * 1024))} MiB; daha küçük görseller kullanın.`);
   const timestamp = new Date().toISOString();
   return validateProjectRecord({
@@ -326,9 +343,10 @@ export function createAutosaveRecord({ timeline, sprites, viewport, mapAsset = n
     projectTemplate,
     createdAt: createdAt || timestamp,
     updatedAt: timestamp,
-    scope: { timeline: true, sprites2d: true, characterTransforms: characters3d.length > 0, mapAssets: Boolean(mapAsset), worldCharacters: true, cameraPreferences: true },
+    scope: { timeline: true, sprites2d: true, layers2d: layers.length > 0, characterTransforms: characters3d.length > 0, mapAssets: Boolean(mapAsset), worldCharacters: true, cameraPreferences: true },
     timeline,
     sprites,
+    layers,
     mapAsset,
     worldCharacterTemplates,
     worldCharacters,
@@ -359,6 +377,7 @@ function projectIndexEntry(record) {
     character2dCount: record.worldCharacters?.length || 0,
     wallBoxCount: record.wallBoxes?.length || 0,
     spriteCount: record.sprites?.length || 0,
+    layerCount: record.layers?.length || 0,
     timelineStepCount: record.timeline?.steps?.length || 0,
     favorite: record.favorite === true,
   };
@@ -441,7 +460,7 @@ export class IndexedProjectStore {
     const record = createAutosaveRecord({
       projectId: id, name: safeProjectName(name), projectTemplate, createdAt: timestamp,
       timeline: { version: '1.0.0', playMode: 'sequential', steps: projectTemplate === 'blank' ? [] : DEMO_STARTER_STEPS.map((step) => ({ ...step, data: { ...step.data } })) },
-      sprites: [], viewport: null,
+      sprites: [], layers: [], viewport: null,
       characters3d: projectTemplate === 'blank' ? [] : [{ id: 'character-1', name: 'Karakter 1', modelId: null, position: { x: 0, y: 0, z: 0 }, rotationY: 0, walkSpeed: 4.2, wobbleIntensity: 1, visible: true }],
       selectedCharacter3dId: projectTemplate === 'blank' ? null : 'character-1',
       sceneEdits: sceneTemplate ? buildSceneTemplateEdits(sceneTemplate.id) : [],
@@ -523,7 +542,7 @@ export class IndexedProjectStore {
               createdAt: new Date(now).toISOString(),
               label: safeProjectName(label, source === 'auto' ? 'Otomatik sürüm' : 'Manuel sürüm').slice(0, 80),
               source,
-              bytes: calculateProjectBytes(record.timeline, record.sprites, record.mapAsset, record.worldCharacterTemplates),
+              bytes: calculateProjectBytes(record.timeline, record.sprites, record.mapAsset, record.worldCharacterTemplates, record.layers),
             };
             const nextVersions = [...versions, version];
             let retainedBytes = nextVersions.reduce((sum, item) => sum + (Number(item.bytes) || 0), 0);

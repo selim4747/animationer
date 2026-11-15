@@ -16,6 +16,7 @@ import { RecorderManager } from './components/RecorderManager.js';
 import { UIManager } from './components/UIManager.js';
 import { getDeviceMemoryGiB, getRendererPixelRatio } from './utils/device-profile.js';
 import { SpriteAnimationManager } from './components/SpriteAnimationManager.js';
+import { LayerManager } from './components/LayerManager.js';
 import { WorldSpriteCharacterManager } from './components/WorldSpriteCharacterManager.js';
 import { IndexedProjectStore } from './components/ProjectStore.js';
 import { HomeScreen } from './components/HomeScreen.js';
@@ -103,6 +104,8 @@ class App {
     this.spriteScene = new THREE.Scene();
     this.spriteCamera = new THREE.OrthographicCamera(0, window.innerWidth, window.innerHeight, 0, 0.1, 100);
     this.spriteCamera.position.z = 10;
+    this.pure2DMode = false;
+    this.pure2DBackground = new THREE.Color(0xffffff);
 
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
@@ -196,6 +199,11 @@ class App {
       height: window.innerHeight,
       onStateChange: (state) => this.uiManager?.updateSpriteList(state.actors, state.selectedId),
     });
+    this.layerManager = new LayerManager(this.spriteScene, {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      onStateChange: (state) => this.uiManager?.updateLayerList?.(state.layers, state.selectedId),
+    });
     this.worldSpriteCharacterManager = new WorldSpriteCharacterManager(this.scene, this.collisionManager, {
       characterRoster: this.character,
       store: this.projectStore,
@@ -225,6 +233,7 @@ class App {
       door: this.door,
       cameraManager: this.cameraManager,
       spriteAnimationManager: this.spriteAnimationManager,
+      layerManager: this.layerManager,
       onStateChange: (state) => {
         if (this.uiManager) {
           this.uiManager.updateTimelineUI();
@@ -241,14 +250,24 @@ class App {
         }
       },
       onBeforeCapture: ({ backgroundMode, backgroundColor }) => {
-        if (backgroundMode !== 'solid') return null;
-        const original = this.scene.background;
-        const override = new THREE.Color(backgroundColor);
-        this.scene.background = override;
-        return { original, override };
+        const token = { sceneBackground: this.scene.background, spriteBackground: this.spriteScene.background, pure2DBackground: this.pure2DBackground.clone(), clearColor: this.renderer.getClearColor(new THREE.Color()).clone() };
+        if (backgroundMode === 'solid') {
+          const override = new THREE.Color(backgroundColor);
+          if (this.pure2DMode) {
+            this.pure2DBackground = override;
+            this.spriteScene.background = override;
+          } else {
+            this.scene.background = override;
+          }
+        }
+        return token;
       },
       onAfterCapture: (token) => {
-        if (token && this.scene.background === token.override) this.scene.background = token.original;
+        if (!token) return;
+        this.scene.background = token.sceneBackground;
+        this.spriteScene.background = token.spriteBackground;
+        this.pure2DBackground = token.pure2DBackground;
+        this.renderer.setClearColor(token.clearColor, 1);
       },
     });
   }
@@ -267,6 +286,7 @@ class App {
       recorderManager: this.recorderManager,
       performanceDiagnostics: this.performanceDiagnostics,
       spriteAnimationManager: this.spriteAnimationManager,
+      layerManager: this.layerManager,
       worldSpriteCharacterManager: this.worldSpriteCharacterManager,
       projectStore: this.projectStore,
       worldSpriteReady: this.worldSpriteLibraryReady,
@@ -286,7 +306,9 @@ class App {
         dirLight: this.dirLight,
         hemiLight: this.hemiLight,
         scene: this.scene,
+        groundShadowPlane: this.groundShadowPlane,
       },
+      onSetPure2D: (enabled, background) => this.setPure2DMode(enabled, background),
     });
   }
 
@@ -597,12 +619,37 @@ class App {
       this.spriteCamera.bottom = 0;
       this.spriteCamera.updateProjectionMatrix();
       this.spriteAnimationManager.resize(width, height);
+      this.layerManager.resize(width, height);
       const rect = this.cctvPreviewElement?.getBoundingClientRect();
       if (this.cctvCamera && rect?.width && rect?.height) {
         this.cctvCamera.aspect = rect.width / rect.height;
         this.cctvCamera.updateProjectionMatrix();
       }
     }, 50);
+  }
+
+  /**
+   * Saf 2D sahne modunu açar/kapatır. Açıkken 3D sahne render edilmez,
+   * arka plan boş veya seçilen renkte (varsayılan beyaz) olur.
+   */
+  setPure2DMode(enabled, background = 0xffffff) {
+    this.pure2DMode = Boolean(enabled);
+    if (background != null) {
+      this.pure2DBackground = new THREE.Color(background);
+    }
+    if (this.pure2DMode) {
+      this.spriteScene.background = this.pure2DBackground;
+      this.renderer.setClearColor(this.pure2DBackground, 1);
+    } else {
+      this.spriteScene.background = null;
+      this.renderer.setClearColor(0x080808, 1);
+    }
+    this.uiManager?.showToast?.(
+      this.pure2DMode
+        ? 'Saf 2D sahne açıldı (boş/beyaz arka plan). Katmanları istediğin gibi düzenle; animasyon sırasında da değiştirebilirsin.'
+        : '3D sahneye dönüldü.'
+    );
+    return this.pure2DMode;
   }
 
   /**
@@ -643,33 +690,39 @@ class App {
     // 3. Kamera Hareketi & Odaya Giriş/Çıkış CCTV Tetikleyicisi
     this.cameraManager.update(delta, charPos, roomBounds);
 
-    // 4. 3D sahne ve üzerine saydam 2D spritesheet katmanı
+    // 4. Render: saf 2D modunda yalnızca katman sahnesi, aksi halde 3D + 2D overlay
     this.renderer.clear();
-    this.renderer.render(this.scene, this.camera);
-    const preview = this.cctvPreviewElement;
-    if (preview && !preview.hidden) {
-      const canvasRect = this.renderer.domElement.getBoundingClientRect();
-      const elementRect = preview.getBoundingClientRect();
-      const viewport = toRendererViewport({
-        left: elementRect.left - canvasRect.left,
-        top: elementRect.top - canvasRect.top,
-        width: elementRect.width,
-        height: elementRect.height,
-      }, canvasRect.width, canvasRect.height);
-      if (viewport.width && viewport.height) {
-        this.cctvCamera.aspect = viewport.width / viewport.height;
-        this.cctvCamera.updateProjectionMatrix();
-        this.renderer.setScissorTest(true);
-        this.renderer.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
-        this.renderer.setScissor(viewport.x, viewport.y, viewport.width, viewport.height);
-        this.renderer.clear(true, true, true);
-        this.renderer.render(this.scene, this.cctvCamera);
-        this.renderer.setScissorTest(false);
+    if (this.pure2DMode) {
+      this.renderer.setClearColor(this.pure2DBackground, 1);
+      this.renderer.clear(true, true, true);
+      this.renderer.render(this.spriteScene, this.spriteCamera);
+    } else {
+      this.renderer.render(this.scene, this.camera);
+      const preview = this.cctvPreviewElement;
+      if (preview && !preview.hidden) {
+        const canvasRect = this.renderer.domElement.getBoundingClientRect();
+        const elementRect = preview.getBoundingClientRect();
+        const viewport = toRendererViewport({
+          left: elementRect.left - canvasRect.left,
+          top: elementRect.top - canvasRect.top,
+          width: elementRect.width,
+          height: elementRect.height,
+        }, canvasRect.width, canvasRect.height);
+        if (viewport.width && viewport.height) {
+          this.cctvCamera.aspect = viewport.width / viewport.height;
+          this.cctvCamera.updateProjectionMatrix();
+          this.renderer.setScissorTest(true);
+          this.renderer.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
+          this.renderer.setScissor(viewport.x, viewport.y, viewport.width, viewport.height);
+          this.renderer.clear(true, true, true);
+          this.renderer.render(this.scene, this.cctvCamera);
+          this.renderer.setScissorTest(false);
+        }
       }
+      this.renderer.setViewport(0, 0, this.renderer.domElement.clientWidth, this.renderer.domElement.clientHeight);
+      this.renderer.clearDepth();
+      this.renderer.render(this.spriteScene, this.spriteCamera);
     }
-    this.renderer.setViewport(0, 0, this.renderer.domElement.clientWidth, this.renderer.domElement.clientHeight);
-    this.renderer.clearDepth();
-    this.renderer.render(this.spriteScene, this.spriteCamera);
     if (diagnosticsEnabled) {
       this.performanceDiagnostics.recordFrame(diagnosticsFrameTime, this.renderer.info, diagnosticsTimestamp);
       this.renderer.info.reset();

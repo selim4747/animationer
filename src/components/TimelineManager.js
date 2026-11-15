@@ -17,6 +17,9 @@ export const ACTION_TYPES = {
   FOLLOW: 'FOLLOW',
   SET_VISIBILITY: 'SET_VISIBILITY',
   PLAY_SPRITE_ANIMATION: 'PLAY_SPRITE_ANIMATION',
+  SET_LAYER_VISIBILITY: 'SET_LAYER_VISIBILITY',
+  SET_LAYER_OPACITY: 'SET_LAYER_OPACITY',
+  SET_LAYER_ORDER: 'SET_LAYER_ORDER',
 };
 
 const CAMERA_EASINGS = new Set(['linear', 'easeInOutCubic']);
@@ -40,11 +43,12 @@ export class TimelineManager {
    * @param {import('./CameraManager.js').CameraManager} options.cameraManager
    * @param {Function} options.onStateChange
    */
-  constructor({ character, door, cameraManager, spriteAnimationManager, onStateChange = () => {}, initialDemo = true }) {
+  constructor({ character, door, cameraManager, spriteAnimationManager, layerManager, onStateChange = () => {}, initialDemo = true }) {
     this.character = character;
     this.door = door;
     this.cameraManager = cameraManager;
     this.spriteAnimationManager = spriteAnimationManager;
+    this.layerManager = layerManager;
     this.onStateChange = onStateChange;
 
     // Kuyruk Adımları
@@ -354,6 +358,12 @@ export class TimelineManager {
         return data.visible ? 'Karakteri Göster' : 'Karakteri Gizle';
       case ACTION_TYPES.PLAY_SPRITE_ANIMATION:
         return '2D Spritesheet Animasyonu';
+      case ACTION_TYPES.SET_LAYER_VISIBILITY:
+        return data.visible !== false ? 'Katmanı Göster' : 'Katmanı Gizle';
+      case ACTION_TYPES.SET_LAYER_OPACITY:
+        return `Katman Opaklığı: ${Math.round((data.opacity ?? 1) * 100)}%`;
+      case ACTION_TYPES.SET_LAYER_ORDER:
+        return 'Katman Sırasını Değiştir';
       default:
         return 'Eylem';
     }
@@ -687,6 +697,14 @@ export class TimelineManager {
         break;
       }
 
+      case ACTION_TYPES.SET_LAYER_VISIBILITY:
+      case ACTION_TYPES.SET_LAYER_OPACITY:
+      case ACTION_TYPES.SET_LAYER_ORDER: {
+        if (!this.layerManager) throw new Error('2D katman yöneticisi bulunamadı.');
+        await this.layerManager.applyTimelineStep(step);
+        break;
+      }
+
       default:
         console.warn('Bilinmeyen timeline eylemi:', step.type);
     }
@@ -896,16 +914,43 @@ export class TimelineManager {
             cleanData = { fps, loop };
             break;
           }
+          case ACTION_TYPES.SET_LAYER_VISIBILITY: {
+            if (typeof data.visible !== 'boolean') throw new Error(`${index + 1}. adımın katman görünürlüğü geçersiz.`);
+            cleanData = { visible: data.visible };
+            break;
+          }
+          case ACTION_TYPES.SET_LAYER_OPACITY: {
+            const opacity = Number(data.opacity ?? 1);
+            if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) {
+              throw new Error(`${index + 1}. adımın katman opaklığı geçersiz.`);
+            }
+            cleanData = { opacity };
+            break;
+          }
+          case ACTION_TYPES.SET_LAYER_ORDER: {
+            if (Array.isArray(data.order)) {
+              cleanData = { order: data.order.filter((id) => typeof id === 'string').slice(0, 100) };
+            } else if (data.direction === 'up' || data.direction === 'down') {
+              cleanData = { direction: data.direction };
+            } else {
+              throw new Error(`${index + 1}. adımın katman sırası geçersiz.`);
+            }
+            break;
+          }
         }
         const title = typeof step.title === 'string' ? step.title.slice(0, 160) : '';
         const actorId = step.actorId === undefined ? undefined : (typeof step.actorId === 'string' && step.actorId.length <= 128 ? step.actorId : null);
+        const layerId = step.layerId === undefined ? undefined : (typeof step.layerId === 'string' && step.layerId.length <= 128 ? step.layerId : null);
         const startAt = step.startAt === undefined ? undefined : Number(step.startAt);
         const duration = step.duration === undefined ? undefined : Number(step.duration);
-        if (actorId === null || (startAt !== undefined && (!Number.isFinite(startAt) || startAt < 0 || startAt > 3600))) {
+        if (actorId === null || layerId === null || (startAt !== undefined && (!Number.isFinite(startAt) || startAt < 0 || startAt > 3600))) {
           throw new Error(`${index + 1}. adımın karakteri veya başlangıç zamanı geçersiz.`);
         }
         if (step.type === ACTION_TYPES.PLAY_SPRITE_ANIMATION && !actorId) {
           throw new Error(`${index + 1}. adım için bir 2D sprite seçilmemiş.`);
+        }
+        if ([ACTION_TYPES.SET_LAYER_VISIBILITY, ACTION_TYPES.SET_LAYER_OPACITY, ACTION_TYPES.SET_LAYER_ORDER].includes(step.type) && !actorId && !step.layerId) {
+          throw new Error(`${index + 1}. adım için bir katman seçilmemiş.`);
         }
         if (duration !== undefined && (!Number.isFinite(duration) || duration <= 0 || duration > 3600)) {
           throw new Error(`${index + 1}. adımın süresi 0–3600 saniye arasında olmalı.`);
@@ -916,6 +961,7 @@ export class TimelineManager {
           title: title || this._getDefaultTitleForType(step.type, cleanData),
           data: cleanData,
           ...(actorId === undefined ? {} : { actorId }),
+          ...(layerId === undefined ? {} : { layerId }),
           ...(startAt === undefined ? {} : { startAt }),
           ...(duration === undefined ? {} : { duration }),
         };

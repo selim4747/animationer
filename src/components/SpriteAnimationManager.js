@@ -71,6 +71,7 @@ export class SpriteAnimationManager {
 
     const actor = {
       id: `sprite-${this.nextId++}`,
+      layerId: 'layer-0',
       name: (file.name || 'Spritesheet').replace(/\.(png|webp|jpe?g)$/i, '').slice(0, 48),
       sprite,
       texture,
@@ -131,7 +132,7 @@ export class SpriteAnimationManager {
       const bytes = new Uint8Array(await actor.sourceFile.arrayBuffer());
       let binary = '';
       for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-      exported.push({ id: actor.id, name: actor.name, columns: actor.columns, rows: actor.rows, fps: actor.fps, x: actor.x, y: actor.y, displayHeight: actor.displayHeight, mimeType: actor.sourceFile.type, fileName: actor.sourceFile.name, data: btoa(binary) });
+      exported.push({ id: actor.id, layerId: actor.layerId || 'layer-0', name: actor.name, columns: actor.columns, rows: actor.rows, fps: actor.fps, x: actor.x, y: actor.y, displayHeight: actor.displayHeight, mimeType: actor.sourceFile.type, fileName: actor.sourceFile.name, data: btoa(binary) });
     }
     return exported;
   }
@@ -139,7 +140,7 @@ export class SpriteAnimationManager {
     return this.actors.map((actor) => {
       if (!actor.sourceFile) throw new Error(`"${actor.name}" spritesheet kaynağı yok; otomatik kayıt tamamlanamadı.`);
       return {
-        id: actor.id, name: actor.name, columns: actor.columns, rows: actor.rows, fps: actor.fps,
+        id: actor.id, layerId: actor.layerId || 'layer-0', name: actor.name, columns: actor.columns, rows: actor.rows, fps: actor.fps,
         x: actor.x, y: actor.y, displayHeight: actor.displayHeight,
         mimeType: actor.sourceFile.type, fileName: actor.sourceFile.name,
         blob: actor.sourceFile.slice(0, actor.sourceFile.size, actor.sourceFile.type),
@@ -183,6 +184,7 @@ export class SpriteAnimationManager {
         const actor = await staging.addSpriteSheet(file, { columns: asset.columns, rows: asset.rows, fps: asset.fps });
         actor.name = String(asset.name || actor.name).slice(0, 48);
         actor.id = asset.id;
+        actor.layerId = typeof asset.layerId === 'string' && asset.layerId.length <= 128 ? asset.layerId : 'layer-0';
         staging.nextId = Math.max(staging.nextId, Number(actor.id.match(/(\d+)$/)?.[1] || 0) + 1);
         staging.selectedId = actor.id;
         staging.setTransform(actor.id, { x: Number(asset.x), y: Number(asset.y), height: Number(asset.displayHeight) });
@@ -216,8 +218,8 @@ export class SpriteAnimationManager {
   }
 
   list() {
-    return this.actors.map(({ id, name, columns, rows, frameCount, fps, x, y, displayHeight, isPlaying }) => ({
-      id, name, columns, rows, frameCount, fps, x, y, displayHeight, isPlaying,
+    return this.actors.map(({ id, layerId, name, columns, rows, frameCount, fps, x, y, displayHeight, isPlaying }) => ({
+      id, layerId, name, columns, rows, frameCount, fps, x, y, displayHeight, isPlaying,
     }));
   }
 
