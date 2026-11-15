@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "main": "electron/main.js",
-  "description": "3D & 2D Sahne ve Kamera İstasyonları Stüdyosu (DioramaStudio)",
+  "description": "Saf 2D katman, spritesheet ve timeline animasyon çalışma alanı (Animationer)",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",

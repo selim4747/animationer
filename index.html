@@ -1,233 +1,44 @@
 <!doctype html>
 <html lang="tr">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>3D & 2D Sahne, Karakter, Reji ve Render Stüdyosu</title>
-    <meta name="description" content="Vite ve Capacitor uyumlu monokrom Three.js sahnesi, zaman çizelgesi eylem kuyruğu ve video/ekran görüntüsü dışa aktarma araçları." />
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-    <link rel="stylesheet" href="/src/style.css" />
-  </head>
-  <body>
-    <!-- 3D Canvas Mount -->
-    <div id="canvas-container"></div>
-    <div id="cctv-preview" class="cctv-preview" hidden aria-label="Bağımsız CCTV mini görünümü">
-      <span class="cctv-preview-label">CCTV · BAĞIMSIZ GÖRÜNÜM</span>
-    </div>
-
-    <!-- Dokunmatik / Tıklama Yönlendirme İpucu -->
-    <div class="hud-hint-pill">
-      <span class="hud-hint-dot"></span>
-      <span id="hud-hint-text">Zemine dokun: Karakter yürür | Kapıya dokun: Açılır | Boşluğu sürükle: Kamera döner</span>
-    </div>
-
-    <!-- Sürükle-Bırak Katmanı (Drag & Drop) -->
-    <div id="drag-overlay" class="drag-overlay">
-      <div class="drag-overlay-box">
-        <div class="drag-icon">📁</div>
-        <div class="drag-title">Dosyayı Buraya Bırakın</div>
-        <div class="drag-sub">.glb, .png, .jpg, .webp</div>
-      </div>
-    </div>
-
-    <div id="joystick-controls" class="movement-control joystick-control" aria-label="Hareket joystick'i" style="display: none;">
-      <div id="joystick-base" class="joystick-base"><div id="joystick-knob" class="joystick-knob"></div></div>
-    </div>
-    <div id="arrow-controls" class="movement-control arrow-control" aria-label="Karakter yön tuşları" style="display: none;">
-      <button class="direction-button direction-up" data-direction="up" aria-label="İleri">▲</button>
-      <button class="direction-button direction-left" data-direction="left" aria-label="Sola">◄</button>
-      <button class="direction-button direction-down" data-direction="down" aria-label="Geri">▼</button>
-      <button class="direction-button direction-right" data-direction="right" aria-label="Sağa">▶</button>
-    </div>
-
-    <!-- Üst Monokrom Başlık & Durum Çubuğu -->
-    <header class="top-hud">
-      <div class="hud-brand">
-        <span class="brand-square">REJİ</span>
-        <div class="brand-text">
-          <div class="brand-name">STUDIO // TIMELINE & RENDER</div>
-          <div class="brand-desc">Capacitor & WebGL Engine</div>
-        </div>
-      </div>
-
-      <div class="hud-actions">
-        <!-- Video Kayıt Rozeti -->
-        <div id="badge-recorder-mode" class="hud-badge active-record" style="display: none;">
-          <span class="badge-indicator pulse"></span>
-          <span id="label-recorder-mode">● REC 00:00</span>
-        </div>
-
-        <div id="badge-record-mode" class="hud-badge active-record" style="display: none;">
-          <span class="badge-indicator pulse"></span>
-          <span id="label-record-mode">Kayıt: Tıklananı Ekle</span>
-        </div>
-
-        <div id="badge-timeline-status" class="hud-badge">
-          <span class="badge-indicator"></span>
-          <span id="label-timeline-status">Reji: Hazır</span>
-        </div>
-
-        <div id="badge-camera-mode" class="hud-badge outline">
-          <span class="badge-indicator"></span>
-          <span id="label-camera-mode">Serbest Orbit</span>
-        </div>
-
-        <div id="badge-door-mode" class="hud-badge outline">
-          <span class="badge-indicator"></span>
-          <span id="label-door-mode">Kapı: Kapalı</span>
-        </div>
-
-        <button id="btn-quick-play" class="hud-btn primary" title="Reji Kuyruğunu Başlat / Duraklat (Space)">
-          ▶ Oynat
-        </button>
-
-        <button id="btn-quick-door" class="hud-btn" title="Menteşeli kapıyı aç veya kapat">
-          Kapı Tetikle
-        </button>
-
-        <button id="btn-cinematic-mode" class="hud-btn" title="Paneli Gizle / Sinematik Görünüm (Kısayol: H)">
-          [H] Sinematik
-        </button>
-
-        <button id="btn-home-screen" class="hud-btn" type="button" title="Ana ekrana dön">
-          Ana Ekran
-        </button>
-
-        <button id="btn-open-help" class="hud-btn icon-btn" title="Yardım & Bilgi">
-          ?
-        </button>
-      </div>
-    </header>
-
-    <!-- Studio panel injected at runtime from src/ui/studio-panel.html -->
-    <div id="studio-panel-root"></div>
-    <button id="btn-restore-studio-panel" class="panel-restore-btn" type="button" aria-controls="studio-panel" aria-expanded="false" hidden>
-      Kontrolleri Aç
-    </button>
-    <div id="toast" class="hud-toast">
-      <span id="toast-message" role="status" aria-live="polite" aria-atomic="true"></span>
-      <progress id="toast-progress" class="hud-toast-progress" max="100" value="0" aria-label="Dosya kaydetme ilerlemesi" hidden></progress>
-      <button id="toast-action" class="hud-toast-action" type="button" hidden></button>
-    </div>
-
-    <main id="home-screen" class="home-screen" aria-label="Animationer ana ekran">
-      <header class="home-header">
-        <div class="home-brand-lockup">
-          <span class="home-brand-mark">REJİ</span>
-          <div><strong>STUDIO</strong><span>Sahne ve karakter kitaplığı</span></div>
-        </div>
-        <div class="home-local-status"><span class="home-status-dot"></span> BU CİHAZDA KAYITLI</div>
-      </header>
-
-      <div class="home-layout">
-        <section class="home-projects" aria-labelledby="home-project-heading">
-          <div class="home-welcome">
-            <div>
-              <p class="home-eyebrow">ANIMATIONER · PROJEK MERKEZİ</p>
-              <h1>Sahnelerin burada.</h1>
-              <p>Haritalarını, karakterlerini ve reji akışlarını tek bir yerden aç.</p>
-            </div>
-            <button id="home-create-project" class="home-primary-button" type="button">＋ Yeni Proje</button>
-          </div>
-
-          <details class="home-archive-disclosure">
-            <summary>Yedekleme ve içe aktarma</summary>
-            <div class="home-archive-controls" aria-label="Yedekleme ve içe aktarma">
-            <button id="home-import-project" class="home-small-button" type="button">Proje yedeğini yeni proje olarak içe aktar</button>
-            <button id="home-export-workspace" class="home-small-button" type="button">Tüm çalışma alanını dışa aktar</button>
-            <button id="home-import-workspace" class="home-small-button" type="button">Çalışma alanı arşivini içe aktar</button>
-            </div>
-          </details>
-          <p id="home-archive-status" role="status" aria-live="polite" hidden></p>
-          <p id="home-archive-error" role="alert" hidden></p>
-
-          <div class="home-section-heading">
-            <div><p class="home-eyebrow">ÇALIŞMA ALANI</p><h2 id="home-project-heading">Projelerin</h2></div>
-            <span id="home-project-count" class="home-count">0 PROJE</span>
-          </div>
-          <div id="home-project-list" class="home-project-grid" aria-live="polite"></div>
-          <p id="home-project-empty" class="home-empty-state" hidden>Henüz kayıtlı projen yok. “Yeni Proje” ile bir sahne oluştur.</p>
-          <p id="home-project-error" class="home-error-state" role="alert" hidden></p>
-        </section>
-
-        <aside class="home-library" aria-labelledby="home-library-heading">
-          <div class="home-section-heading library-heading">
-            <div><p class="home-eyebrow">TEKRAR KULLANILABİLİR VARLIKLAR</p><h2 id="home-library-heading">Karakter Kitaplığı</h2></div>
-          </div>
-          <div class="home-library-toolbar">
-            <div class="home-library-tabs" role="tablist" aria-label="Karakter biçimi">
-              <button type="button" id="home-library-tab-3d" class="home-library-tab is-active" data-library-kind="3d" role="tab" aria-selected="true" aria-controls="home-character-list" tabindex="0">3D Modeller</button>
-              <button type="button" id="home-library-tab-2d" class="home-library-tab" data-library-kind="2d" role="tab" aria-selected="false" aria-controls="home-character-list" tabindex="-1">2D Karakterler</button>
-            </div>
-            <div class="home-library-upload-actions">
-              <button id="home-add-3d" class="home-small-button" type="button">＋ GLB ekle</button>
-              <button id="home-add-2d" class="home-small-button" type="button" hidden>＋ Spritesheet ekle</button>
-            </div>
-          </div>
-          <div id="home-sprite-settings" class="home-sprite-settings" hidden>
-            <label>Kolon <input id="home-sprite-columns" type="number" min="1" max="64" value="1" /></label>
-            <label>Satır <input id="home-sprite-rows" type="number" min="1" max="64" value="1" /></label>
-            <label>FPS <input id="home-sprite-fps" type="number" min="1" max="60" value="12" /></label>
-          </div>
-
-          <div class="home-character-preview" aria-label="Seçili karakter önizlemesi">
-            <canvas id="home-character-canvas" aria-label="3D karakter önizlemesi" hidden></canvas>
-            <img id="home-character-image" alt="Seçili 2D karakter" hidden />
-            <div id="home-preview-placeholder" class="home-preview-placeholder"><span>3D / 2D</span><p>Önizlemek için kitaplıktan bir karakter seç.</p></div>
-            <div class="home-preview-caption"><strong id="home-preview-name">Karakter seçilmedi</strong><span id="home-preview-detail">Yerel karakter kitaplığı</span></div>
-          </div>
-          <div id="home-character-list" class="home-character-grid" role="tabpanel" aria-labelledby="home-library-tab-3d" tabindex="0" aria-live="polite"></div>
-          <p id="home-character-empty" class="home-empty-state compact" hidden>Bu kitaplık henüz boş. Dosya ekleyerek karakterlerini burada sakla.</p>
-          <p id="home-library-error" class="home-error-state" role="alert" hidden></p>
-        </aside>
-      </div>
-
-      <input id="home-model-picker" type="file" accept=".glb,model/gltf-binary" hidden />
-      <input id="home-sprite-picker" type="file" accept="image/png,image/webp,image/jpeg" hidden />
-      <input id="home-project-backup-picker" type="file" accept=".json,application/json" aria-label="Animationer proje yedeği seç" hidden />
-      <input id="home-workspace-archive-picker" type="file" accept=".json,application/json" aria-label="Animationer çalışma alanı arşivi seç" hidden />
-      <dialog id="home-dialog" class="home-dialog" aria-labelledby="home-dialog-title" aria-describedby="home-dialog-message">
-        <form id="home-dialog-form" method="dialog">
-          <p id="home-dialog-eyebrow" class="home-eyebrow">PROJE</p>
-          <h2 id="home-dialog-title">Yeni Proje</h2>
-          <p id="home-dialog-message" class="home-dialog-message">Sahnen için bir ad seç.</p>
-          <p id="home-dialog-error" class="home-error-state home-dialog-error" role="alert" tabindex="-1" hidden></p>
-          <label id="home-dialog-name-label" class="home-dialog-field">Proje adı<input id="home-dialog-name" maxlength="64" autocomplete="off" /></label>
-          <label id="home-dialog-template-label" class="home-dialog-field" hidden>Başlangıç sahnesi
-            <select id="home-dialog-template">
-              <option value="demo">Deneme Sahnesi — hazır içerik ve karakter</option>
-              <option value="blank">Boş Sahne — içerik ve karakter olmadan</option>
-              <option value="product-display">Ürün Sunum Seti — platform, kaide ve ürün</option>
-              <option value="stage-blocks">Sahne Blokları — düzenlenebilir başlangıç kompozisyonu</option>
-            </select>
-          </label>
-          <label id="home-dialog-target-label" class="home-dialog-field" hidden>Projede aç<select id="home-dialog-target"></select></label>
-          <div id="home-dialog-version-list" class="home-version-list" role="list" aria-label="Proje sürümleri" aria-live="polite" hidden></div>
-          <div class="home-dialog-actions">
-            <button id="home-dialog-cancel" class="home-small-button" value="cancel" type="button">İptal</button>
-            <button id="home-dialog-submit" class="home-primary-button" value="default" type="submit">Devam</button>
-          </div>
-        </form>
-      </dialog>
-      <div id="home-toast" class="home-toast" role="status" aria-live="polite"></div>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Animationer · Saf 2D</title>
+  <meta name="description" content="Katman, spritesheet ve timeline ile saf 2D animasyon çalışma alanı." />
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #0c0d10; color: #eceef2; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #0c0d10; }
+    button, input { font: inherit; }
+    button { border: 1px solid #3b3f48; border-radius: 7px; background: #191c22; color: #f4f4f4; padding: .55rem .75rem; cursor: pointer; }
+    button:hover { border-color: #aeb5c2; }
+    .app { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
+    .topbar { min-height: 56px; display: flex; align-items: center; gap: 1rem; padding: .65rem 1rem; border-bottom: 1px solid #292c34; background: #111318; }
+    .brand { font-weight: 800; letter-spacing: .08em; } .brand small { display: block; color: #8e96a5; font-size: .66rem; letter-spacing: .18em; }
+    .top-actions { display: flex; gap: .45rem; margin-left: auto; flex-wrap: wrap; } .status { color: #9da6b5; font-size: .85rem; min-width: 120px; }
+    .workspace { display: grid; grid-template-columns: 250px minmax(0,1fr) 250px; min-height: 0; }
+    aside { padding: 1rem; background: #111318; border-right: 1px solid #292c34; overflow: auto; } aside.right { border-right: 0; border-left: 1px solid #292c34; }
+    h2 { margin: 0 0 .8rem; font-size: .9rem; letter-spacing: .08em; text-transform: uppercase; color: #aeb5c2; } h3 { font-size: .8rem; color: #8e96a5; margin: 1.2rem 0 .55rem; }
+    .tool { width: 100%; margin-bottom: .5rem; text-align: left; } .file-label { display: block; width: 100%; margin-bottom: .5rem; }
+    .file-label input { display: none; } .field { display: grid; gap: .3rem; margin: .65rem 0; color: #aeb5c2; font-size: .8rem; } input[type=number], input[type=range] { width: 100%; }
+    .list { list-style: none; margin: 0; padding: 0; display: grid; gap: .3rem; } .list li { padding: .55rem; border: 1px solid transparent; border-radius: 6px; color: #bfc5cf; cursor: pointer; font-size: .82rem; } .list li:hover, .list li.selected { border-color: #747c8b; background: #1b1f27; color: #fff; }
+    .stage { position: relative; min-width: 0; min-height: 0; background: #101114; } #scene-canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+    .hint { position: absolute; left: 1rem; bottom: 1rem; color: #8e96a5; font-size: .78rem; pointer-events: none; }
+    .footer { border-top: 1px solid #292c34; padding: .55rem 1rem; color: #727b8a; font-size: .76rem; }
+    @media (max-width: 900px) { .workspace { grid-template-columns: 190px minmax(0,1fr); } aside.right { grid-column: 1 / -1; border-left: 0; border-top: 1px solid #292c34; max-height: 240px; } }
+    @media (max-width: 600px) { .workspace { display: flex; flex-direction: column; } .stage { min-height: 55vh; order: -1; } aside { border: 0; border-bottom: 1px solid #292c34; } .topbar { align-items: flex-start; flex-wrap: wrap; } .top-actions { margin-left: 0; } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar"><div class="brand">ANIMATIONER<small>PURE 2D WORKSPACE</small></div><strong id="project-name">Yeni 2D Sahne</strong><span id="status" class="status">Hazırlanıyor…</span><div class="top-actions"><button id="btn-save">Kaydet</button><button id="btn-export">2D JSON dışa aktar</button></div></header>
+    <main class="workspace">
+      <aside><h2>Varlıklar</h2><label class="file-label"><button class="tool" type="button">＋ Görsel katman ekle</button><input id="layer-picker" type="file" accept="image/png,image/webp,image/jpeg" /></label><label class="file-label"><button class="tool" type="button">＋ Spritesheet ekle</button><input id="sprite-picker" type="file" accept="image/png,image/webp,image/jpeg" /></label><div class="field"><label>Spritesheet kolon <input id="sprite-columns" type="number" min="1" max="64" value="1" /></label><label>Spritesheet satır <input id="sprite-rows" type="number" min="1" max="64" value="1" /></label><label>FPS <input id="sprite-fps" type="number" min="1" max="60" value="12" /></label></div><h3>Katmanlar ve görseller</h3><ul id="item-list" class="list"></ul><button id="btn-delete" class="tool" type="button">Seçileni sil</button></aside>
+      <section class="stage"><canvas id="scene-canvas" aria-label="Saf 2D animasyon sahnesi"></canvas><div class="hint">Tıkla ve sürükle · yalnızca 2D canvas</div></section>
+      <aside class="right"><h2>Timeline</h2><button id="btn-play" class="tool" type="button">Timeline’ı oynat</button><button id="btn-add-wait" class="tool" type="button">＋ Bekleme adımı</button><ul id="timeline-list" class="list"></ul><h2 style="margin-top:1.4rem">Seçili katman</h2><label class="field"><span>Görünür</span><input id="layer-visible" type="checkbox" checked /></label><label class="field"><span>Opaklık</span><input id="layer-opacity" type="range" min="0" max="1" step=".01" value="1" /></label></aside>
     </main>
-    <div id="modal-help" class="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-dialog-title" aria-describedby="help-dialog-description" aria-hidden="true" hidden>
-      <section class="help-dialog" tabindex="-1">
-        <header class="help-dialog-header">
-          <div><p class="home-eyebrow">HIZLI REHBER</p><h2 id="help-dialog-title">Sahneni oluştur ve dışa aktar</h2></div>
-          <button id="btn-close-help" class="help-dialog-close" type="button" aria-label="Yardımı kapat">Kapat</button>
-        </header>
-        <p id="help-dialog-description">Animationer; sahne düzenleme, kamera hareketleri ve zaman çizelgesiyle kısa 2D/3D sekanslar hazırlamak için kullanılır.</p>
-        <ol class="help-dialog-steps">
-          <li><strong>Proje:</strong> Ana ekrandan boş sahne veya hazır başlangıç şablonu seç.</li>
-          <li><strong>Sahne:</strong> Nesne ekle, seç ve renk/konum/ölçek ayarlarını düzenle. Sahne Geri Al, bu değişiklikleri geri alır.</li>
-          <li><strong>Reji:</strong> Adım ekle veya kaydı aç; adımları sırala, sürelerini ayarla ve tek tek ya da sırayla oynat.</li>
-          <li><strong>Kamera:</strong> Görünümü ayarla, kamera ana karesi ekle; geçişler zaman çizelgesinde oynatılır.</li>
-          <li><strong>Dışa aktar:</strong> Render sekmesinde çözünürlük ve arka planı seçip ekran görüntüsü veya video kaydet.</li>
-        </ol>
-        <p class="help-dialog-tip">Kısayol: <kbd>Space</kbd> oynat/duraklat, <kbd>H</kbd> stüdyo panelini gizle/göster. Mobilde sahne için dokunup sürükle.</p>
-      </section>
-    </div>
-    <script type="module" src="/src/main.js"></script>
-  </body>
+    <footer class="footer">Bu çalışma alanı yalnızca Canvas 2D kullanır. 3D sahne, kamera, ışık, fizik ve 3D varlık akışı yoktur.</footer>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
 </html>
