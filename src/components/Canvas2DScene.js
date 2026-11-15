@@ -105,7 +105,7 @@ export class Canvas2DScene {
     return id;
   }
 
-  async addSpriteSequence(files, { fps = 12, ...options } = {}) {
+  async addSpriteSequence(files, { fps = 12, preset = 'loop', ...options } = {}) {
     const sources = Array.from(files || []);
     if (sources.length < 2 || sources.length > 256) throw new Error('Aynı karakter için 2–256 görsel seçin.');
     sources.forEach((file) => this._validateFile(file));
@@ -116,7 +116,8 @@ export class Canvas2DScene {
     if (frames.some((frame) => frame.naturalWidth !== width || frame.naturalHeight !== height)) throw new Error('Karakter karelerinin görsel boyutları aynı olmalı.');
     const id = options.id || `sprite-${this.nextSpriteId++}`;
     const displayHeight = Number.isFinite(Number(options.displayHeight)) ? Number(options.displayHeight) : Math.min(180, Math.max(32, height));
-    const sprite = { id, layerId: options.layerId || Canvas2DScene.DEFAULT_LAYER_ID, name: String(options.name || sources[0].name || 'Karakter animasyonu').replace(/\.(png|webp|jpe?g)$/i, '').slice(0, 48) || 'Karakter animasyonu', image: frames[0], frames, sourceFile: sources[0], frameFiles: sources, sequence: true, columns: 1, rows: 1, fps, frameCount: frames.length, frame: 0, elapsed: 0, x: Number.isFinite(Number(options.x)) ? Number(options.x) : this.width / 2, y: Number.isFinite(Number(options.y)) ? Number(options.y) : this.height / 2, displayHeight, isPlaying: false, loop: true };
+    const animationPreset = ['loop', 'once', 'ping-pong'].includes(preset) ? preset : 'loop';
+    const sprite = { id, layerId: options.layerId || Canvas2DScene.DEFAULT_LAYER_ID, name: String(options.name || sources[0].name || 'Karakter animasyonu').replace(/\.(png|webp|jpe?g)$/i, '').slice(0, 48) || 'Karakter animasyonu', image: frames[0], frames, sourceFile: sources[0], frameFiles: sources, sequence: true, columns: 1, rows: 1, fps, preset: animationPreset, frameCount: frames.length, frame: 0, direction: 1, elapsed: 0, x: Number.isFinite(Number(options.x)) ? Number(options.x) : this.width / 2, y: Number.isFinite(Number(options.y)) ? Number(options.y) : this.height / 2, displayHeight, isPlaying: false, loop: animationPreset !== 'once' };
     this.sprites.push(sprite); this.selected = { type: 'sprite', id }; this._changed('sprite-sequence-added'); return id;
   }
 
@@ -125,7 +126,7 @@ export class Canvas2DScene {
     this.sprites = [];
     for (const layer of record.layers || []) await this.addLayer(this._assetToFile(layer), layer);
     for (const sprite of record.sprites || []) {
-      if (Array.isArray(sprite.frames) && sprite.frames.length > 1) await this.addSpriteSequence(sprite.frames.map((frame) => this._assetToFile(frame)), sprite);
+      if (Array.isArray(sprite.frames) && sprite.frames.length > 1) await this.addSpriteSequence(sprite.frames.map((frame) => this._assetToFile(frame)), { ...sprite, preset: sprite.preset || 'loop' });
       else await this.addSprite(this._assetToFile(sprite), sprite);
     }
     this.selected = null;
@@ -138,7 +139,7 @@ export class Canvas2DScene {
   }
 
   async exportSpriteAssetsForStorage() {
-    return this.sprites.map((sprite) => ({ id: sprite.id, layerId: sprite.layerId, name: sprite.name, columns: sprite.columns, rows: sprite.rows, fps: sprite.fps, x: sprite.x, y: sprite.y, displayHeight: sprite.displayHeight, mimeType: sprite.sourceFile.type, fileName: sprite.sourceFile.name, blob: sprite.sourceFile.slice(0, sprite.sourceFile.size, sprite.sourceFile.type), ...(sprite.sequence ? { frames: sprite.frameFiles.map((file) => ({ mimeType: file.type, fileName: file.name, blob: file.slice(0, file.size, file.type) })) } : {}) }));
+    return this.sprites.map((sprite) => ({ id: sprite.id, layerId: sprite.layerId, name: sprite.name, columns: sprite.columns, rows: sprite.rows, fps: sprite.fps, preset: sprite.preset || 'loop', x: sprite.x, y: sprite.y, displayHeight: sprite.displayHeight, mimeType: sprite.sourceFile.type, fileName: sprite.sourceFile.name, blob: sprite.sourceFile.slice(0, sprite.sourceFile.size, sprite.sourceFile.type), ...(sprite.sequence ? { frames: sprite.frameFiles.map((file) => ({ mimeType: file.type, fileName: file.name, blob: file.slice(0, file.size, file.type) })) } : {}) }));
   }
 
   update(delta) {
@@ -146,6 +147,12 @@ export class Canvas2DScene {
       if (!sprite.isPlaying) continue;
       sprite.elapsed += delta;
       const frame = Math.floor(sprite.elapsed * sprite.fps);
+      if (sprite.preset === 'ping-pong') {
+        const cycle = Math.max(1, sprite.frameCount * 2 - 2);
+        const position = frame % cycle;
+        sprite.frame = position < sprite.frameCount ? position : cycle - position;
+        continue;
+      }
       if (frame >= sprite.frameCount) {
         if (!sprite.loop) { sprite.frame = sprite.frameCount - 1; sprite.isPlaying = false; }
         else { sprite.elapsed %= sprite.frameCount / sprite.fps; sprite.frame = frame % sprite.frameCount; }

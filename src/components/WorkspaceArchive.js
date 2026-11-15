@@ -18,7 +18,9 @@ const dataToBlob = (data, type = 'application/octet-stream') => {
   return new Blob([bytes], { type });
 };
 const portable = async ({ blob, ...meta }) => ({ ...meta, data: await blobToData(blob) });
+const portableTemplate = async (template) => ({ ...await portable(template), visuals: await Promise.all((template.visuals || []).map(portable)) });
 const hydrate = ({ data, blob, mimeType, ...meta }) => ({ ...meta, mimeType, blob: blob instanceof Blob ? blob : dataToBlob(data, mimeType) });
+const hydrateTemplate = (template) => ({ ...hydrate(template), visuals: (template.visuals || []).map(hydrate) });
 const byteCount = (value) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
 
 /** Serialize every named project and both shared libraries to a portable archive. */
@@ -31,7 +33,7 @@ export async function createWorkspaceArchive(store, { onProgress = () => {} } = 
     projects.push(await projectToPortable(record));
     onProgress({ phase: 'read', current: i + 1, total: entries.length });
   }
-  const portableTemplates = await Promise.all(templates.map(portable));
+  const portableTemplates = await Promise.all(templates.map(portableTemplate));
   const portableModels = await Promise.all(models.map(async (meta) => portable(await store.getCharacterModel(meta.id))));
   const archive = { format: WORKSPACE_ARCHIVE_FORMAT, archiveVersion: WORKSPACE_ARCHIVE_VERSION, exportedAt: new Date().toISOString(), projects, templates: portableTemplates, models: portableModels };
   const text = JSON.stringify(archive);
@@ -41,7 +43,7 @@ export async function createWorkspaceArchive(store, { onProgress = () => {} } = 
 }
 
 async function projectToPortable(record) {
-  const copy = { ...record, sprites: await Promise.all(record.sprites.map(portable)), worldCharacterTemplates: await Promise.all(record.worldCharacterTemplates.map(portable)), mapAsset: record.mapAsset?.blob ? await portable(record.mapAsset) : record.mapAsset };
+  const copy = { ...record, sprites: await Promise.all(record.sprites.map(portable)), worldCharacterTemplates: await Promise.all(record.worldCharacterTemplates.map(portableTemplate)), mapAsset: record.mapAsset?.blob ? await portable(record.mapAsset) : record.mapAsset };
   return copy;
 }
 
@@ -50,7 +52,7 @@ export function parseWorkspaceArchive(input) {
   if (!archive || archive.format !== WORKSPACE_ARCHIVE_FORMAT || archive.archiveVersion !== WORKSPACE_ARCHIVE_VERSION) throw new Error('Workspace arşiv biçimi veya sürümü desteklenmiyor.');
   if (!Array.isArray(archive.projects) || !Array.isArray(archive.templates) || !Array.isArray(archive.models)) throw new Error('Workspace arşivinde proje veya kitaplık listeleri eksik.');
   const projects = archive.projects.map((raw) => hydrateAndValidateProject(raw));
-  const templates = archive.templates.map((raw) => validateCharacterTemplateRecord(hydrate(raw)));
+  const templates = archive.templates.map((raw) => validateCharacterTemplateRecord(hydrateTemplate(raw)));
   const models = archive.models.map((raw) => validateCharacterModelRecord(hydrate(raw)));
   const projectBytes = projects.reduce((sum, p) => sum + p.bytes, 0);
   const libBytes = [...templates, ...models].reduce((sum, asset) => sum + asset.blob.size, 0);
@@ -66,7 +68,7 @@ export function parseWorkspaceArchive(input) {
 
 function hydrateAndValidateProject(raw) {
   if (raw?.format !== 'animationer-project') throw new Error('Arşivde geçersiz proje kaydı var.');
-  const parsed = { ...raw, sprites: (raw.sprites || []).map(hydrate), worldCharacterTemplates: (raw.worldCharacterTemplates || []).map(hydrate), mapAsset: raw.mapAsset?.data ? hydrate(raw.mapAsset) : raw.mapAsset };
+  const parsed = { ...raw, sprites: (raw.sprites || []).map(hydrate), worldCharacterTemplates: (raw.worldCharacterTemplates || []).map(hydrateTemplate), mapAsset: raw.mapAsset?.data ? hydrate(raw.mapAsset) : raw.mapAsset };
   const record = migrateProjectRecord(parsed);
   const bytes = record.sprites.reduce((n, a) => n + a.blob.size, 0) + record.worldCharacterTemplates.reduce((n, a) => n + a.blob.size, 0) + (record.mapAsset?.blob?.size || 0) + new TextEncoder().encode(JSON.stringify(record.timeline)).byteLength;
   if (bytes > MAX_PROJECT_BYTES) throw new Error(`“${record.name}” projesi 100 MB sınırını aşıyor.`);
