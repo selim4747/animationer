@@ -104,9 +104,9 @@ export function validateCharacterModelRecord(input) {
 }
 
 function assetSize(asset) {
-  return typeof asset?.blob?.size === 'number'
-    ? asset.blob.size
-    : (typeof asset?.data === 'string' ? Math.floor(asset.data.length * 3 / 4) : 0);
+  const own = typeof asset?.blob?.size === 'number' ? asset.blob.size : (typeof asset?.data === 'string' ? Math.floor(asset.data.length * 3 / 4) : 0);
+  const frames = Array.isArray(asset?.frames) ? asset.frames.reduce((sum, frame) => sum + assetSize(frame), 0) : 0;
+  return own + frames;
 }
 
 function normalized3dActors(value) {
@@ -303,6 +303,12 @@ export function validateProjectRecord(input) {
     if (!asset || typeof asset.id !== 'string' || !asset.id) throw new Error('Proje sprite kimliği geçersiz.');
     const size = assetSize(asset);
     if (!size) throw new Error(`'${asset.id}' sprite dosyası eksik.`);
+    if (asset.frames !== undefined) {
+      if (!Array.isArray(asset.frames) || asset.frames.length < 2 || asset.frames.length > 256) throw new Error(`'${asset.id}' animasyon kare listesi geçersiz.`);
+      for (const frame of asset.frames) {
+        if (!frame || !['image/png', 'image/webp', 'image/jpeg'].includes(frame.mimeType || frame.blob?.type) || !assetSize(frame)) throw new Error(`'${asset.id}' animasyon karesi eksik veya biçimi desteklenmiyor.`);
+      }
+    }
   }
   if (totalBytes > MAX_PROJECT_BYTES) throw new Error('Toplam proje boyutu 100 MB sınırını aşıyor.');
   return {
