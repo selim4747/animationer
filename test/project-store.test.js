@@ -269,6 +269,19 @@ test('named 2D character templates persist in a separate library and can be dele
   assert.deepEqual(await store.listCharacterTemplates(), []);
 });
 
+test('character library stores reusable visuals and per-animation frame order, fps and preset', async () => {
+  const store = new IndexedProjectStore(new MemoryIndexedDB());
+  const visual = (name) => new Blob([name], { type: 'image/png' });
+  const saved = await store.saveCharacterTemplate({
+    id: 'character-hero', name: 'Hero', blob: visual('one'), mimeType: 'image/png', fileName: 'one.png', columns: 1, rows: 1, fps: 12,
+    visuals: [1, 2, 3, 4, 5, 6, 9].map((number) => ({ id: `visual-${number}`, name: `${number}.png`, blob: visual(String(number)), mimeType: 'image/png', fileName: `${number}.png` })),
+    animations: [{ id: 'idle', name: 'Idle', fps: 8, preset: 'loop', frameIds: ['visual-1', 'visual-2', 'visual-3', 'visual-4', 'visual-5'] }],
+  });
+  const custom = await store.saveCharacterAnimation(saved.id, { id: 'attack', name: 'Saldırı', fps: 24, preset: 'ping-pong', frameIds: ['visual-3', 'visual-2', 'visual-5', 'visual-3', 'visual-6', 'visual-9'] });
+  assert.deepEqual(custom.animations[1], { id: 'attack', name: 'Saldırı', fps: 24, preset: 'ping-pong', frameIds: ['visual-3', 'visual-2', 'visual-5', 'visual-3', 'visual-6', 'visual-9'] });
+  assert.equal((await store.getCharacterTemplate(saved.id)).visuals.length, 7);
+});
+
 test('metadata-only library listing omits Blob payloads and skips one corrupt record', async () => {
   const db = new MemoryIndexedDB();
   const store = new IndexedProjectStore(db);

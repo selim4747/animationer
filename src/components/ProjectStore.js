@@ -48,39 +48,61 @@ function cloneVersionValue(value) {
   return value;
 }
 
+export const CHARACTER_ANIMATION_PRESETS = Object.freeze(['loop', 'once', 'ping-pong']);
+const CHARACTER_VISUAL_LIMIT = 256;
+const CHARACTER_ANIMATION_LIMIT = 64;
+function characterVisualSize(visual) {
+  return typeof visual?.blob?.size === 'number' ? visual.blob.size : 0;
+}
 export function validateCharacterTemplateRecord(input) {
   if (!input || typeof input !== 'object' || typeof input.id !== 'string' || !input.id || input.id.length > 128) {
     throw new Error('2D karakter kitaplığı kaydı geçersiz.');
   }
   const name = typeof input.name === 'string' ? input.name.trim().slice(0, 48) : '';
   if (!name) throw new Error('Karakter için bir ad girin.');
-  if (!['image/png', 'image/webp', 'image/jpeg'].includes(input.mimeType || input.blob?.type)) {
-    throw new Error('Karakter spritesheet biçimi desteklenmiyor.');
+  const blob = input.blob;
+  if (!['image/png', 'image/webp', 'image/jpeg'].includes(input.mimeType || blob?.type)) {
+    throw new Error('Karakter görsel biçimi desteklenmiyor.');
   }
-  if (!(typeof Blob !== 'undefined' && input.blob instanceof Blob) || !input.blob.size || input.blob.size > MAX_CHARACTER_TEMPLATE_BYTES) {
-    throw new Error('Karakter spritesheet dosyası boş veya 50 MB sınırını aşıyor.');
+  if (!(typeof Blob !== 'undefined' && blob instanceof Blob) || !blob.size || blob.size > MAX_CHARACTER_TEMPLATE_BYTES) {
+    throw new Error('Karakter görseli boş veya 50 MB sınırını aşıyor.');
   }
-  const columns = Number(input.columns);
-  const rows = Number(input.rows);
-  const fps = Number(input.fps);
+  const columns = Number(input.columns ?? 1);
+  const rows = Number(input.rows ?? 1);
+  const fps = Number(input.fps ?? 12);
   if (!Number.isInteger(columns) || columns < 1 || columns > 64 || !Number.isInteger(rows) || rows < 1 || rows > 64 || columns * rows > 4096) {
     throw new Error('Karakter spritesheet satır/sütun bilgisi geçersiz.');
   }
   if (!Number.isFinite(fps) || fps < 1 || fps > 60) throw new Error('Karakter animasyon FPS değeri geçersiz.');
-  return {
-    id: input.id,
-    name,
-    blob: input.blob,
-    mimeType: input.mimeType || input.blob.type,
-    fileName: String(input.fileName || `${name}.png`).slice(0, 160),
-    columns,
-    rows,
-    fps,
-    createdAt: input.createdAt || new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
+  const rawVisuals = Array.isArray(input.visuals) && input.visuals.length ? input.visuals : [{ id: 'visual-1', name: input.fileName || `${name}-1.png`, blob, mimeType: input.mimeType || blob.type, fileName: input.fileName || `${name}-1.png` }];
+  if (rawVisuals.length > CHARACTER_VISUAL_LIMIT) throw new Error(`Bir karakter en fazla ${CHARACTER_VISUAL_LIMIT} görsel taşıyabilir.`);
+  const visualIds = new Set();
+  const visuals = rawVisuals.map((visual, index) => {
+    const id = typeof visual?.id === 'string' && visual.id ? visual.id.slice(0, 128) : `visual-${index + 1}`;
+    if (visualIds.has(id)) throw new Error('Karakter görsel kimlikleri yineleniyor.');
+    visualIds.add(id);
+    const visualBlob = visual.blob;
+    if (!['image/png', 'image/webp', 'image/jpeg'].includes(visual.mimeType || visualBlob?.type) || !(visualBlob instanceof Blob) || !visualBlob.size || visualBlob.size > MAX_CHARACTER_TEMPLATE_BYTES) throw new Error(`Karakter görseli ${id} geçersiz.`);
+    return { id, name: String(visual.name || visual.fileName || `${name}-${index + 1}`).slice(0, 80), blob: visualBlob, mimeType: visual.mimeType || visualBlob.type, fileName: String(visual.fileName || `${name}-${index + 1}.png`).slice(0, 160) };
+  });
+  const visualIdSet = new Set(visuals.map((visual) => visual.id));
+  const rawAnimations = Array.isArray(input.animations) && input.animations.length ? input.animations : [{ id: 'default', name: 'Varsayılan', fps, preset: 'loop', frameIds: [visuals[0].id] }];
+  if (rawAnimations.length > CHARACTER_ANIMATION_LIMIT) throw new Error(`Bir karakter en fazla ${CHARACTER_ANIMATION_LIMIT} animasyon taşıyabilir.`);
+  const animationIds = new Set();
+  const animations = rawAnimations.map((animation, index) => {
+    const id = typeof animation?.id === 'string' && animation.id ? animation.id.slice(0, 128) : `animation-${index + 1}`;
+    if (animationIds.has(id)) throw new Error('Karakter animasyon kimlikleri yineleniyor.');
+    animationIds.add(id);
+    const animationFps = Number(animation?.fps ?? fps);
+    const preset = CHARACTER_ANIMATION_PRESETS.includes(animation?.preset) ? animation.preset : 'loop';
+    const frameIds = Array.isArray(animation?.frameIds) ? animation.frameIds.map((frameId) => String(frameId)).filter((frameId) => visualIdSet.has(frameId)).slice(0, 4096) : [];
+    if (!frameIds.length || !Number.isFinite(animationFps) || animationFps < 1 || animationFps > 60) throw new Error(`'${id}' animasyonunun kare veya FPS değeri geçersiz.`);
+    return { id, name: String(animation?.name || `Animasyon ${index + 1}`).trim().slice(0, 48), fps: animationFps, preset, frameIds };
+  });
+  const visualBytes = visuals.reduce((sum, visual) => sum + characterVisualSize(visual), 0);
+  if (visualBytes > MAX_CHARACTER_TEMPLATE_BYTES * CHARACTER_VISUAL_LIMIT) throw new Error('Karakter görsel havuzu çok büyük.');
+  return { id: input.id, name, blob, mimeType: input.mimeType || blob.type, fileName: String(input.fileName || `${name}.png`).slice(0, 160), columns, rows, fps, visuals, animations, createdAt: input.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
 }
-
 export function validateCharacterModelRecord(input) {
   if (!input || typeof input !== 'object' || typeof input.id !== 'string' || !input.id || input.id.length > 128) {
     throw new Error('3D karakter kitaplığı kaydı geçersiz.');
@@ -690,7 +712,7 @@ export class IndexedProjectStore {
         const store = tx.objectStore(CHARACTER_LIBRARY_STORE);
         const existingRequest = typeof store.openCursor === 'function' ? store.openCursor() : store.getAll();
         let validationError = null;
-        let total = template.blob.size;
+        let total = Array.isArray(template.visuals) ? template.visuals.reduce((sum, visual) => sum + (visual.blob?.size || 0), 0) : template.blob.size;
         const validateAndPut = () => {
           if (total > effectiveLimit) {
             validationError = new Error(`2D karakter kitaplığı bu cihazın ${Math.max(1, Math.round(effectiveLimit / (1024 * 1024)))} MB sınırını aşıyor; önce bazı modelleri silin.`);
@@ -703,11 +725,11 @@ export class IndexedProjectStore {
           if (typeof store.openCursor === 'function') {
             const cursor = existingRequest.result;
             if (cursor) {
-              if (cursor.primaryKey !== template.id) total += cursor.value.blob?.size || 0;
+              if (cursor.primaryKey !== template.id) total += Array.isArray(cursor.value.visuals) ? cursor.value.visuals.reduce((sum, visual) => sum + (visual.blob?.size || 0), 0) : (cursor.value.blob?.size || 0);
               cursor.continue();
             } else validateAndPut();
           } else {
-            total = (existingRequest.result || []).reduce((sum, item) => sum + (item.id === template.id ? 0 : item.blob?.size || 0), total);
+            total = (existingRequest.result || []).reduce((sum, item) => sum + (item.id === template.id ? 0 : (Array.isArray(item.visuals) ? item.visuals.reduce((bytes, visual) => bytes + (visual.blob?.size || 0), 0) : (item.blob?.size || 0))), total);
             validateAndPut();
           }
         };
@@ -737,6 +759,25 @@ export class IndexedProjectStore {
     if (!record) throw new Error('2D karakter kaydı bulunamadı.');
     if (!file || !['image/png', 'image/webp', 'image/jpeg'].includes(file.type) || !file.size || file.size > MAX_CHARACTER_TEMPLATE_BYTES) throw new Error('2D spritesheet dosyası geçersiz veya 50 MB sınırını aşıyor.');
     return this.saveCharacterTemplate({ ...record, blob: file.slice(0, file.size, file.type), mimeType: file.type, fileName: file.name || record.fileName });
+  }
+  async addCharacterVisual(id, file, { name = '' } = {}) {
+    const record = await this.getCharacterTemplate(id);
+    if (!record) throw new Error('2D karakter kaydı bulunamadı.');
+    if (!file || !['image/png', 'image/webp', 'image/jpeg'].includes(file.type) || !file.size || file.size > MAX_CHARACTER_TEMPLATE_BYTES) throw new Error('Karakter görseli geçersiz veya 50 MB sınırını aşıyor.');
+    const visualId = createId('visual');
+    return this.saveCharacterTemplate({ ...record, visuals: [...record.visuals, { id: visualId, name: name || file.name, blob: file.slice(0, file.size, file.type), mimeType: file.type, fileName: file.name }] });
+  }
+  async saveCharacterAnimation(id, animation) {
+    const record = await this.getCharacterTemplate(id);
+    if (!record) throw new Error('2D karakter kaydı bulunamadı.');
+    const animations = record.animations.some((item) => item.id === animation.id) ? record.animations.map((item) => item.id === animation.id ? { ...item, ...animation } : item) : [...record.animations, { ...animation, id: animation.id || createId('animation') }];
+    return this.saveCharacterTemplate({ ...record, animations });
+  }
+  async deleteCharacterAnimation(id, animationId) {
+    const record = await this.getCharacterTemplate(id);
+    if (!record) throw new Error('2D karakter kaydı bulunamadı.');
+    if (record.animations.length <= 1) throw new Error('Karakterin en az bir animasyonu kalmalı.');
+    return this.saveCharacterTemplate({ ...record, animations: record.animations.filter((animation) => animation.id !== animationId) });
   }
   async getCharacterTemplateUsages(id) {
     const projects = await this.listProjects();
