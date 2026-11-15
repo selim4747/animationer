@@ -155,6 +155,18 @@ test('autosave project record persists layer-0 metadata and counts its asset byt
   assert.throws(() => validateProjectRecord({ ...record, layers: [{ ...record.layers[0], opacity: 2 }] }), /katman/i);
 });
 
+test('autosave project record accepts a multi-image character frame sequence', () => {
+  const frame = (name) => ({ mimeType: 'image/png', fileName: name, blob: new Blob([name], { type: 'image/png' }) });
+  const record = createAutosaveRecord({
+    timeline: { version: '2d-only', playMode: 'sequential', steps: [] },
+    sprites: [{ id: 'sprite-sequence-1', layerId: 'layer-0', name: 'Yürüme', mimeType: 'image/png', fileName: 'walk-1.png', blob: frame('walk-1').blob, frames: [frame('walk-1'), frame('walk-2'), frame('walk-3')] }],
+    layers: [],
+  });
+  assert.equal(record.sprites[0].frames.length, 3);
+  assert.ok(calculateProjectBytes(record.timeline, record.sprites) > 3);
+  assert.throws(() => validateProjectRecord({ ...record, sprites: [{ ...record.sprites[0], frames: [record.sprites[0].frames[0]] }] }), /kare listesi/i);
+});
+
 test('v4 autosaves validate maps, placed 2D and 3D characters, and wall boxes', () => {
   const sheet = new Blob(['character'], { type: 'image/png' });
   const map = new Blob(['map'], { type: 'image/png' });

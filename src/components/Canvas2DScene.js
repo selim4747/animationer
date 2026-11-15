@@ -86,6 +86,9 @@ export class Canvas2DScene {
       name: String(options.name || file.name || 'Spritesheet').replace(/\.(png|webp|jpe?g)$/i, '').slice(0, 48) || 'Spritesheet',
       image,
       sourceFile: file,
+      frameFiles: [file],
+      frames: [image],
+      sequence: false,
       columns, rows, fps,
       frameCount: columns * rows,
       frame: 0,
@@ -102,11 +105,29 @@ export class Canvas2DScene {
     return id;
   }
 
+  async addSpriteSequence(files, { fps = 12, ...options } = {}) {
+    const sources = Array.from(files || []);
+    if (sources.length < 2 || sources.length > 256) throw new Error('Aynı karakter için 2–256 görsel seçin.');
+    sources.forEach((file) => this._validateFile(file));
+    fps = Number(fps);
+    if (!Number.isFinite(fps) || fps < 1 || fps > 60) throw new Error('Animasyon FPS değeri 1–60 arasında olmalı.');
+    const frames = await Promise.all(sources.map(loadImage));
+    const width = frames[0].naturalWidth; const height = frames[0].naturalHeight;
+    if (frames.some((frame) => frame.naturalWidth !== width || frame.naturalHeight !== height)) throw new Error('Karakter karelerinin görsel boyutları aynı olmalı.');
+    const id = options.id || `sprite-${this.nextSpriteId++}`;
+    const displayHeight = Number.isFinite(Number(options.displayHeight)) ? Number(options.displayHeight) : Math.min(180, Math.max(32, height));
+    const sprite = { id, layerId: options.layerId || Canvas2DScene.DEFAULT_LAYER_ID, name: String(options.name || sources[0].name || 'Karakter animasyonu').replace(/\.(png|webp|jpe?g)$/i, '').slice(0, 48) || 'Karakter animasyonu', image: frames[0], frames, sourceFile: sources[0], frameFiles: sources, sequence: true, columns: 1, rows: 1, fps, frameCount: frames.length, frame: 0, elapsed: 0, x: Number.isFinite(Number(options.x)) ? Number(options.x) : this.width / 2, y: Number.isFinite(Number(options.y)) ? Number(options.y) : this.height / 2, displayHeight, isPlaying: false, loop: true };
+    this.sprites.push(sprite); this.selected = { type: 'sprite', id }; this._changed('sprite-sequence-added'); return id;
+  }
+
   async loadRecord(record) {
     this.layers = [];
     this.sprites = [];
     for (const layer of record.layers || []) await this.addLayer(this._assetToFile(layer), layer);
-    for (const sprite of record.sprites || []) await this.addSprite(this._assetToFile(sprite), sprite);
+    for (const sprite of record.sprites || []) {
+      if (Array.isArray(sprite.frames) && sprite.frames.length > 1) await this.addSpriteSequence(sprite.frames.map((frame) => this._assetToFile(frame)), sprite);
+      else await this.addSprite(this._assetToFile(sprite), sprite);
+    }
     this.selected = null;
     this.render();
     this._changed('loaded');
@@ -117,7 +138,7 @@ export class Canvas2DScene {
   }
 
   async exportSpriteAssetsForStorage() {
-    return this.sprites.map((sprite) => ({ id: sprite.id, layerId: sprite.layerId, name: sprite.name, columns: sprite.columns, rows: sprite.rows, fps: sprite.fps, x: sprite.x, y: sprite.y, displayHeight: sprite.displayHeight, mimeType: sprite.sourceFile.type, fileName: sprite.sourceFile.name, blob: sprite.sourceFile.slice(0, sprite.sourceFile.size, sprite.sourceFile.type) }));
+    return this.sprites.map((sprite) => ({ id: sprite.id, layerId: sprite.layerId, name: sprite.name, columns: sprite.columns, rows: sprite.rows, fps: sprite.fps, x: sprite.x, y: sprite.y, displayHeight: sprite.displayHeight, mimeType: sprite.sourceFile.type, fileName: sprite.sourceFile.name, blob: sprite.sourceFile.slice(0, sprite.sourceFile.size, sprite.sourceFile.type), ...(sprite.sequence ? { frames: sprite.frameFiles.map((file) => ({ mimeType: file.type, fileName: file.name, blob: file.slice(0, file.size, file.type) })) } : {}) }));
   }
 
   update(delta) {
@@ -140,12 +161,13 @@ export class Canvas2DScene {
     ctx.fillRect(0, 0, this.width, this.height);
     for (const layer of this.layers) this._drawImage(layer, layer.visible, layer.opacity, layer.image, layer.x, layer.y, layer.width, layer.height);
     for (const sprite of this.sprites) {
-      const frameWidth = sprite.image.naturalWidth / sprite.columns;
-      const frameHeight = sprite.image.naturalHeight / sprite.rows;
+      const frameImage = sprite.sequence ? sprite.frames[sprite.frame] : sprite.image;
+      const frameWidth = sprite.sequence ? frameImage.naturalWidth : sprite.image.naturalWidth / sprite.columns;
+      const frameHeight = sprite.sequence ? frameImage.naturalHeight : sprite.image.naturalHeight / sprite.rows;
       const column = sprite.frame % sprite.columns;
       const row = Math.floor(sprite.frame / sprite.columns);
       const width = sprite.displayHeight * frameWidth / frameHeight;
-      this._drawImage(sprite, true, 1, sprite.image, sprite.x, sprite.y, width, sprite.displayHeight, column * frameWidth, row * frameHeight, frameWidth, frameHeight);
+      this._drawImage(sprite, true, 1, frameImage, sprite.x, sprite.y, width, sprite.displayHeight, sprite.sequence ? 0 : column * frameWidth, sprite.sequence ? 0 : row * frameHeight, frameWidth, frameHeight);
     }
     if (this.selected) this._drawSelection(this.selected);
     ctx.restore();
@@ -154,7 +176,8 @@ export class Canvas2DScene {
   hitTest(x, y) {
     for (let i = this.sprites.length - 1; i >= 0; i--) {
       const sprite = this.sprites[i];
-      const width = sprite.displayHeight * (sprite.image.naturalWidth / sprite.columns) / (sprite.image.naturalHeight / sprite.rows);
+      const frameImage = sprite.sequence ? sprite.frames[sprite.frame] : sprite.image;
+      const width = sprite.displayHeight * (sprite.sequence ? frameImage.naturalWidth / frameImage.naturalHeight : (sprite.image.naturalWidth / sprite.columns) / (sprite.image.naturalHeight / sprite.rows));
       if (this._inside(x, y, sprite.x, sprite.y, width, sprite.displayHeight)) return { type: 'sprite', id: sprite.id };
     }
     for (let i = this.layers.length - 1; i >= 0; i--) {
@@ -184,7 +207,7 @@ export class Canvas2DScene {
   _selected() { if (!this.selected) return null; return this.selected.type === 'layer' ? this.layers.find((item) => item.id === this.selected.id) : this.sprites.find((item) => item.id === this.selected.id); }
   _inside(x, y, cx, cy, width, height) { return Math.abs(x - cx) <= width / 2 && Math.abs(y - cy) <= height / 2; }
   _drawImage(item, visible, opacity, image, x, y, width, height, sx = 0, sy = 0, sw = image.naturalWidth, sh = image.naturalHeight) { if (!visible) return; this.context.globalAlpha = opacity; this.context.drawImage(image, sx, sy, sw, sh, x - width / 2, y - height / 2, width, height); this.context.globalAlpha = 1; }
-  _drawSelection(target) { const item = target.type === 'layer' ? this.layers.find((entry) => entry.id === target.id) : this.sprites.find((entry) => entry.id === target.id); if (!item) return; const width = target.type === 'sprite' ? item.displayHeight * (item.image.naturalWidth / item.columns) / (item.image.naturalHeight / item.rows) : item.width; const height = target.type === 'sprite' ? item.displayHeight : item.height; this.context.strokeStyle = '#f4f4f4'; this.context.lineWidth = 1; this.context.setLineDash([6, 4]); this.context.strokeRect(item.x - width / 2 - 4, item.y - height / 2 - 4, width + 8, height + 8); this.context.setLineDash([]); }
+  _drawSelection(target) { const item = target.type === 'layer' ? this.layers.find((entry) => entry.id === target.id) : this.sprites.find((entry) => entry.id === target.id); if (!item) return; const frameImage = target.type === 'sprite' && item.sequence ? item.frames[item.frame] : item.image; const width = target.type === 'sprite' ? item.displayHeight * (item.sequence ? frameImage.naturalWidth / frameImage.naturalHeight : (item.image.naturalWidth / item.columns) / (item.image.naturalHeight / item.rows)) : item.width; const height = target.type === 'sprite' ? item.displayHeight : item.height; this.context.strokeStyle = '#f4f4f4'; this.context.lineWidth = 1; this.context.setLineDash([6, 4]); this.context.strokeRect(item.x - width / 2 - 4, item.y - height / 2 - 4, width + 8, height + 8); this.context.setLineDash([]); }
   _reorderLayers() { this.layers.forEach((layer, index) => { layer.order = index; }); }
   _changed(type) { this.onChange({ type, selected: this.selected, items: this.list() }); }
 }

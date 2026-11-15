@@ -27,7 +27,7 @@ class Pure2DApp {
   _bind() {
     addEventListener('resize', () => this.scene.resize());
     $('layer-picker').addEventListener('change', (event) => { void this._addLayer(event.target.files?.[0]); event.target.value = ''; });
-    $('sprite-picker').addEventListener('change', (event) => { void this._addSprite(event.target.files?.[0]); event.target.value = ''; });
+    $('sprite-picker').addEventListener('change', (event) => { void this._addSprite(event.target.files); event.target.value = ''; });
     $('btn-add-wait').addEventListener('click', () => { this.steps.push({ id: `step-${Date.now()}`, type: 'WAIT', title: '0.5 saniye bekle', data: { duration: 0.5 } }); this.refresh(); void this.save(); });
     $('btn-play').addEventListener('click', () => void this.playTimeline());
     $('btn-delete').addEventListener('click', () => { if (this.scene.removeSelected()) void this.save(); });
@@ -42,7 +42,7 @@ class Pure2DApp {
   }
 
   async _addLayer(file) { if (!file) return; try { await this.scene.addLayer(file); this.refresh(); await this.save(); } catch (error) { this.toast(error.message); } }
-  async _addSprite(file) { if (!file) return; try { await this.scene.addSprite(file, { columns: Number($('sprite-columns').value), rows: Number($('sprite-rows').value), fps: Number($('sprite-fps').value) }); this.refresh(); await this.save(); } catch (error) { this.toast(error.message); } }
+  async _addSprite(files) { const selected = Array.from(files || []); if (!selected.length) return; try { const options = { columns: Number($('sprite-columns').value), rows: Number($('sprite-rows').value), fps: Number($('sprite-fps').value) }; if (selected.length > 1) await this.scene.addSpriteSequence(selected, options); else await this.scene.addSprite(selected[0], options); this.refresh(); await this.save(); } catch (error) { this.toast(error.message); } }
 
   async playTimeline() {
     if (this.playing || !this.steps.length) return;
@@ -69,7 +69,7 @@ class Pure2DApp {
   async exportProject() {
     const layers = await this.scene.exportAssetsForStorage();
     const sprites = await this.scene.exportSpriteAssetsForStorage();
-    const portable = async (asset) => ({ ...asset, blob: undefined, data: await blobToBase64(asset.blob) });
+    const portable = async (asset) => ({ ...asset, blob: undefined, data: await blobToBase64(asset.blob), ...(asset.frames ? { frames: await Promise.all(asset.frames.map(async (frame) => ({ ...frame, blob: undefined, data: await blobToBase64(frame.blob) }))) } : {}) });
     const payload = { ...(await createAutosaveRecord({ projectId: this.projectId, name: this.record.name, projectTemplate: 'blank', timeline: { version: '2d-only', playMode: 'sequential', steps: this.steps }, sprites, layers, viewport: { width: this.scene.width, height: this.scene.height }, characters3d: [], worldCharacterTemplates: [], worldCharacters: [], wallBoxes: [], cameraStations: [], sceneEdits: [], mapAsset: null })), sprites: await Promise.all(sprites.map(portable)), layers: await Promise.all(layers.map(portable)) };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${this.record.name || 'animationer-2d'}.json`; link.click(); URL.revokeObjectURL(link.href);
