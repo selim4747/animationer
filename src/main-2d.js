@@ -93,5 +93,5 @@ class Pure2DApp {
   setStatus(message) { $('status').textContent = message; clearTimeout(this.statusTimer); this.statusTimer = setTimeout(() => { $('status').textContent = 'Hazır'; }, 1800); }
   toast(message) { $('status').textContent = message; }
 }
-async function boot() { let id = sessionStorage.getItem('animationer-open-project'); let record = id ? await store.loadProject(id).catch(() => null) : null; if (!record) record = await store.createProject('Yeni 2D Sahne', { template: 'blank' }); sessionStorage.removeItem('animationer-open-project'); $('project-name').textContent = record.name; window.animationerApp = new Pure2DApp(migrateProjectRecord(record)); }
-addEventListener('DOMContentLoaded', () => { void boot(); });
+export async function boot() { let id = sessionStorage.getItem('animationer-open-project'); let record = id ? await store.loadProject(id).catch(() => null) : null; if (!record) record = await store.createProject('Yeni 2D Sahne', { template: 'blank' }); sessionStorage.removeItem('animationer-open-project'); $('project-name').textContent = record.name; window.animationerApp = new Pure2DApp(migrateProjectRecord(record)); }
+if (document.readyState === 'loading') addEventListener('DOMContentLoaded', () => { void boot(); }, { once: true });
