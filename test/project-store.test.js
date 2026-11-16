@@ -142,6 +142,13 @@ test('records viewport metadata and rejects projects beyond the 100 MB limit', (
   assert.ok(calculateProjectBytes({ steps: [] }, [{ blob: { size: MAX_PROJECT_BYTES } }]) > MAX_PROJECT_BYTES);
 });
 
+test('2D scene viewport accepts custom dimensions and rejects unsafe sizes', () => {
+  const saved = createAutosaveRecord({ timeline: { version: '2d-only', steps: [] }, sprites: [], projectTemplate: 'blank', viewport: { width: 1920, height: 1080 } });
+  assert.deepEqual(saved.viewport, { width: 1920, height: 1080 });
+  assert.throws(() => createAutosaveRecord({ timeline: { version: '2d-only', steps: [] }, sprites: [], projectTemplate: 'blank', viewport: { width: 32, height: 1080 } }), /64–8192/i);
+  assert.throws(() => createAutosaveRecord({ timeline: { version: '2d-only', steps: [] }, sprites: [], projectTemplate: 'blank', viewport: { width: 9000, height: 1080 } }), /64–8192/i);
+});
+
 test('autosave project record persists layer-0 metadata and counts its asset bytes', () => {
   const layerBlob = new Blob(['layer'], { type: 'image/png' });
   const record = createAutosaveRecord({
