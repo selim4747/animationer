@@ -15,7 +15,9 @@
     "cap:sync": "cap sync",
     "cap:build:android": "npm run build && cap sync android",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "build:mac": "vite build && electron-builder --mac dmg zip",
+    "build:mac:dir": "vite build && electron-builder --mac dir"
   },
   "build": {
     "appId": "com.monochrome.threejsstudio",
@@ -31,6 +33,26 @@
     "win": {
       "target": "portable",
       "artifactName": "DioramaStudio-Windows.exe"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.graphics-design",
+      "artifactName": "Animationer-macOS-${arch}.${ext}"
     }
   },
   "dependencies": {

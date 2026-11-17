@@ -1,4 +1,4 @@
-name: Build Android APK & Windows EXE
+name: Build Android APK, Windows EXE & macOS DMG
 
 on:
   push:
@@ -89,4 +89,35 @@ jobs:
         with:
           name: DioramaStudio-Windows
           path: dist-electron/*.exe
+          if-no-files-found: error
+
+  # Unsigned macOS DMG/ZIP build for manual testing
+  build-macos:
+    name: Build macOS DMG and ZIP
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install Dependencies
+        run: npm ci
+      - name: Run Tests and Type Check
+        run: |
+          npm test
+          npm run lint
+      - name: Build unsigned macOS packages
+        run: npm run build:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Animationer-macOS
+          path: |
+            dist-electron/*.dmg
+            dist-electron/*.zip
           if-no-files-found: error
