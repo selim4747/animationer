@@ -18,7 +18,7 @@ function loadImage(file) {
 export class Canvas2DScene {
   static DEFAULT_LAYER_ID = 'layer-0';
 
-  constructor(canvas, { onChange = () => {} } = {}) {
+  constructor(canvas, { onChange = () => {}, viewport = null } = {}) {
     this.canvas = canvas;
     this.context = canvas.getContext('2d', { alpha: false, desynchronized: true });
     this.onChange = onChange;
@@ -28,20 +28,43 @@ export class Canvas2DScene {
     this.nextLayerId = 0;
     this.nextSpriteId = 1;
     this.background = '#101114';
-    this.width = 1;
-    this.height = 1;
+    this.width = Number.isFinite(Number(viewport?.width)) ? Math.max(64, Math.min(8192, Math.round(Number(viewport.width)))) : 1;
+    this.height = Number.isFinite(Number(viewport?.height)) ? Math.max(64, Math.min(8192, Math.round(Number(viewport.height)))) : 1;
+    this.customViewport = Boolean(viewport?.width && viewport?.height);
     this.resize();
   }
 
   resize() {
     const rect = this.canvas.getBoundingClientRect();
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    this.width = Math.max(1, Math.floor(rect.width || window.innerWidth));
-    this.height = Math.max(1, Math.floor(rect.height || window.innerHeight));
+    if (!this.customViewport) {
+      this.width = Math.max(1, Math.floor(rect.width || window.innerWidth));
+      this.height = Math.max(1, Math.floor(rect.height || window.innerHeight));
+    }
     this.canvas.width = Math.floor(this.width * dpr);
     this.canvas.height = Math.floor(this.height * dpr);
     this.context.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.render();
+  }
+
+  setViewport(width, height) {
+    const nextWidth = Number(width);
+    const nextHeight = Number(height);
+    if (!Number.isInteger(nextWidth) || !Number.isInteger(nextHeight) || nextWidth < 64 || nextHeight < 64 || nextWidth > 8192 || nextHeight > 8192) {
+      throw new Error('2D sahne boyutu 64–8192 piksel arasında tam sayı olmalı.');
+    }
+    this.width = nextWidth;
+    this.height = nextHeight;
+    this.customViewport = true;
+    for (const item of [...this.layers, ...this.sprites]) {
+      const isSprite = item.displayHeight !== undefined;
+      const halfWidth = isSprite ? this._spriteDimensions(item).width / 2 : item.width / 2;
+      const halfHeight = isSprite ? this._spriteDimensions(item).height / 2 : item.height / 2;
+      item.x = Math.max(halfWidth, Math.min(this.width - halfWidth, item.x));
+      item.y = Math.max(halfHeight, Math.min(this.height - halfHeight, item.y));
+    }
+    this.resize();
+    this._changed('viewport-changed');
   }
 
   async addLayer(file, options = {}) {
@@ -91,6 +114,7 @@ export class Canvas2DScene {
       sequence: false,
       columns, rows, fps,
       frameCount: columns * rows,
+      character: options.character === true,
       frame: 0,
       elapsed: 0,
       x: Number.isFinite(Number(options.x)) ? Number(options.x) : this.width / 2,
@@ -117,7 +141,7 @@ export class Canvas2DScene {
     const id = options.id || `sprite-${this.nextSpriteId++}`;
     const displayHeight = Number.isFinite(Number(options.displayHeight)) ? Number(options.displayHeight) : Math.min(180, Math.max(32, height));
     const animationPreset = ['loop', 'once', 'ping-pong'].includes(preset) ? preset : 'loop';
-    const sprite = { id, layerId: options.layerId || Canvas2DScene.DEFAULT_LAYER_ID, name: String(options.name || sources[0].name || 'Karakter animasyonu').replace(/\.(png|webp|jpe?g)$/i, '').slice(0, 48) || 'Karakter animasyonu', image: frames[0], frames, sourceFile: sources[0], frameFiles: sources, sequence: true, columns: 1, rows: 1, fps, preset: animationPreset, frameCount: frames.length, frame: 0, direction: 1, elapsed: 0, x: Number.isFinite(Number(options.x)) ? Number(options.x) : this.width / 2, y: Number.isFinite(Number(options.y)) ? Number(options.y) : this.height / 2, displayHeight, isPlaying: false, loop: animationPreset !== 'once' };
+    const sprite = { id, layerId: options.layerId || Canvas2DScene.DEFAULT_LAYER_ID, name: String(options.name || sources[0].name || 'Karakter animasyonu').replace(/\.(png|webp|jpe?g)$/i, '').slice(0, 48) || 'Karakter animasyonu', image: frames[0], frames, sourceFile: sources[0], frameFiles: sources, sequence: true, columns: 1, rows: 1, fps, preset: animationPreset, frameCount: frames.length, character: options.character === true, frame: 0, direction: 1, elapsed: 0, x: Number.isFinite(Number(options.x)) ? Number(options.x) : this.width / 2, y: Number.isFinite(Number(options.y)) ? Number(options.y) : this.height / 2, displayHeight, isPlaying: false, loop: animationPreset !== 'once' };
     this.sprites.push(sprite); this.selected = { type: 'sprite', id }; this._changed('sprite-sequence-added'); return id;
   }
 
@@ -139,7 +163,7 @@ export class Canvas2DScene {
   }
 
   async exportSpriteAssetsForStorage() {
-    return this.sprites.map((sprite) => ({ id: sprite.id, layerId: sprite.layerId, name: sprite.name, columns: sprite.columns, rows: sprite.rows, fps: sprite.fps, preset: sprite.preset || 'loop', x: sprite.x, y: sprite.y, displayHeight: sprite.displayHeight, mimeType: sprite.sourceFile.type, fileName: sprite.sourceFile.name, blob: sprite.sourceFile.slice(0, sprite.sourceFile.size, sprite.sourceFile.type), ...(sprite.sequence ? { frames: sprite.frameFiles.map((file) => ({ mimeType: file.type, fileName: file.name, blob: file.slice(0, file.size, file.type) })) } : {}) }));
+    return this.sprites.map((sprite) => ({ id: sprite.id, layerId: sprite.layerId, name: sprite.name, character: sprite.character === true, columns: sprite.columns, rows: sprite.rows, fps: sprite.fps, preset: sprite.preset || 'loop', x: sprite.x, y: sprite.y, displayHeight: sprite.displayHeight, mimeType: sprite.sourceFile.type, fileName: sprite.sourceFile.name, blob: sprite.sourceFile.slice(0, sprite.sourceFile.size, sprite.sourceFile.type), ...(sprite.sequence ? { frames: sprite.frameFiles.map((file) => ({ mimeType: file.type, fileName: file.name, blob: file.slice(0, file.size, file.type) })) } : {}) }));
   }
 
   update(delta) {
@@ -195,13 +219,13 @@ export class Canvas2DScene {
   }
 
   select(target) { this.selected = target; this.render(); this._changed('selected'); }
-  setSelectedPosition(x, y) { const item = this._selected(); if (!item) return; item.x = x; item.y = y; this.render(); this._changed('transformed'); }
+  setSelectedPosition(x, y) { const item = this._selected(); if (!item) return; const dimensions = item.displayHeight !== undefined ? this._spriteDimensions(item) : { width: item.width, height: item.height }; item.x = Math.max(dimensions.width / 2, Math.min(this.width - dimensions.width / 2, Number(x))); item.y = Math.max(dimensions.height / 2, Math.min(this.height - dimensions.height / 2, Number(y))); this.render(); this._changed('transformed'); }
   setSelectedOpacity(opacity) { const item = this._selected(); if (!item || item.type === 'sprite') return; item.opacity = Math.max(0, Math.min(1, Number(opacity))); this.render(); this._changed('opacity'); }
   removeSelected() { const item = this._selected(); if (!item) return false; if (item.type === 'layer') this.layers = this.layers.filter((entry) => entry.id !== item.id); else this.sprites = this.sprites.filter((entry) => entry.id !== item.id); this.selected = null; this.render(); this._changed('removed'); return true; }
   playSprite(id) { const sprite = this.sprites.find((entry) => entry.id === id); if (!sprite) return false; sprite.isPlaying = true; sprite.elapsed = 0; sprite.frame = 0; this._changed('playing'); return true; }
   setLayerVisible(id, visible) { const layer = this.layers.find((entry) => entry.id === id); if (!layer) return false; layer.visible = Boolean(visible); this.render(); this._changed('visibility'); return true; }
 
-  list() { return [...this.layers.map((item) => ({ type: 'layer', id: item.id, name: item.name, x: item.x, y: item.y, width: item.width, height: item.height, opacity: item.opacity, visible: item.visible })), ...this.sprites.map((item) => ({ type: 'sprite', id: item.id, name: item.name, x: item.x, y: item.y, displayHeight: item.displayHeight, playing: item.isPlaying }))]; }
+  list() { return [...this.layers.map((item) => ({ type: 'layer', id: item.id, name: item.name, x: item.x, y: item.y, width: item.width, height: item.height, opacity: item.opacity, visible: item.visible })), ...this.sprites.map((item) => ({ type: 'sprite', character: item.character === true, id: item.id, name: item.name, x: item.x, y: item.y, displayHeight: item.displayHeight, playing: item.isPlaying }))]; }
 
   _assetToFile(asset) {
     if (asset.blob instanceof Blob) return new File([asset.blob], asset.fileName || `${asset.name || 'asset'}.png`, { type: asset.mimeType || asset.blob.type || 'image/png' });
@@ -213,6 +237,7 @@ export class Canvas2DScene {
   _nextLayerId() { while (this.layers.some((layer) => layer.id === `layer-${this.nextLayerId}`)) this.nextLayerId++; return `layer-${this.nextLayerId++}`; }
   _selected() { if (!this.selected) return null; return this.selected.type === 'layer' ? this.layers.find((item) => item.id === this.selected.id) : this.sprites.find((item) => item.id === this.selected.id); }
   _inside(x, y, cx, cy, width, height) { return Math.abs(x - cx) <= width / 2 && Math.abs(y - cy) <= height / 2; }
+  _spriteDimensions(sprite) { const frameImage = sprite.sequence ? sprite.frames[sprite.frame] : sprite.image; const frameWidth = sprite.sequence ? frameImage.naturalWidth : sprite.image.naturalWidth / sprite.columns; const frameHeight = sprite.sequence ? frameImage.naturalHeight : sprite.image.naturalHeight / sprite.rows; return { width: sprite.displayHeight * frameWidth / frameHeight, height: sprite.displayHeight }; }
   _drawImage(item, visible, opacity, image, x, y, width, height, sx = 0, sy = 0, sw = image.naturalWidth, sh = image.naturalHeight) { if (!visible) return; this.context.globalAlpha = opacity; this.context.drawImage(image, sx, sy, sw, sh, x - width / 2, y - height / 2, width, height); this.context.globalAlpha = 1; }
   _drawSelection(target) { const item = target.type === 'layer' ? this.layers.find((entry) => entry.id === target.id) : this.sprites.find((entry) => entry.id === target.id); if (!item) return; const frameImage = target.type === 'sprite' && item.sequence ? item.frames[item.frame] : item.image; const width = target.type === 'sprite' ? item.displayHeight * (item.sequence ? frameImage.naturalWidth / frameImage.naturalHeight : (item.image.naturalWidth / item.columns) / (item.image.naturalHeight / item.rows)) : item.width; const height = target.type === 'sprite' ? item.displayHeight : item.height; this.context.strokeStyle = '#f4f4f4'; this.context.lineWidth = 1; this.context.setLineDash([6, 4]); this.context.strokeRect(item.x - width / 2 - 4, item.y - height / 2 - 4, width + 8, height + 8); this.context.setLineDash([]); }
   _reorderLayers() { this.layers.forEach((layer, index) => { layer.order = index; }); }

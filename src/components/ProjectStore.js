@@ -237,6 +237,17 @@ export function validateProjectRecord(input) {
   const layers = Array.isArray(input.layers) ? input.layers : [];
   const worldCharacters = input.worldCharacters ?? [];
   const characters3d = normalized3dActors(input.characters3d);
+  const rawViewport = input.viewport == null ? null : {
+    width: Number(input.viewport.width),
+    height: Number(input.viewport.height),
+  };
+  const pure2DViewport = input.projectTemplate === 'blank' || input.timeline?.version === '2d-only';
+  if (rawViewport && (!Number.isFinite(rawViewport.width) || !Number.isFinite(rawViewport.height)
+    || rawViewport.width <= 0 || rawViewport.height <= 0 || rawViewport.width > 8192 || rawViewport.height > 8192
+    || (pure2DViewport && (rawViewport.width < 64 || rawViewport.height < 64)))) {
+    throw new Error('2D sahne boyutu 64–8192 piksel arasında tam sayı olmalı.');
+  }
+  const viewport = rawViewport ? { width: Math.round(rawViewport.width), height: Math.round(rawViewport.height) } : null;
   const wallBoxes = Array.isArray(input.wallBoxes) ? input.wallBoxes.map((box) => ({
     x: Number(box.x), z: Number(box.z), width: Number(box.width), depth: Number(box.depth), height: Number(box.height),
   })) : [];
@@ -355,6 +366,7 @@ export function validateProjectRecord(input) {
     activeCameraStationId: typeof input.activeCameraStationId === 'string' ? input.activeCameraStationId.slice(0, 128) : null,
     cameraFollowCharacter: input.cameraFollowCharacter !== false,
     sceneEdits,
+    viewport,
   };
 }
 
@@ -386,9 +398,7 @@ export function createAutosaveRecord({ timeline, sprites, layers = [], viewport,
     activeCameraStationId,
     cameraFollowCharacter,
     sceneEdits,
-    viewport: viewport && Number.isFinite(viewport.width) && Number.isFinite(viewport.height)
-      ? { width: Math.max(1, Math.round(viewport.width)), height: Math.max(1, Math.round(viewport.height)) }
-      : null,
+    viewport,
   });
 }
 
